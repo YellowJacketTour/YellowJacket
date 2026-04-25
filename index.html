@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v6";
+const APP_VERSION = "2026.04.25-v8";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2689,23 +2689,21 @@ function careerMeritScore(p) {
 
 function openQualifierScore(p) {
   ensureQualifierState(p);
-  // Skill-rating weight dropped from 2.5 → 0.5. The open bucket should be the
-  // wildcard path (random pick weighted by recent activity), not a third
-  // skill-leak that pulled top players into yet more events. Same rationale
-  // as regularEntryScore — see that comment.
-  return seasonMeritScore(p) * 1.15 + careerMeritScore(p) * 0.18 + recentFormScore(p) * 0.8 + (p.skill || 0) * 0.5;
+  // Skill-rating weight nudged 0.8 → 1.0 to match regularEntryScore and lift
+  // the non-Main skill-R² floor. Same volume guards apply (eventsCapMultiplier
+  // + 0.009 ranking penalty), so participation stays in the 24–30 events/year
+  // band even with the heavier skill prior.
+  return seasonMeritScore(p) * 1.15 + careerMeritScore(p) * 0.18 + recentFormScore(p) * 0.8 + (p.skill || 0) * 1.0;
 }
 
 function regularEntryScore(p) {
   ensureQualifierState(p);
-  // Skill-rating weight dropped from 3.0 → 0.5. The merit bucket is meant to
-  // reward season+career performance, but the raw `(skill * 3.0)` term made it
-  // a second skill-sorted bucket — top-skill players were pulled into ~100% of
-  // regulars via merit AND the explicit ranking bucket, bleeding their ROI
-  // through buy-in volume regardless of season state. With skill * 0.5 the
-  // bucket prioritizes who's actually performing this season, with skill as a
-  // mild tiebreaker only.
-  return seasonMeritScore(p) * 1.0 + careerMeritScore(p) * 0.14 + recentFormScore(p) * 0.6 + (p.skill || 0) * 0.5;
+  // Skill-rating weight nudged 0.8 → 1.0 to restore a strong non-Main skill-R²
+  // signal. Volume is still bounded by eventsCapMultiplier + the ranking-bucket
+  // penalty (now 0.009), so this skill-prior bump improves separation without
+  // re-opening the runaway-participation channel that the original 3.0 weight
+  // caused.
+  return seasonMeritScore(p) * 1.0 + careerMeritScore(p) * 0.14 + recentFormScore(p) * 0.6 + (p.skill || 0) * 1.0;
 }
 
 function regularQualifierEligible(p) {
@@ -2784,7 +2782,7 @@ function selectMajorField(pool, fieldSize, year, cfg) {
   // participation penalty. After ~13 events a top player drops 0.20 — a full
   // skill-tier — out of the top-N. Pairs with the eventsCapMultiplier on the
   // merit/season/career/open buckets so all entry paths share the same cap.
-  const rankPenalty = (p) => 0.018 * (p.eventsThisYear || 0);
+  const rankPenalty = (p) => 0.009 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
     ((b.skill - rankPenalty(b)) - (a.skill - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
@@ -2833,7 +2831,7 @@ function selectRegularField(pool, fieldSize, year) {
     || b.skill - a.skill);
   takeQualified(merit, meritCount, selected, out);
   // Ranking bucket: 0.015 × eventsThisYear participation penalty + ±0.05 jitter.
-  const rankPenalty = (p) => 0.018 * (p.eventsThisYear || 0);
+  const rankPenalty = (p) => 0.009 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
     ((b.skill - rankPenalty(b)) - (a.skill - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
