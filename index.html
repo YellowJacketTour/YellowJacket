@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v3";
+const APP_VERSION = "2026.04.25-v4";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -6466,6 +6466,12 @@ function buildPoolFromConfig(cfg) {
       reaches: { r1: 0, r4: 0, r2: 0, finals: 0, champ: 0 },
       // lab: economics
       buyInsPaid: 0, prizeEarned: 0, itmCount: 0, finalTableCount: 0, careerScore: 0,
+      // Non-Main accumulators (regulars + majors only) — drive the clean
+      // skill-signal KPIs that aren't blown out by the 25k-field Main lottery.
+      buyInsPaid_nonMain: 0, prizeEarned_nonMain: 0, eventsEntered_nonMain: 0,
+      // EV stats live on pool players too so averageEVRealization() can read
+      // them post-run. Per-event wrapper EV is summed in runTourEventLab.
+      stats: { evDecisions: 0, evLossSum: 0, evDecisions_nonMain: 0, evLossSum_nonMain: 0 },
     });
   }
   return pool;
@@ -6812,6 +6818,7 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   let itmCount = 0, finalTableCount = 0;
   const wrapperById = {};
   for (const w of players) wrapperById[w.id] = w;
+  const isNonMain = eventType !== 'main';
   for (let idx = 0; idx < field.length; idx++) {
     const p = field[idx];
     p.buyInsPaid += perPlayerBuyIns[idx];
@@ -6828,10 +6835,32 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
       p.itmCount++;
       itmCount++;
     }
+    // Non-Main economics — used for skill-edge KPIs that aren't dominated by
+    // the 25k-field Main lottery (top-64 ITM cap means 99.7% of Main entrants
+    // get nothing, swamping ROI and EV signal).
+    if (isNonMain) {
+      p.buyInsPaid_nonMain = (p.buyInsPaid_nonMain || 0) + perPlayerBuyIns[idx];
+      p.eventsEntered_nonMain = (p.eventsEntered_nonMain || 0) + 1;
+      if (prize > 0) p.prizeEarned_nonMain = (p.prizeEarned_nonMain || 0) + prize;
+    }
     // Career-cumulative golf score (used for the career-score distribution histogram).
     const w = wrapperById[p.id];
     if (w && w.stats && Number.isFinite(w.stats.totalScore)) {
       p.careerScore = (p.careerScore || 0) + w.stats.totalScore;
+    }
+    // CRITICAL: copy this event's wrapper EV stats to the pool player so
+    // averageEVRealization() (which reads p.stats) sees actual data after
+    // the run. Pool players never had .stats populated before this — the EV
+    // metric was a pool-wide no-op despite the recording infrastructure
+    // working correctly at the wrapper level.
+    if (w && w.stats) {
+      if (!p.stats) p.stats = { evDecisions: 0, evLossSum: 0, evDecisions_nonMain: 0, evLossSum_nonMain: 0 };
+      p.stats.evDecisions = (p.stats.evDecisions || 0) + (+w.stats.evDecisions || 0);
+      p.stats.evLossSum   = (p.stats.evLossSum   || 0) + (+w.stats.evLossSum   || 0);
+      if (isNonMain) {
+        p.stats.evDecisions_nonMain = (p.stats.evDecisions_nonMain || 0) + (+w.stats.evDecisions || 0);
+        p.stats.evLossSum_nonMain   = (p.stats.evLossSum_nonMain   || 0) + (+w.stats.evLossSum   || 0);
+      }
     }
   }
   for (const plc of placements) {
@@ -7005,8 +7034,10 @@ function computeLabMetrics(pool, events, actionStats, cfg) {
   const measuredSkill = computeMeasuredSkillRating(pool);
   return {
     varianceDecomp: computeVarianceDecomp(pool),
+    varianceDecomp_nonMain: computeVarianceDecomp_nonMain(pool),
     skillSpearman: computeSpearman(pool),
     skillEVSpearman: computeEVSpearman(pool),
+    skillEVSpearman_nonMain: computeEVSpearman_nonMain(pool),
     measuredSkill,
     authoredVsMeasured: computeAuthoredMeasuredCorrelation(pool, measuredSkill),
     gini: computeGini(pool.map(p => p.totalWins)),
@@ -7025,6 +7056,7 @@ function computeLabMetrics(pool, events, actionStats, cfg) {
     champScoreStatsByType: computeEventTypeScoreStats(events),
     majorQualifierMetrics: computeMajorQualifierMetrics(events),
     eliteMajorDominance: computeEliteMajorDominance(pool, events),
+    eliteMajorDominance_nonMain: computeEliteNonMainDominance(pool, events),
     majorWinnerSkillMetrics: computeMajorWinnerSkillMetrics(pool, events),
     finalsSkillEdge: computeFinalsSkillEdge(pool, events),
     repeatMajorRate: computeRepeatMajorRate(events, pool),
@@ -7099,6 +7131,12 @@ function computeEconomicsMetrics(pool, events) {
     const tProfit = tEarned - tPaid;
     const tItm = group.reduce((a, p) => a + (p.itmCount || 0), 0);
     const tEntered = group.reduce((a, p) => a + (p.eventsEntered || 0), 0);
+    // Non-Main ROI — strips the 25k-field Main lottery so skill expression
+    // dominates the per-tier signal at typical run lengths.
+    const tPaidNM = group.reduce((a, p) => a + (p.buyInsPaid_nonMain || 0), 0);
+    const tEarnedNM = group.reduce((a, p) => a + (p.prizeEarned_nonMain || 0), 0);
+    const tEnteredNM = group.reduce((a, p) => a + (p.eventsEntered_nonMain || 0), 0);
+    const tProfitNM = tEarnedNM - tPaidNM;
     tiers.push({
       label: tierLabels[i],
       playerCount: group.length,
@@ -7109,6 +7147,10 @@ function computeEconomicsMetrics(pool, events) {
       roi: tPaid > 0 ? tProfit / tPaid : 0,
       roiPerEvent: tEntered > 0 ? tProfit / tEntered : 0,
       itmRate: tEntered > 0 ? tItm / tEntered : 0,
+      // Non-Main companions — clean side-by-side with the all-events versions.
+      roi_nonMain: tPaidNM > 0 ? tProfitNM / tPaidNM : 0,
+      avgEvents_nonMain: group.length ? tEnteredNM / group.length : 0,
+      avgProfit_nonMain: group.length ? tProfitNM / group.length : 0,
     });
     start = end;
   }
@@ -7192,6 +7234,17 @@ function averageEVRealization(p) {
   return -(lossSum / decisions);
 }
 
+// Non-Main variant — the same metric restricted to regular + major events.
+// Strips out the 25k-field Main Event lottery noise. Use this as the headline
+// poker-skill signal; the all-events version is for completeness.
+function averageEVRealization_nonMain(p) {
+  if (!p || !p.stats) return 0;
+  const decisions = +p.stats.evDecisions_nonMain || 0;
+  if (decisions <= 0) return 0;
+  const lossSum = +p.stats.evLossSum_nonMain || 0;
+  return -(lossSum / decisions);
+}
+
 // R² of linear fit averageEVRealization ~ authoredSkill. Skill-explained
 // fraction of variance in per-decision EV performance.
 function computeVarianceDecomp(pool) {
@@ -7246,6 +7299,25 @@ function computeSpearman(pool) {
   return dxSq > 0 && dySq > 0 ? num / Math.sqrt(dxSq * dySq) : 0;
 }
 
+// Non-Main variant of the variance-decomp R². Same shape, evaluated on
+// regular + major decisions only — far cleaner skill signal because the
+// 25k-field Main Event lottery is excluded.
+function computeVarianceDecomp_nonMain(pool) {
+  const n = pool.length;
+  if (n < 2) return { skillR2: 0, luckR2: 1, meanWins: 0, stdWins: 0 };
+  const xs = pool.map(p => p.skill);
+  const ys = pool.map(p => averageEVRealization_nonMain(p));
+  const mx = xs.reduce((a,b)=>a+b,0)/n, my = ys.reduce((a,b)=>a+b,0)/n;
+  let num = 0, dxSq = 0, dySq = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    num += dx * dy; dxSq += dx * dx; dySq += dy * dy;
+  }
+  const r = dySq > 0 && dxSq > 0 ? num / Math.sqrt(dxSq * dySq) : 0;
+  const r2 = r * r;
+  return { skillR2: r2, luckR2: 1 - r2, meanWins: my, stdWins: Math.sqrt(dySq / n) };
+}
+
 // Spearman rank correlation between authoredSkill and averageEVRealization.
 // Pure-poker skill signal that's robust to high-variance tournament outcomes
 // AND to the heteroscedastic noise floor that collapses Pearson skillR². With
@@ -7256,6 +7328,25 @@ function computeEVSpearman(pool) {
   if (n < 2) return 0;
   const skills = pool.map(p => p.skill || 0);
   const evReal = pool.map(p => averageEVRealization(p));
+  const rs = averageRanks(skills);
+  const rev = averageRanks(evReal);
+  const mx = rs.reduce((a, b) => a + b, 0) / n;
+  const my = rev.reduce((a, b) => a + b, 0) / n;
+  let num = 0, dxSq = 0, dySq = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = rs[i] - mx, dy = rev[i] - my;
+    num += dx * dy; dxSq += dx * dx; dySq += dy * dy;
+  }
+  return dxSq > 0 && dySq > 0 ? num / Math.sqrt(dxSq * dySq) : 0;
+}
+
+// Non-Main variant — Spearman of authoredSkill vs EV-realization restricted
+// to regulars + majors. Headline skill KPI for the dashboard.
+function computeEVSpearman_nonMain(pool) {
+  const n = pool.length;
+  if (n < 2) return 0;
+  const skills = pool.map(p => p.skill || 0);
+  const evReal = pool.map(p => averageEVRealization_nonMain(p));
   const rs = averageRanks(skills);
   const rev = averageRanks(evReal);
   const mx = rs.reduce((a, b) => a + b, 0) / n;
@@ -7504,6 +7595,16 @@ function computeEliteMajorDominance(pool, events) {
   const majors = events.filter(e => e.type === 'major');
   if (majors.length === 0) return 0;
   return majors.filter(e => elite.has(e.champId)).length / majors.length;
+}
+
+// Elite dominance across ALL non-Main events (regulars + majors). Wider sample
+// than majors-only, so the signal stabilizes quickly even at modest run lengths.
+function computeEliteNonMainDominance(pool, events) {
+  const sorted = pool.slice().sort((a, b) => b.skill - a.skill);
+  const elite = new Set(sorted.slice(0, Math.floor(sorted.length * 0.10)).map(p => p.id));
+  const nonMain = events.filter(e => e.type !== 'main');
+  if (nonMain.length === 0) return 0;
+  return nonMain.filter(e => elite.has(e.champId)).length / nonMain.length;
 }
 
 function computeRepeatMajorRate(events, pool) {
@@ -7982,6 +8083,7 @@ function _exportRunToCSVImpl(snap) {
   // the whole download silently.
   const fx = (v, d) => (typeof v === 'number' && Number.isFinite(v)) ? v.toFixed(d != null ? d : 4) : '';
   rows.push(['skillR2', fx(m.varianceDecomp && m.varianceDecomp.skillR2)]);
+  rows.push(['skillR2_nonMain', fx(m.varianceDecomp_nonMain && m.varianceDecomp_nonMain.skillR2)]);
   rows.push(['gini', fx(m.gini)]);
   rows.push(['belowParRate', fx(m.belowParRate)]);
   rows.push(['repeatMajorRate', fx(m.repeatMajorRate)]);
@@ -8039,7 +8141,13 @@ function _exportRunToCSVImpl(snap) {
   }
   rows.push(['skillSpearman', fx(m.skillSpearman)]);
   rows.push(['skillEVSpearman', fx(m.skillEVSpearman)]);
+  rows.push(['skillEVSpearman_nonMain', fx(m.skillEVSpearman_nonMain)]);
   rows.push(['authoredVsMeasuredSkill', fx(m.authoredVsMeasured)]);
+  rows.push([]);
+  rows.push(['--- Non-Main Skill Signal (regulars + majors only) ---']);
+  rows.push(['skillR2_nonMain', fx(m.varianceDecomp_nonMain && m.varianceDecomp_nonMain.skillR2)]);
+  rows.push(['skillEVSpearman_nonMain', fx(m.skillEVSpearman_nonMain)]);
+  rows.push(['eliteMajorDominance_nonMain', fx(m.eliteMajorDominance_nonMain)]);
   // finalsSkillEdge is nested. Under CI aggregation its inner sub-objects can get
   // flattened to numbers, so we null-check every leaf access.
   if (m.finalsSkillEdge) {
@@ -8104,6 +8212,13 @@ function _exportRunToCSVImpl(snap) {
         rows.push(['tier_' + i + '_avgProfit', fx(t.avgProfit, 2)]);
         rows.push(['tier_' + i + '_avgEvents', fx(t.avgEvents, 2)]);
         rows.push(['tier_' + i + '_itmRate', fx(t.itmRate)]);
+      });
+      rows.push([]);
+      rows.push(['--- ROI excluding Main Event (per skill tier) ---']);
+      e.tiers.forEach((t, i) => {
+        rows.push(['tier_' + i + '_roi_nonMain', fx(t.roi_nonMain)]);
+        rows.push(['tier_' + i + '_avgProfit_nonMain', fx(t.avgProfit_nonMain, 2)]);
+        rows.push(['tier_' + i + '_avgEvents_nonMain', fx(t.avgEvents_nonMain, 2)]);
       });
     }
     if (Array.isArray(e.topEarners)) {
@@ -9110,6 +9225,12 @@ function renderRunCard(r) {
   const kpis = el('div', { class: 'run-kpis' });
   const m = r.metrics;
   kpis.appendChild(el('span', { class: 'run-kpi' }, 'R²: ', el('b', { text: m.varianceDecomp.skillR2.toFixed(2) })));
+  if (m.varianceDecomp_nonMain) {
+    kpis.appendChild(el('span', { class: 'run-kpi', title: 'Skill R² excluding Main Event' }, 'R² NM: ', el('b', { text: m.varianceDecomp_nonMain.skillR2.toFixed(2) })));
+  }
+  if (typeof m.skillEVSpearman_nonMain === 'number') {
+    kpis.appendChild(el('span', { class: 'run-kpi', title: 'EV-skill Spearman (regulars + majors)' }, 'EV ρ NM: ', el('b', { text: m.skillEVSpearman_nonMain.toFixed(2) })));
+  }
   kpis.appendChild(el('span', { class: 'run-kpi' }, 'Gini: ', el('b', { text: m.gini.toFixed(2) })));
   kpis.appendChild(el('span', { class: 'run-kpi' }, 'Below par: ', el('b', { text: (m.belowParRate * 100).toFixed(0) + '%' })));
   kpis.appendChild(el('span', { class: 'run-kpi' }, 'Repeat maj: ', el('b', { text: (m.repeatMajorRate * 100).toFixed(0) + '%' })));
@@ -9153,6 +9274,9 @@ function renderActiveRun(root, r) {
     return b;
   }
   kpis.appendChild(kpi('Skill R² (linear · wins)', m.varianceDecomp.skillR2.toFixed(3), 'lower bound — linear assumption'));
+  if (m.varianceDecomp_nonMain) {
+    kpis.appendChild(kpi('Skill R² · non-Main', m.varianceDecomp_nonMain.skillR2.toFixed(3), 'regulars + majors only'));
+  }
   kpis.appendChild(kpi('Luck share', (m.varianceDecomp.luckR2 * 100).toFixed(0) + '%', 'incl. model noise + nonlinearity'));
   // Spearman rank correlation: non-linear-friendly version of skill signal. If skill really
   // matters but wins are lumpy/threshold-based, Spearman will be much higher than R².
@@ -9160,6 +9284,18 @@ function renderActiveRun(root, r) {
     const rho = m.skillSpearman;
     const tag = rho > 0.7 ? 'strong' : rho > 0.4 ? 'moderate' : rho > 0.2 ? 'weak' : 'near noise';
     kpis.appendChild(kpi('Skill ρ (Spearman rank)', rho.toFixed(3), tag + ' rank alignment'));
+  }
+  // Headline poker-skill KPIs: Spearman of authoredSkill vs EV-realization.
+  // Non-Main is the cleanest read because it strips the 25k-field Main lottery.
+  if (typeof m.skillEVSpearman === 'number') {
+    const rho = m.skillEVSpearman;
+    const tag = rho > 0.7 ? 'strong' : rho > 0.4 ? 'moderate' : rho > 0.2 ? 'weak' : 'near noise';
+    kpis.appendChild(kpi('EV ρ (skill ↔ EV)', rho.toFixed(3), tag + ' poker-skill signal'));
+  }
+  if (typeof m.skillEVSpearman_nonMain === 'number') {
+    const rho = m.skillEVSpearman_nonMain;
+    const tag = rho > 0.7 ? 'strong' : rho > 0.4 ? 'moderate' : rho > 0.2 ? 'weak' : 'near noise';
+    kpis.appendChild(kpi('EV ρ · non-Main', rho.toFixed(3), tag + ' (regulars + majors)'));
   }
   // Authored vs measured skill: sanity check on the simulator's internal skill metric.
   // > 0.7 = authored rating tracks empirical; < 0.3 = authored rating is decoupled (suspect).
@@ -9170,6 +9306,9 @@ function renderActiveRun(root, r) {
   }
   kpis.appendChild(kpi('Gini (win concentration)', m.gini.toFixed(3)));
   kpis.appendChild(kpi('Elite major dominance', (m.eliteMajorDominance * 100).toFixed(0) + '%'));
+  if (typeof m.eliteMajorDominance_nonMain === 'number') {
+    kpis.appendChild(kpi('Elite non-Main dominance', (m.eliteMajorDominance_nonMain * 100).toFixed(0) + '%', 'regulars + majors'));
+  }
   kpis.appendChild(kpi('Repeat major rate', (m.repeatMajorRate * 100).toFixed(0) + '%'));
   // Finals skill-edge: the single most diagnostic KPI for "does H2H skill express?"
   // Positive mean = champs are more skilled than RUs. Upset rate near 0.5 = near-coinflip finals.
