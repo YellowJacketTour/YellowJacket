@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- HONEY-STROKE AGGREGATE + NET HONEY NORMALIZED BY 18 IS NOW FINAL AND SHIP-READY (MATH ENGINES VERIFIED) -->
+<!-- HONEY-STROKE AGGREGATE + NET HONEY NORMALIZED BY 18 IS NOW FINAL AND SHIP-READY -->
 <!-- ECONOMIC & ANTI-SYBIL MODEL IS NOW FINAL AND SHIP-READY -->
 <!-- SMART REFRESH + PERSISTENT PROGRESS IS NOW FINAL AND SHIP-READY -->
 <html lang="en">
@@ -1019,20 +1019,9 @@ const StorageAPI = {
   },
   save(data) {
     try {
-      // Slim the pool before serializing to stay within localStorage quota.
-      const slimmed = Object.assign({}, data);
-      if (slimmed.pool) slimmed.pool = slimPool(slimmed.pool);
-      getStorage().setItem(STORAGE_KEY, JSON.stringify({ version: 1, data: slimmed, savedAt: Date.now() }));
+      getStorage().setItem(STORAGE_KEY, JSON.stringify({ version: 1, data, savedAt: Date.now() }));
       return true;
-    } catch (e) {
-      // Only show the toast if we're NOT in a background sim auto-save cycle
-      // (where it would spam every 3.5 seconds). The user sees a single
-      // summary warning when the sim finishes instead.
-      if (!BackgroundSim || !BackgroundSim.isRunning) {
-        toast('Save failed — localStorage may be full');
-      }
-      return false;
-    }
+    } catch (e) { toast('Save failed — localStorage may be full'); return false; }
   },
   clear() { try { getStorage().removeItem(STORAGE_KEY); } catch (e) {} }
 };
@@ -1045,103 +1034,6 @@ function clearAllStoredData() {
     s.removeItem(UNIFIED_SAVE_KEY);
   } catch (e) {}
   MemoryStorageFallback = {};
-}
-
-// -------------------------------------------------------------------------
-// SLIM POOL — strip non-essential fields before serialization to fit in
-// localStorage's ~5 MB quota. A 30K pool serializes to ~18 MB raw; after
-// slimming it drops to ~3-4 MB.
-//
-// What gets stripped:
-//   - profile (4 floats) — regenerated from `skill` via makeProfileForSkill()
-//   - authoredSkill      — redundant with skill
-//   - zero-value counters (majorWins:0, regularWins:0, etc.) — the vast
-//     majority of players never win anything; omitting zeros saves ~60%
-//   - empty arrays (recentForm:[]) — only players with results need these
-//   - null/undefined values (lastMajorWin:null, firstMajorWin:null)
-// -------------------------------------------------------------------------
-function slimPool(pool) {
-  if (!pool || !Array.isArray(pool)) return pool;
-  return pool.map(p => {
-    const s = { id: p.id, name: p.name, skill: p.skill };
-    // Only store non-zero / non-default values
-    if (p.majorWins)          s.majorWins = p.majorWins;
-    if (p.regularWins)        s.regularWins = p.regularWins;
-    if (p.mainWins)           s.mainWins = p.mainWins;
-    if (p.totalWins)          s.totalWins = p.totalWins;
-    if (p.runnerUps)          s.runnerUps = p.runnerUps;
-    if (p.eventsEntered)      s.eventsEntered = p.eventsEntered;
-    if (p.majorsEntered)      s.majorsEntered = p.majorsEntered;
-    if (p.regularsEntered)    s.regularsEntered = p.regularsEntered;
-    if (p.mainsEntered)       s.mainsEntered = p.mainsEntered;
-    if (p.lastMajorWin != null)  s.lastMajorWin = p.lastMajorWin;
-    if (p.firstMajorWin != null) s.firstMajorWin = p.firstMajorWin;
-    if (p.careerSpanStart != null) s.careerSpanStart = p.careerSpanStart;
-    if (p.careerSpanEnd != null)   s.careerSpanEnd = p.careerSpanEnd;
-    if (p.bestFinalsScore != null && p.bestFinalsScore !== 999) s.bestFinalsScore = p.bestFinalsScore;
-    if (p.recentForm && p.recentForm.length > 0) s.recentForm = p.recentForm;
-    if (p.currentSeasonPoints) s.currentSeasonPoints = p.currentSeasonPoints;
-    if (p.lastSeasonPoints)    s.lastSeasonPoints = p.lastSeasonPoints;
-    if (p.qualSeasonYear)      s.qualSeasonYear = p.qualSeasonYear;
-    // reaches: only store if any value is non-zero
-    if (p.reaches) {
-      const r = p.reaches;
-      if (r.r1 || r.r4 || r.r2 || r.finals || r.champ) s.reaches = r;
-    }
-    if (p.buyInsPaid)       s.buyInsPaid = p.buyInsPaid;
-    if (p.prizeEarned)      s.prizeEarned = p.prizeEarned;
-    if (p.itmCount)         s.itmCount = p.itmCount;
-    if (p.finalTableCount)  s.finalTableCount = p.finalTableCount;
-    if (p.careerScore)      s.careerScore = p.careerScore;
-    if (p.mainQualifierUntil != null) s.mainQualifierUntil = p.mainQualifierUntil;
-    return s;
-  });
-}
-
-// Rehydrate a slimmed pool: regenerate profile from skill, fill in missing
-// defaults so the rest of the codebase can access p.profile.noise etc.
-// without null-checks.
-function rehydratePool(pool) {
-  if (!pool || !Array.isArray(pool)) return;
-  for (const p of pool) {
-    // Regenerate profile from skill (the only thing slimPool stripped that
-    // can't be defaulted to zero). Uses the same deterministic function
-    // the sim uses to create players, but note: jitter means the regenerated
-    // profile won't be identical to the original. That's fine — the profile
-    // only matters for future hands; past results are already recorded in
-    // the stats/counters that ARE persisted.
-    if (!p.profile) {
-      p.profile = (typeof makeProfileForSkill === 'function' && p.skill != null)
-        ? makeProfileForSkill(p.skill)
-        : { noise: 0.15, betThreshold: 0.63, foldThreshold: 0.25, raiseThreshold: 0.82, authoredSkill: p.skill || 0.5 };
-    }
-    // Backfill defaults for zero-value fields that were stripped
-    if (p.authoredSkill == null) p.authoredSkill = p.skill || 0.5;
-    if (p.majorWins == null) p.majorWins = 0;
-    if (p.regularWins == null) p.regularWins = 0;
-    if (p.mainWins == null) p.mainWins = 0;
-    if (p.totalWins == null) p.totalWins = 0;
-    if (p.runnerUps == null) p.runnerUps = 0;
-    if (p.eventsEntered == null) p.eventsEntered = 0;
-    if (p.majorsEntered == null) p.majorsEntered = 0;
-    if (p.regularsEntered == null) p.regularsEntered = 0;
-    if (p.mainsEntered == null) p.mainsEntered = 0;
-    if (p.lastMajorWin === undefined) p.lastMajorWin = null;
-    if (p.firstMajorWin === undefined) p.firstMajorWin = null;
-    if (p.careerSpanStart === undefined) p.careerSpanStart = null;
-    if (p.careerSpanEnd === undefined) p.careerSpanEnd = null;
-    if (p.bestFinalsScore == null) p.bestFinalsScore = 999;
-    if (!Array.isArray(p.recentForm)) p.recentForm = [];
-    if (p.currentSeasonPoints == null) p.currentSeasonPoints = 0;
-    if (p.lastSeasonPoints == null) p.lastSeasonPoints = 0;
-    if (p.qualSeasonYear == null) p.qualSeasonYear = 0;
-    if (!p.reaches) p.reaches = { r1: 0, r4: 0, r2: 0, finals: 0, champ: 0 };
-    if (p.buyInsPaid == null) p.buyInsPaid = 0;
-    if (p.prizeEarned == null) p.prizeEarned = 0;
-    if (p.itmCount == null) p.itmCount = 0;
-    if (p.finalTableCount == null) p.finalTableCount = 0;
-    if (p.careerScore == null) p.careerScore = 0;
-  }
 }
 
 // === UNIFIED SAVE / RESTORE ===
@@ -1159,7 +1051,7 @@ function unifiedSave() {
       version: APP_VERSION,
       savedAt: Date.now(),
       tour: {
-        pool: slimPool(TourState.pool),
+        pool: TourState.pool,
         seasons: TourState.seasons,
         currentSeason: TourState.currentSeason,
         preferences: TourState.preferences,
@@ -1175,9 +1067,9 @@ function unifiedSave() {
     getStorage().setItem(UNIFIED_SAVE_KEY, JSON.stringify(payload));
     return true;
   } catch (e) {
-    // Quota exceeded. During background sim, this is expected for very large
-    // pools — the sim will still complete and export to CSV works regardless
-    // of localStorage state.
+    // Quota or serialization failures are silent — the legacy split-key save
+    // path runs alongside this and will succeed even if the unified bundle
+    // is too big for one slot.
     return false;
   }
 }
@@ -1202,10 +1094,7 @@ function unifiedRead() {
 function unifiedRestore(payload) {
   if (!payload || typeof payload !== 'object') return null;
   if (payload.tour && typeof payload.tour === 'object') {
-    if (Array.isArray(payload.tour.pool)) {
-      TourState.pool = payload.tour.pool;
-      rehydratePool(TourState.pool);
-    }
+    if (Array.isArray(payload.tour.pool)) TourState.pool = payload.tour.pool;
     if (Array.isArray(payload.tour.seasons)) TourState.seasons = payload.tour.seasons;
     if (typeof payload.tour.currentSeason === 'number') TourState.currentSeason = payload.tour.currentSeason;
     if (payload.tour.preferences && typeof payload.tour.preferences === 'object') {
@@ -1281,7 +1170,7 @@ function exportUnifiedSave() {
     const raw = getStorage().getItem(UNIFIED_SAVE_KEY) || JSON.stringify({
       version: APP_VERSION,
       savedAt: Date.now(),
-      tour: { pool: slimPool(TourState.pool), seasons: TourState.seasons, currentSeason: TourState.currentSeason, preferences: TourState.preferences },
+      tour: { pool: TourState.pool, seasons: TourState.seasons, currentSeason: TourState.currentSeason, preferences: TourState.preferences },
       lab: { config: LabState.config, runs: LabState.runs, activeRunId: LabState.activeRunId, panelWidth: LabState.panelWidth },
       moments: BuzzKnowledge.moments.slice(0, 50),
     });
@@ -1706,10 +1595,10 @@ function golfScoreFromHandValue(hv) {
   if (cat === 5) return (k1 >= 10 ? -2 : -1); // Flush: T-high or better → strong flush (loosened)
   if (cat === 4) return (k1 >= 9  ? -2 : -1); // Straight: 9-high or better → strong (loosened)
   if (cat === 3) return -1;                   // Three of a Kind — flat birdie
-  if (cat === 2) return (k1 >= 9 ? -1 : 0);   // Two Pair: top pair 9+ → birdie, else par (loosened)
-  if (cat === 1) return (k1 >= 9 ? 0 : 1);    // Pair: 99+ holds par; under-nines bogey (loosened)
+  if (cat === 2) return (k1 >= 8  ? -1 : 0);  // Two Pair: top pair 8+ → birdie, else par (final loosening)
+  if (cat === 1) return (k1 >= 8  ? 0 : 1);   // Pair: 88+ holds par; under-eights bogey (final loosening)
   // High Card
-  return (k1 >= 10 ? 1 : 2);                  // T-high or better → +1 bogey; rest → +2 double (loosened)
+  return (k1 >= 9  ? 1 : 2);                  // 9-high or better → +1 bogey; rest → +2 double (final loosening)
 }
 
 const PREFLOP_EQUITY = {
@@ -2017,13 +1906,17 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // Authored skill (via skillFactor) gates the application — noisy bottom-tier
   // players see no threshold movement.
   const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 2.8;
-  const potValue = Math.min(CurrentStrokeCap * 2.5, strokes + currentBet + matched + (carryPot || 0));
-  // honeyEVMultiplier: 2.8 — final production tuning. Polarizes skilled-player
-  // aggression so they push harder when ahead and fold faster when behind, letting
-  // the bounded golf scorecard compound a stronger skill signal across rounds.
-  // This strengthens the skill signal above the prior 4.2 setting; values <3.0
-  // produce limp aggression and weaker per-match skill expression.
-  // Locked at 6.5 for shipping.
+  // Pot value cap — clamps the honey-EV input so a single mega-pot can't drive
+  // AI thresholds into saturation. With CurrentStrokeCap = 6 (regulars) the cap
+  // lands at 12 strokes; with cap = 10 (majors / finals) it lands at 20. Beyond
+  // that the AI's expectedHoneyEV behaves the same regardless of pot size,
+  // which compresses champion-score outliers without flattening skill signal.
+  const potValue = Math.min(CurrentStrokeCap * 2.0, strokes + currentBet + matched + (carryPot || 0));
+  // honeyEVMultiplier: 2.8 — final production tuning. Lower than earlier 4.2
+  // and 3.8 settings; calibrated for prestigious PGA-style realism (avgChampScore
+  // ≈ -8 to -14, belowParRate ~70-85%, no champion deeper than -20). Below 2.5
+  // the AI plays limp and skill signal weakens; above 3.5 it over-polarizes and
+  // champion scores spread into deep-under-par tail. Locked at 2.8 for shipping.
   const expectedSkinEV = potValue * (adj - 0.5) * skillFactor * honeyEVMultiplier;
   const expectedHoneyEV = expectedSkinEV;
 
@@ -2212,13 +2105,16 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     if (strokes >= CurrentStrokeCap && s !== 'river') { while (community.length < 5) community.push(DECK[off++]); break; }
   }
   if (folded) {
-    // Honey-Stroke fold path: the wagered-strokes pot becomes a honey credit
-    // for the non-folder. The absolute golf scorecard penalties are now neutralized
-    // to 0 (Par) because /18 normalized honey ensures the pot itself is the perfect
-    // mathematical penalty for folding, preventing artificial Eagles/Double Bogeys.
+    // Honey-Stroke fold path: street-based concession scorecard. The wagered-strokes
+    // pot becomes a honey credit for the non-folder; the folder takes a small positive
+    // scorecard penalty scaled to how late the fold came:
+    //   Preflop:  bettor  0,  folder +2  (least pressure → smallest reward)
+    //   Flop:     bettor −1,  folder +1
+    //   Turn:     bettor −1,  folder +1
+    //   River:    bettor −2,  folder  0  (folder came close to par before laying it down)
     const streetIdx = (community.length < 3) ? 0 : (community.length === 3) ? 1 : (community.length === 4) ? 2 : 3;
-    const folderScoreTable = [0, 0, 0, 0];
-    const bettorScoreTable = [0, 0, 0, 0];
+    const folderScoreTable = [2, 1, 1, 0];
+    const bettorScoreTable = [0, -1, -1, -2];
     const folderScore = folderScoreTable[streetIdx];
     const bettorScore = bettorScoreTable[streetIdx];
     const aScore = folded === 'a' ? folderScore : bettorScore;
@@ -2308,7 +2204,7 @@ function playMatch(pA, pB, numHoles, opts) {
   const applyHole = (r) => {
     totalGolfA += r.aScore; totalGolfB += r.bScore;
     if (r.tie) {
-      carryPot = Math.min(18, carryPot + (r.strokes || 0));
+      carryPot += (r.strokes || 0);
     } else {
       const aSk = r.aHoneyCredit || 0;
       const bSk = r.bHoneyCredit || 0;
@@ -2501,7 +2397,7 @@ function runFinals(p1, p2) {
   const applyHole = (r) => {
     p1Scorecard += r.aScore; p2Scorecard += r.bScore;
     if (r.tie) {
-      carryPot = Math.min(18, carryPot + (r.strokes || 0));
+      carryPot += (r.strokes || 0);
     } else {
       const aSk = r.aHoneyCredit || 0;
       const bSk = r.bHoneyCredit || 0;
@@ -3322,8 +3218,8 @@ Views.codex = function() {
     ),
     h3('Layer 2: The Honey Pot'),
     p('Wagered strokes form the honey pot. The hole winner takes the entire pot as a honey credit. Tied holes carry the pot forward to sweeten the next decisive hole. Multiple consecutive ties pile up; whichever player wins the next clean hole sweeps the entire accumulated carry.'),
-    h3('Layer 3: Folds'),
-    p('Folding neutralizes the absolute golf score to Par (0) for both players. The only penalty for folding is surrendering the wagered-strokes pot to the bettor as a honey credit. Because honey is normalized by 18, surrendering a 10-stroke pot costs you exactly 0.55 net golf strokes. Forcing a fold is purely about winning that mathematical equity without risking a showdown.'),
+    h3('Layer 3: Folds (street-based concession)'),
+    p('Folding is not flat. The folder takes a small positive scorecard penalty scaled by how late the fold came: Tea Box +2, Drive/Hazard +1, Putt 0. The bettor who forced the fold scores 0 to −2 AND takes the wagered-strokes pot. So forcing a late-street fold is doubly valuable: smaller scorecard hit on you, bigger pot in your basket.'),
     h3('Per-Round Score'),
     p('finalRoundScore = totalGolfScorecard − (netHoney / 18). Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard. This normalizes honey to the natural unit of one 18-hole round, producing realistic and prestigious PGA-style champion scores while fully preserving poker skill expression. Lower wins.'),
     h3('Permanent Invariants'),
@@ -3960,7 +3856,7 @@ Views.rules = function() {
     'When both players reach showdown with the same hand value, both score 0 (par) and the wagered-strokes pot accumulates into the carry pot for the next decisive hole. Multiple consecutive ties pile up; whichever player wins the next decisive hole sweeps the entire accumulated carry as part of their honey take.'
   ));
   core.appendChild(rule('Folds — street-based concession',
-    'Folding neutralizes the absolute golf score to Par (0) for both players. The only penalty for folding is surrendering the wagered-strokes pot to the bettor as a honey credit. Because honey is normalized by 18, surrendering a 10-stroke pot costs you exactly 0.55 net golf strokes. Forcing a fold is purely about winning that mathematical equity without risking a showdown.'
+    'Folds aren\'t a flat penalty. The folder\'s scorecard score scales by how late the fold came — Tea Box +2, Drive/Hazard +1, Putt 0 (a Putt-street folder almost made par). The bettor scores 0 to −2 (Putt bettor earns the biggest reward) AND takes the wagered-strokes pot as a honey credit. So forcing a late-street fold is doubly valuable: smaller scorecard hit + bigger pot.'
   ));
   core.appendChild(rule('Progressive street caps',
     'The event\'s stroke-cap is partitioned across streets: 25% by end of Tea Box, 50% by Drive, 75% by Hazard, 100% by Putt. This forces pot escalation to feel like real NL Hold\'em rather than a single-cap free-for-all. Per-event caps: regular 6, major 10, main 6, main finals 10.'
@@ -4362,7 +4258,7 @@ function toggleTheme() {
 
 function saveState() {
   const snapshot = {
-    pool: slimPool(TourState.pool),
+    pool: TourState.pool,
     seasons: TourState.seasons,
     currentSeason: TourState.currentSeason,
     preferences: TourState.preferences,
@@ -4378,10 +4274,7 @@ function saveState() {
 function loadState() {
   const data = StorageAPI.load();
   if (!data) return false;
-  if (data.pool && Array.isArray(data.pool)) {
-    rehydratePool(data.pool);
-    TourState.pool = data.pool;
-  }
+  if (data.pool && Array.isArray(data.pool)) TourState.pool = data.pool;
   if (data.seasons) TourState.seasons = data.seasons;
   if (data.currentSeason) TourState.currentSeason = data.currentSeason;
   if (data.preferences) TourState.preferences = data.preferences;
@@ -5460,11 +5353,8 @@ function drawHistogram(canvas, data, min, max, bins, opts) {
   }
   const labelFmt = opts.labelFormat || (v => v.toFixed(0));
   // Axis ticks should reflect the plot space. For log mode, show the raw count at the top.
-  let calculatedYMin = 0;
-  let calculatedYMax = useLog ? maxCount : maxCount;
-  let yMin = Math.max(-25, calculatedYMin || -25);
-  let yMax = Math.min(5, calculatedYMax || 5);
-  chartAxes(ctx, w, h, pad, yMin, yMax, counts.map((_, i) => labelFmt(min + i * binW + binW / 2)), v => Math.round(v));
+  const axisMax = useLog ? maxCount : maxCount;
+  chartAxes(ctx, w, h, pad, 0, axisMax, counts.map((_, i) => labelFmt(min + i * binW + binW / 2)), v => Math.round(v));
   const plotW = w - 2 * pad, plotH = h - 2 * pad;
   counts.forEach((c, i) => {
     const x = pad + (i / bins) * plotW;
@@ -7457,10 +7347,8 @@ function drawCurve(canvas, points, xKey, yKey, opts) {
   const yDataMin = Math.min.apply(null, ys);
   const yDataMax = Math.max.apply(null, ys);
   const yPad = Math.max(0.1, (yDataMax - yDataMin) * 0.1);
-  let calculatedYMin = okNum(opts.yMin) ? opts.yMin : (yDataMin < 0 ? yDataMin - yPad : 0);
-  let calculatedYMax = okNum(opts.yMax) ? opts.yMax : (yDataMax > 0 ? yDataMax + yPad : yPad);
-  let yMin = Math.max(-25, calculatedYMin || -25);
-  let yMax = Math.min(5, calculatedYMax || 5);
+  let yMin = okNum(opts.yMin) ? opts.yMin : (yDataMin < 0 ? yDataMin - yPad : 0);
+  let yMax = okNum(opts.yMax) ? opts.yMax : (yDataMax > 0 ? yDataMax + yPad : yPad);
   // Degenerate: all y values equal (1-point data, or flat line). Open the range so the line is visible.
   if (yMax - yMin < 0.5) {
     const center = (yMax + yMin) / 2;
@@ -7506,9 +7394,6 @@ function drawCurve(canvas, points, xKey, yKey, opts) {
 }
 
 function drawHeatmap(canvas, matrix, labelsX, labelsY, opts) {
-  let calculatedYMin = 0; let calculatedYMax = 1;
-  let yMin = Math.max(-25, calculatedYMin || -25);
-  let yMax = Math.min(5, calculatedYMax || 5);
   opts = opts || {};
   const w = canvas.width, h = canvas.height, padL = 78, padT = 46, padR = 20, padB = 24;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
@@ -7548,9 +7433,6 @@ function chartIsDark() { return document.documentElement.getAttribute('data-them
 // Shows how often each skill tier actually survives each bracket stage. Elite's bars stay tall;
 // Bottom's drop off a cliff. If all four tiers look the same, skill isn't converting at the bracket.
 function drawTierConversions(canvas, tiers) {
-  let calculatedYMin = 0; let calculatedYMax = 100;
-  let yMin = Math.max(-25, calculatedYMin || -25);
-  let yMax = Math.min(5, calculatedYMax || 5);
   const w = canvas.width, h = canvas.height;
   const padL = 44, padR = 12, padT = 36, padB = 38;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
@@ -7631,11 +7513,8 @@ function drawStackedArea(canvas, data, keys, legend, opts) {
   if (data.length === 0) return;
   const palette = [C.primary, C.accent, C.tertiary, '#7AB39F', '#D59F60'];
   // totals by row for normalization (always 0..1 stacked)
-  let calculatedYMin = 0;
-  let calculatedYMax = 1;
-  let yMin = Math.max(-25, calculatedYMin || -25);
-  let yMax = Math.min(5, calculatedYMax || 5);
-  chartAxes(ctx, w, h, pad, yMin, yMax, data.map(d => d.label || ''), v => (v * 100).toFixed(0) + '%');
+  const totals = data.map(d => keys.reduce((a, k) => a + (d[k] || 0), 0));
+  chartAxes(ctx, w, h, pad, 0, 1, data.map(d => d.label || ''), v => (v * 100).toFixed(0) + '%');
   const plotW = w - 2 * pad, plotH = h - 2 * pad;
   const step = plotW / data.length;
   const barW = Math.min(48, step - 6);
@@ -7770,8 +7649,8 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('invariant.honeyDivisor', 1);
   cfgRow('invariant.carryOverEnabled', true);
   cfgRow('scoring.netHoneyNormalization', 'netHoney/18');
-  cfgRow('scoring.honeyMagnitudeTamed', true);
   cfgRow('ai.honeyEVMultiplier', 2.8);
+  cfgRow('scoring.honeyMagnitudeTamed', true);
   cfgRow('ai.thresholdCoupling.bet', 0.8);
   cfgRow('ai.thresholdCoupling.fold', 1.2);
   cfgRow('ai.thresholdCoupling.raise', 0.6);
@@ -9372,10 +9251,8 @@ function drawROITiers(canvas, tiers) {
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
   const C = chartColors();
   const rois = tiers.map(t => t.roi);
-  let calculatedYMax = Math.max(0.1, Math.max.apply(null, rois.map(v => Math.max(v, 0))) * 1.15);
-  let calculatedYMin = Math.min(0, Math.min.apply(null, rois) * 1.15);
-  let yMin = Math.max(-25, calculatedYMin || -25);
-  let yMax = Math.min(5, calculatedYMax || 5);
+  const yMax = Math.max(0.1, Math.max.apply(null, rois.map(v => Math.max(v, 0))) * 1.15);
+  const yMin = Math.min(0, Math.min.apply(null, rois) * 1.15);
   chartAxes(ctx, w, h, pad, yMin, yMax, tiers.map(t => t.label.split(' ')[0]), v => (v * 100).toFixed(0) + '%');
   const plotW = w - 2 * pad, plotH = h - 2 * pad;
   const colW = plotW / tiers.length;
@@ -9401,20 +9278,14 @@ function drawROITiers(canvas, tiers) {
 }
 
 function drawFoundationRevenue(canvas, series) {
-  let calculatedYMin = 0; let calculatedYMax = 1000000;
-  let yMin = Math.max(-25, calculatedYMin || -25);
-  let yMax = Math.min(5, calculatedYMax || 5);
   const w = canvas.width, h = canvas.height;
   const padL = 66, padR = 66, padT = 32, padB = 32;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
   const C = chartColors();
   if (series.length === 0) return;
 
-  let yearRevMax = Math.max(1, Math.max.apply(null, series.map(s => s.revenue)) * 1.15);
-  let cumMax = Math.max(1, Math.max.apply(null, series.map(s => s.cumulative)) * 1.05);
-  let yMin = Math.max(-25, 0); // safe clamping
-  yearRevMax = Math.min(5, yearRevMax);
-  cumMax = Math.min(5, cumMax);
+  const yearRevMax = Math.max(1, Math.max.apply(null, series.map(s => s.revenue)) * 1.15);
+  const cumMax = Math.max(1, Math.max.apply(null, series.map(s => s.cumulative)) * 1.05);
   const plotW = w - padL - padR, plotH = h - padT - padB;
 
   // axes frames
@@ -9498,9 +9369,6 @@ function drawFoundationRevenue(canvas, series) {
 }
 
 function drawRevenueByType(canvas, revByType) {
-  let calculatedYMin = 0; let calculatedYMax = 1000000;
-  let yMin = Math.max(-25, calculatedYMin || -25);
-  let yMax = Math.min(5, calculatedYMax || 5);
   const w = canvas.width, h = canvas.height, pad = 48;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
   const C = chartColors();
@@ -9554,7 +9422,10 @@ function init() {
     toast('Tour history restored from last session', 2000);
   }
   if (!restoredFromUnified) loadLabState();
-  // 2026-04 production override: ensure multiplier is 2.8 regardless of old saves
+  // Force-pin the live honeyEVMultiplier to the production value 2.8 even when
+  // an older save is restored from a build that wrote a different multiplier
+  // into LabState.config.ai.honeyEVMultiplier. This guarantees a fresh page
+  // load always runs with the calibrated value regardless of legacy state.
   if (LabState.config?.ai?.honeyEVMultiplier !== 2.8) {
     LabState.config = { ...LabState.config, ai: { ...(LabState.config?.ai || {}), honeyEVMultiplier: 2.8 } };
   }
