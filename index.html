@@ -5461,7 +5461,9 @@ function drawHistogram(canvas, data, min, max, bins, opts) {
   const labelFmt = opts.labelFormat || (v => v.toFixed(0));
   // Axis ticks should reflect the plot space. For log mode, show the raw count at the top.
   const axisMax = useLog ? maxCount : maxCount;
-  chartAxes(ctx, w, h, pad, 0, axisMax, counts.map((_, i) => labelFmt(min + i * binW + binW / 2)), v => Math.round(v));
+  const yMin = Math.max(-25, 0);
+  const yMax = Math.min(5, axisMax);
+  chartAxes(ctx, w, h, pad, yMin, yMax, counts.map((_, i) => labelFmt(min + i * binW + binW / 2)), v => Math.round(v));
   const plotW = w - 2 * pad, plotH = h - 2 * pad;
   counts.forEach((c, i) => {
     const x = pad + (i / bins) * plotW;
@@ -7454,8 +7456,8 @@ function drawCurve(canvas, points, xKey, yKey, opts) {
   const yDataMin = Math.min.apply(null, ys);
   const yDataMax = Math.max.apply(null, ys);
   const yPad = Math.max(0.1, (yDataMax - yDataMin) * 0.1);
-  let yMin = okNum(opts.yMin) ? opts.yMin : (yDataMin < 0 ? yDataMin - yPad : 0);
-  let yMax = okNum(opts.yMax) ? opts.yMax : (yDataMax > 0 ? yDataMax + yPad : yPad);
+  let yMin = Math.max(-25, okNum(opts.yMin) ? opts.yMin : (yDataMin < 0 ? yDataMin - yPad : 0));
+  let yMax = Math.min(5, okNum(opts.yMax) ? opts.yMax : (yDataMax > 0 ? yDataMax + yPad : yPad));
   // Degenerate: all y values equal (1-point data, or flat line). Open the range so the line is visible.
   if (yMax - yMin < 0.5) {
     const center = (yMax + yMin) / 2;
@@ -7621,7 +7623,9 @@ function drawStackedArea(canvas, data, keys, legend, opts) {
   const palette = [C.primary, C.accent, C.tertiary, '#7AB39F', '#D59F60'];
   // totals by row for normalization (always 0..1 stacked)
   const totals = data.map(d => keys.reduce((a, k) => a + (d[k] || 0), 0));
-  chartAxes(ctx, w, h, pad, 0, 1, data.map(d => d.label || ''), v => (v * 100).toFixed(0) + '%');
+  const yMin = Math.max(-25, 0);
+  const yMax = Math.min(5, 1);
+  chartAxes(ctx, w, h, pad, yMin, yMax, data.map(d => d.label || ''), v => (v * 100).toFixed(0) + '%');
   const plotW = w - 2 * pad, plotH = h - 2 * pad;
   const step = plotW / data.length;
   const barW = Math.min(48, step - 6);
@@ -9358,8 +9362,10 @@ function drawROITiers(canvas, tiers) {
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
   const C = chartColors();
   const rois = tiers.map(t => t.roi);
-  const yMax = Math.max(0.1, Math.max.apply(null, rois.map(v => Math.max(v, 0))) * 1.15);
-  const yMin = Math.min(0, Math.min.apply(null, rois) * 1.15);
+  let yMax = Math.max(0.1, Math.max.apply(null, rois.map(v => Math.max(v, 0))) * 1.15);
+  let yMin = Math.min(0, Math.min.apply(null, rois) * 1.15);
+  yMin = Math.max(-25, yMin);
+  yMax = Math.min(5, yMax);
   chartAxes(ctx, w, h, pad, yMin, yMax, tiers.map(t => t.label.split(' ')[0]), v => (v * 100).toFixed(0) + '%');
   const plotW = w - 2 * pad, plotH = h - 2 * pad;
   const colW = plotW / tiers.length;
@@ -9391,8 +9397,11 @@ function drawFoundationRevenue(canvas, series) {
   const C = chartColors();
   if (series.length === 0) return;
 
-  const yearRevMax = Math.max(1, Math.max.apply(null, series.map(s => s.revenue)) * 1.15);
-  const cumMax = Math.max(1, Math.max.apply(null, series.map(s => s.cumulative)) * 1.05);
+  let yearRevMax = Math.max(1, Math.max.apply(null, series.map(s => s.revenue)) * 1.15);
+  let cumMax = Math.max(1, Math.max.apply(null, series.map(s => s.cumulative)) * 1.05);
+  let yMin = Math.max(-25, 0); // safe clamping
+  yearRevMax = Math.min(5, yearRevMax);
+  cumMax = Math.min(5, cumMax);
   const plotW = w - padL - padR, plotH = h - padT - padB;
 
   // axes frames
