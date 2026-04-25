@@ -885,6 +885,16 @@
 const APP_VERSION = "2026.04.25-v2";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
+// LARGE SIM MODE (state-of-the-art persistence)
+// When enabled, disables all mid-run autosaves and does one final save only.
+// Prevents localStorage quota errors on 30k+ pool simulations while preserving
+// full data for the active run. The guard variable LARGE_SIM_RUN_IN_PROGRESS
+// is set to true at the start of a run (via simulatorRunClicked) and cleared
+// before the post-run snapshot save, so save calls inside the simulation loop
+// are no-ops while the final canonical save still writes through normally.
+let LARGE_SIM_RUN_IN_PROGRESS = false;
+let currentRunData = null;
+
 function el(tag, attrs, ...children) {
   const n = document.createElement(tag);
   if (attrs) for (const k in attrs) {
@@ -1046,6 +1056,14 @@ function clearAllStoredData() {
 // backward compatibility with older builds that read those keys directly. The
 // unified key is the canonical source on boot.
 function unifiedSave() {
+  // LARGE SIM MODE guard — when a long simulation is in flight, every event
+  // and every progress tick would otherwise trigger a save. With 30k+ pool
+  // sizes that produces hundreds of MB of churn and frequent QuotaExceeded
+  // errors. Skip the write while the run is in progress; the post-run snapshot
+  // and the explicit final save take care of canonicalizing state.
+  if (LARGE_SIM_RUN_IN_PROGRESS && LabState && LabState.config && LabState.config.largeSimMode) {
+    return false;
+  }
   try {
     const payload = {
       version: APP_VERSION,
@@ -4270,6 +4288,10 @@ function toggleTheme() {
 }
 
 function saveState() {
+  // LARGE SIM MODE guard — see unifiedSave for rationale.
+  if (LARGE_SIM_RUN_IN_PROGRESS && LabState && LabState.config && LabState.config.largeSimMode) {
+    return;
+  }
   const snapshot = {
     pool: TourState.pool,
     seasons: TourState.seasons,
@@ -5954,6 +5976,11 @@ const DEFAULT_SIM_CONFIG = {
   // Both formats run on the SAME per-hole engine — only the macro structure
   // differs. Switch the flag to compare feels in the same simulator session.
   tournamentFormat: 'bracket',
+  // largeSimMode — disables all mid-run autosaves so 30k+ pool simulations
+  // don't hit localStorage quota errors. One final save runs after the loop
+  // completes. Older runs are auto-pruned to summary-only stats. Toggle via
+  // the checkbox in the Lab config panel ("Large Simulation Mode").
+  largeSimMode: false,
   // === ECONOMIC MODEL ===
   // Buy-in tiers for the satellite ladder (informational; live event buy-ins
   // live in buyInRegular/Major/Main above). Quoted in the Codex "Economics &
@@ -7593,7 +7620,51 @@ function saveRunSnapshot(session, label) {
   return snap;
 }
 
+// pruneRunForArchive — strips heavy arrays from an older run snapshot so it
+// can survive in storage as a compact summary card. Keeps just the headline
+// metrics that the Run Registry needs to render. Marks `_archived: true` so
+// callers know the run no longer has full chart data.
+function pruneRunForArchive(run) {
+  if (!run || !run.metrics || run._archived) return run;
+  const m = run.metrics;
+  const cs = Array.isArray(m.champScores) ? m.champScores : [];
+  const avgChampScore = cs.length ? cs.reduce((a, b) => a + b, 0) / cs.length : 0;
+  const liteMetrics = {
+    skillR2: (m.varianceDecomp && m.varianceDecomp.skillR2) || m.skillR2 || 0,
+    skillSpearman: m.skillSpearman || 0,
+    gini: m.gini || 0,
+    belowParRate: m.belowParRate || 0,
+    eliteMajorDominance: m.eliteMajorDominance || 0,
+    repeatMajorRate: m.repeatMajorRate || 0,
+    avgChampScore,
+    yearRange: m.yearRange || [0, 0],
+    eventCount: m.eventCount || cs.length,
+    poolSize: m.poolSize || 0,
+    cfg: m.cfg || run.cfg,
+    economics: m.economics ? {
+      tiers: m.economics.tiers,
+      totalRevenue: m.economics.totalRevenue,
+      itmRate: m.economics.itmRate,
+    } : null,
+    finalsSkillEdge: m.finalsSkillEdge ? {
+      mean: (m.finalsSkillEdge.mean != null ? m.finalsSkillEdge.mean : (m.finalsSkillEdge.all && m.finalsSkillEdge.all.mean) || 0)
+    } : null,
+  };
+  return Object.assign({}, run, { metrics: liteMetrics, _archived: true });
+}
+
 function saveLabState() {
+  // LARGE SIM MODE guard — see unifiedSave for rationale.
+  if (LARGE_SIM_RUN_IN_PROGRESS && LabState && LabState.config && LabState.config.largeSimMode) {
+    return;
+  }
+  // Auto-prune: keep the last 5 runs at full fidelity; archive the rest down
+  // to summary stats so Run Registry stays browsable without bloating storage.
+  if (Array.isArray(LabState.runs) && LabState.runs.length > 5) {
+    for (let i = 5; i < LabState.runs.length; i++) {
+      LabState.runs[i] = pruneRunForArchive(LabState.runs[i]);
+    }
+  }
   try {
     const body = { config: LabState.config, runs: LabState.runs, activeRunId: LabState.activeRunId, panelWidth: LabState.panelWidth };
     getStorage().setItem(LAB_STORAGE_KEY, JSON.stringify(body));
@@ -7665,6 +7736,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('ai.honeyEVMultiplier', 3.0);
   cfgRow('scoring.honeyMagnitudeTamed', true);
   cfgRow('scoring.honeyNormalizationDivisor', 36);
+  cfgRow('ui.largeSimMode', LabState.config.largeSimMode ? 'enabled' : 'disabled');
   cfgRow('ai.thresholdCoupling.bet', 0.8);
   cfgRow('ai.thresholdCoupling.fold', 1.2);
   cfgRow('ai.thresholdCoupling.raise', 0.6);
@@ -8346,6 +8418,20 @@ function renderConfigPanel(panel, mode) {
   bgRow.appendChild(el('span', { text: 'Run in background' }));
   runSec.appendChild(bgRow);
 
+  // Large Simulation Mode — disables mid-run autosaves so 30k+ pool sims can
+  // complete without QuotaExceeded errors. The flag persists in cfg so it
+  // survives reloads.
+  const lsmRow = el('label', { class: 'ui-sans', style: 'display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); margin-top: 6px; cursor: pointer;' });
+  const lsmCheck = el('input', { type: 'checkbox', id: 'labLargeSimMode' });
+  lsmCheck.checked = !!LabState.config.largeSimMode;
+  lsmCheck.onchange = () => {
+    LabState.config.largeSimMode = !!lsmCheck.checked;
+    saveLabState();
+  };
+  lsmRow.appendChild(lsmCheck);
+  lsmRow.appendChild(el('span', { text: 'Large Simulation Mode (for 30k+ pools)' }));
+  runSec.appendChild(lsmRow);
+
   const runBtn = el('button', { class: 'btn gold', id: 'labRunBtn', style: 'width: 100%; margin-top: 10px;', text: 'Run Simulation →' });
   if (BackgroundSim.isRunning) {
     runBtn.disabled = true;
@@ -8575,6 +8661,12 @@ async function simulatorRunClicked() {
   let handedToBackground = false;
   const runBtn = $('#labRunBtn');
   if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Running...'; }
+  // LARGE SIM MODE — disable mid-run autosaves for the entire run lifecycle.
+  // The guard is cleared at the end of the try block, BEFORE the snapshot
+  // save runs, so the post-run save still writes through normally. The finally
+  // block re-asserts cleared state as a safety belt against thrown errors.
+  const useLargeSim = !!(LabState.config && LabState.config.largeSimMode);
+  if (useLargeSim) LARGE_SIM_RUN_IN_PROGRESS = true;
   try {
     const cfg = JSON.parse(JSON.stringify(LabState.config));
     const repeats = Math.max(1, Math.min(20, cfg.repeatRuns || 1));
@@ -8627,8 +8719,21 @@ async function simulatorRunClicked() {
         if (runBtn) runBtn.textContent = 'Y' + info.year + '/' + info.endYear + ' · ' + info.type + ' ' + info.i + '/' + info.total;
       };
       const session = await runSimulator(cfg, progress);
+      // LARGE SIM MODE — clear the guard now (BEFORE the snapshot save) so
+      // the canonical post-run save writes through. Stash the session in the
+      // global currentRunData holder so external code can still inspect the
+      // active run between completion and storage settle.
+      if (useLargeSim) {
+        LARGE_SIM_RUN_IN_PROGRESS = false;
+        currentRunData = session;
+      }
       const defaultLabel = 'Run ' + (LabState.runs.length + 1) + ' · Y' + session.metrics.yearRange[0] + '-Y' + session.metrics.yearRange[1];
       const snap = saveRunSnapshot(session, cfg.label || defaultLabel);
+      // Force a final canonical save in largeSim mode — the saveLabState
+      // inside saveRunSnapshot already writes, but we explicitly call saveState
+      // too so TourState's pool/seasons mutations from the run are persisted in
+      // a single consolidated write rather than an accumulated stream.
+      if (useLargeSim) saveState();
       toast('Run saved · ' + snap.label);
     } else {
       // CI mode: runs N isolated sims via runLabSession, aggregates metrics with mean±SD.
@@ -8658,8 +8763,15 @@ async function simulatorRunClicked() {
         metrics: agg.aggregated,
         elapsedMs,
       };
+      // LARGE SIM MODE — same handoff as the single-run path: clear the guard
+      // before the snapshot save so the canonical write goes through.
+      if (useLargeSim) {
+        LARGE_SIM_RUN_IN_PROGRESS = false;
+        currentRunData = aggSession;
+      }
       const defaultLabel = 'CI×' + repeats + ' · ' + cfg.seasons + 'y · ' + new Date().toLocaleTimeString();
       const snap = saveRunSnapshot(aggSession, cfg.label || defaultLabel);
+      if (useLargeSim) saveState();
       toast('CI run saved (' + repeats + ' repeats) · ' + snap.label);
     }
     renderLabResults($('#labResults'));
@@ -8667,6 +8779,10 @@ async function simulatorRunClicked() {
     toast('Run failed: ' + e.message);
     console.error(e);
   } finally {
+    // Safety belt: always clear the LARGE SIM guard on exit. If the run
+    // threw before reaching the explicit clear above, the guard would
+    // otherwise stay true and silently disable saves until next reload.
+    LARGE_SIM_RUN_IN_PROGRESS = false;
     if (!handedToBackground) {
       LabState.busy = false;
       if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Run Simulation →'; }
