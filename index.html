@@ -1947,20 +1947,18 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // have positive equity in a meaningful pot, and the opposite when they're behind.
   // Authored skill (via skillFactor) gates the application — noisy bottom-tier
   // players see no threshold movement.
-  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 3.2;
   // Pot value cap — clamps the honey-EV input so a single mega-pot can't drive
   // AI thresholds into saturation. With CurrentStrokeCap = 6 (regulars) the cap
   // lands at 12 strokes; with cap = 10 (majors / finals) it lands at 20. Beyond
   // that the AI's expectedHoneyEV behaves the same regardless of pot size,
   // which compresses champion-score outliers without flattening skill signal.
   const potValue = Math.min(CurrentStrokeCap * 2.0, strokes + currentBet + matched + (carryPot || 0));
-  // honeyEVMultiplier: 3.2 — bumped from 3.0 to restore skill signal while
-  // testing honeyNormalizationDivisor=36. 2.8 collapsed skill signal entirely
-  // (skillR² = 0.004, elite dominance 7%); 3.0 was a sweet spot but slightly
-  // soft on skill expression at divisor=36. 3.2 is the upper bound before
-  // magnitude starts blowing out. Pinned at 3.2 for the divisor-36 production
-  // calibration; revisit if magnitude or skill signal drift on future runs.
-  const expectedSkinEV = potValue * (adj - 0.5) * skillFactor * honeyEVMultiplier;
+  // Honey is the smoothing drizzle only. expectedSkinEV is now measured directly
+  // from equity (adj) * skillFactor * 1.2. No arbitrary multiplier. Golf hand
+  // scores dominate; honey gently closes the wagering circuit. The 1.2 drizzle
+  // factor is the only constant — small enough that strong-equity hands push a
+  // little harder without polarizing the AI into saturation.
+  const expectedSkinEV = potValue * adj * skillFactor * 1.2;
   const expectedHoneyEV = expectedSkinEV;
 
   // Local copies of the three decision thresholds — modifying these instead of
@@ -7748,7 +7746,6 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('scoringStyle', 'honey-stroke');
   cfgRow('invariant.honeyDivisor', 1);
   cfgRow('invariant.carryOverEnabled', true);
-  cfgRow('ai.honeyEVMultiplier', 3.2);
   cfgRow('scoring.honeyMagnitudeTamed', true);
   cfgRow('scoring.honeyNormalizationDivisor', 36);
   cfgRow('ui.largeSimMode', LabState.config.largeSimMode ? 'enabled' : 'disabled');
@@ -9576,14 +9573,13 @@ function init() {
     toast('Tour history restored from last session', 2000);
   }
   if (!restoredFromUnified) loadLabState();
-  // Force-pin the live honeyEVMultiplier to the production value 3.2 even when
-  // an older save is restored from a build that wrote a different multiplier
-  // into LabState.config.ai.honeyEVMultiplier. The 2.8 value tested earlier
-  // collapsed the skill signal (skillR² = 0.004, eliteMajorDominance = 7%);
-  // 3.0 was a sweet spot at /18 normalization. 3.2 restores skill signal at
-  // the new /36 divisor without magnitude blowing out.
-  if (LabState.config?.ai?.honeyEVMultiplier !== 3.2) {
-    LabState.config = { ...LabState.config, ai: { ...(LabState.config?.ai || {}), honeyEVMultiplier: 3.2 } };
+  // honeyEVMultiplier removed — the AI's expectedSkinEV is now equity-based
+  // (potValue * adj * skillFactor * 1.2) with no arbitrary multiplier. Strip
+  // any legacy ai.honeyEVMultiplier value from restored saves so it can't
+  // accidentally re-enter the calculation if downstream code is ever wired
+  // to read it again.
+  if (LabState.config && LabState.config.ai && 'honeyEVMultiplier' in LabState.config.ai) {
+    delete LabState.config.ai.honeyEVMultiplier;
   }
   // Ensure the unified bundle is in sync after any legacy-path restore so the
   // next save immediately writes the canonical key.
