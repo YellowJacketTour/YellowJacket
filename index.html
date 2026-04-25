@@ -893,6 +893,14 @@ const UNIFIED_SAVE_KEY = "yellowJacketSave";
 // before the post-run snapshot save, so save calls inside the simulation loop
 // are no-ops while the final canonical save still writes through normally.
 let LARGE_SIM_RUN_IN_PROGRESS = false;
+// SUPPRESS_ALL_SAVES_DURING_RUN — stronger sibling of LARGE_SIM_RUN_IN_PROGRESS
+// that gates EVERY storage-write entry point in the file. Set alongside
+// LARGE_SIM_RUN_IN_PROGRESS at run start; cleared in the simulatorRunClicked
+// finally block. When true (and largeSimMode cfg is on), all save-related
+// functions silently return — including the inner StorageAPI.save() and the
+// "Save failed" toast it would otherwise emit. The post-run final save runs
+// after both flags are cleared, so canonical state is still persisted.
+let SUPPRESS_ALL_SAVES_DURING_RUN = false;
 let currentRunData = null;
 
 function el(tag, attrs, ...children) {
@@ -1028,10 +1036,21 @@ const StorageAPI = {
     return null;
   },
   save(data) {
+    // SUPPRESS_ALL_SAVES_DURING_RUN — silently no-op when a large-sim run is
+    // in flight. Prevents the "Save failed — localStorage may be full" toast
+    // from spamming the user during 30k+ pool runs.
+    if (SUPPRESS_ALL_SAVES_DURING_RUN && LabState?.config?.largeSimMode) {
+      return false;
+    }
     try {
       getStorage().setItem(STORAGE_KEY, JSON.stringify({ version: 1, data, savedAt: Date.now() }));
       return true;
-    } catch (e) { toast('Save failed — localStorage may be full'); return false; }
+    } catch (e) {
+      // Surface the toast only when largeSimMode is OFF — under largeSimMode
+      // a transient quota error during a normal-mode save is ignorable.
+      if (!LabState?.config?.largeSimMode) toast('Save failed — localStorage may be full');
+      return false;
+    }
   },
   clear() { try { getStorage().removeItem(STORAGE_KEY); } catch (e) {} }
 };
@@ -1056,13 +1075,12 @@ function clearAllStoredData() {
 // backward compatibility with older builds that read those keys directly. The
 // unified key is the canonical source on boot.
 function unifiedSave() {
-  // LARGE SIM MODE guard — when a long simulation is in flight, every event
-  // and every progress tick would otherwise trigger a save. With 30k+ pool
-  // sizes that produces hundreds of MB of churn and frequent QuotaExceeded
-  // errors. Skip the write while the run is in progress; the post-run snapshot
-  // and the explicit final save take care of canonicalizing state.
-  if (LARGE_SIM_RUN_IN_PROGRESS && LabState && LabState.config && LabState.config.largeSimMode) {
-    return false;
+  // LARGE SIM MODE guard — bulletproof suppression. When SUPPRESS_ALL_SAVES_
+  // DURING_RUN is set (alongside cfg.largeSimMode), every save-write entry
+  // point in the file silently no-ops. The post-run finalizer clears the flag
+  // before the canonical save so state still persists at the end.
+  if (SUPPRESS_ALL_SAVES_DURING_RUN && LabState?.config?.largeSimMode) {
+    return false; // silently suppress
   }
   try {
     const payload = {
@@ -1929,19 +1947,19 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // have positive equity in a meaningful pot, and the opposite when they're behind.
   // Authored skill (via skillFactor) gates the application — noisy bottom-tier
   // players see no threshold movement.
-  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 3.0;
+  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 3.2;
   // Pot value cap — clamps the honey-EV input so a single mega-pot can't drive
   // AI thresholds into saturation. With CurrentStrokeCap = 6 (regulars) the cap
   // lands at 12 strokes; with cap = 10 (majors / finals) it lands at 20. Beyond
   // that the AI's expectedHoneyEV behaves the same regardless of pot size,
   // which compresses champion-score outliers without flattening skill signal.
   const potValue = Math.min(CurrentStrokeCap * 2.0, strokes + currentBet + matched + (carryPot || 0));
-  // honeyEVMultiplier: 3.0 — final production tuning (sweet spot). 2.8 was
-  // tested and collapsed skill signal (skillR² = 0.004, elite-major-dominance
-  // 7%, Elite ROI -92%). 4.2 over-polarized into deep-under-par champions.
-  // 3.0 calibrates for PGA-realistic totals (avgChampScore ≈ -8 to -14,
-  // belowParRate 65-85%) WHILE preserving the elite-tier-rewards-skill signal.
-  // Below 2.9 skill collapses; above 3.2 magnitude blows out. Locked at 3.0.
+  // honeyEVMultiplier: 3.2 — bumped from 3.0 to restore skill signal while
+  // testing honeyNormalizationDivisor=36. 2.8 collapsed skill signal entirely
+  // (skillR² = 0.004, elite dominance 7%); 3.0 was a sweet spot but slightly
+  // soft on skill expression at divisor=36. 3.2 is the upper bound before
+  // magnitude starts blowing out. Pinned at 3.2 for the divisor-36 production
+  // calibration; revisit if magnitude or skill signal drift on future runs.
   const expectedSkinEV = potValue * (adj - 0.5) * skillFactor * honeyEVMultiplier;
   const expectedHoneyEV = expectedSkinEV;
 
@@ -2208,9 +2226,8 @@ function playMatch(pA, pB, numHoles, opts) {
   //   - tied holes accumulate the pot into carryPot; next decisive hole's winner sweeps it
   //   - net honey credit = totalHoneyA − totalHoneyB (zero-sum: only imbalance moves the score)
   //
-  // honeyNormalizationDivisor = 36 (final production value)
-  // This replaces the old aggregateHoneyScale slider. It normalizes net honey
-  // to realistic PGA round totals while preserving full poker skill signal.
+  // honeyNormalizationDivisor = 36 (single source of truth — final production value for this test)
+  // net honey is now strictly divided by this value in both aggregate and finals scoring.
   // Round total: roundA = totalGolfA − (netHoneyA / honeyNormalizationDivisor)
   //              roundB = totalGolfB − (netHoneyB / honeyNormalizationDivisor)
   // Winning more pots IMPROVES (reduces) your round score. Leftover end-of-round carry
@@ -2450,9 +2467,8 @@ function runFinals(p1, p2) {
     }
     days.push({ day, p1Score: dayA, p2Score: dayB });
   }
-  // honeyNormalizationDivisor = 36 (final production value)
-  // This replaces the old aggregateHoneyScale slider. It normalizes net honey
-  // to realistic PGA round totals while preserving full poker skill signal.
+  // honeyNormalizationDivisor = 36 (single source of truth — final production value for this test)
+  // net honey is now strictly divided by this value in both aggregate and finals scoring.
   const computeFinalsTotals = () => {
     const netA = p1HoneyTotal - p2HoneyTotal;
     const netB = p2HoneyTotal - p1HoneyTotal;
@@ -4288,9 +4304,9 @@ function toggleTheme() {
 }
 
 function saveState() {
-  // LARGE SIM MODE guard — see unifiedSave for rationale.
-  if (LARGE_SIM_RUN_IN_PROGRESS && LabState && LabState.config && LabState.config.largeSimMode) {
-    return;
+  // LARGE SIM MODE guard — bulletproof suppression. See unifiedSave.
+  if (SUPPRESS_ALL_SAVES_DURING_RUN && LabState?.config?.largeSimMode) {
+    return; // silently suppress
   }
   const snapshot = {
     pool: TourState.pool,
@@ -7654,9 +7670,9 @@ function pruneRunForArchive(run) {
 }
 
 function saveLabState() {
-  // LARGE SIM MODE guard — see unifiedSave for rationale.
-  if (LARGE_SIM_RUN_IN_PROGRESS && LabState && LabState.config && LabState.config.largeSimMode) {
-    return;
+  // LARGE SIM MODE guard — bulletproof suppression. See unifiedSave.
+  if (SUPPRESS_ALL_SAVES_DURING_RUN && LabState?.config?.largeSimMode) {
+    return; // silently suppress
   }
   // Auto-prune: keep the last 5 runs at full fidelity; archive the rest down
   // to summary stats so Run Registry stays browsable without bloating storage.
@@ -7732,8 +7748,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('scoringStyle', 'honey-stroke');
   cfgRow('invariant.honeyDivisor', 1);
   cfgRow('invariant.carryOverEnabled', true);
-  cfgRow('scoring.netHoneyNormalization', 'netHoney/18');
-  cfgRow('ai.honeyEVMultiplier', 3.0);
+  cfgRow('ai.honeyEVMultiplier', 3.2);
   cfgRow('scoring.honeyMagnitudeTamed', true);
   cfgRow('scoring.honeyNormalizationDivisor', 36);
   cfgRow('ui.largeSimMode', LabState.config.largeSimMode ? 'enabled' : 'disabled');
@@ -8661,12 +8676,18 @@ async function simulatorRunClicked() {
   let handedToBackground = false;
   const runBtn = $('#labRunBtn');
   if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Running...'; }
-  // LARGE SIM MODE — disable mid-run autosaves for the entire run lifecycle.
-  // The guard is cleared at the end of the try block, BEFORE the snapshot
-  // save runs, so the post-run save still writes through normally. The finally
-  // block re-asserts cleared state as a safety belt against thrown errors.
+  // LARGE SIM MODE — bulletproof suppression of all mid-run autosaves. Both
+  // flags are set at run start: SUPPRESS_ALL_SAVES_DURING_RUN gates every
+  // save-write entry point (incl. inner StorageAPI.save and its toast);
+  // LARGE_SIM_RUN_IN_PROGRESS is retained as a legacy mirror for code that
+  // may check it. Both are cleared just before the post-run snapshot save so
+  // the canonical write goes through, and the finally block re-asserts cleared
+  // state as a safety belt against thrown errors.
   const useLargeSim = !!(LabState.config && LabState.config.largeSimMode);
-  if (useLargeSim) LARGE_SIM_RUN_IN_PROGRESS = true;
+  if (useLargeSim) {
+    SUPPRESS_ALL_SAVES_DURING_RUN = true;
+    LARGE_SIM_RUN_IN_PROGRESS = true;
+  }
   try {
     const cfg = JSON.parse(JSON.stringify(LabState.config));
     const repeats = Math.max(1, Math.min(20, cfg.repeatRuns || 1));
@@ -8719,11 +8740,12 @@ async function simulatorRunClicked() {
         if (runBtn) runBtn.textContent = 'Y' + info.year + '/' + info.endYear + ' · ' + info.type + ' ' + info.i + '/' + info.total;
       };
       const session = await runSimulator(cfg, progress);
-      // LARGE SIM MODE — clear the guard now (BEFORE the snapshot save) so
-      // the canonical post-run save writes through. Stash the session in the
-      // global currentRunData holder so external code can still inspect the
-      // active run between completion and storage settle.
+      // LARGE SIM MODE — clear BOTH guards (BEFORE the snapshot save) so the
+      // canonical post-run save writes through. Stash the session in the global
+      // currentRunData holder so external code can inspect the active run
+      // between completion and storage settle.
       if (useLargeSim) {
+        SUPPRESS_ALL_SAVES_DURING_RUN = false;
         LARGE_SIM_RUN_IN_PROGRESS = false;
         currentRunData = session;
       }
@@ -8763,9 +8785,10 @@ async function simulatorRunClicked() {
         metrics: agg.aggregated,
         elapsedMs,
       };
-      // LARGE SIM MODE — same handoff as the single-run path: clear the guard
-      // before the snapshot save so the canonical write goes through.
+      // LARGE SIM MODE — same handoff as the single-run path: clear BOTH
+      // guards before the snapshot save so the canonical write goes through.
       if (useLargeSim) {
+        SUPPRESS_ALL_SAVES_DURING_RUN = false;
         LARGE_SIM_RUN_IN_PROGRESS = false;
         currentRunData = aggSession;
       }
@@ -8779,9 +8802,10 @@ async function simulatorRunClicked() {
     toast('Run failed: ' + e.message);
     console.error(e);
   } finally {
-    // Safety belt: always clear the LARGE SIM guard on exit. If the run
-    // threw before reaching the explicit clear above, the guard would
+    // Safety belt: always clear BOTH LARGE SIM guards on exit. If the run
+    // threw before reaching the explicit clear above, the guards would
     // otherwise stay true and silently disable saves until next reload.
+    SUPPRESS_ALL_SAVES_DURING_RUN = false;
     LARGE_SIM_RUN_IN_PROGRESS = false;
     if (!handedToBackground) {
       LabState.busy = false;
@@ -9552,14 +9576,14 @@ function init() {
     toast('Tour history restored from last session', 2000);
   }
   if (!restoredFromUnified) loadLabState();
-  // Force-pin the live honeyEVMultiplier to the production value 3.0 even when
+  // Force-pin the live honeyEVMultiplier to the production value 3.2 even when
   // an older save is restored from a build that wrote a different multiplier
-  // into LabState.config.ai.honeyEVMultiplier. The 2.8 value tested previously
+  // into LabState.config.ai.honeyEVMultiplier. The 2.8 value tested earlier
   // collapsed the skill signal (skillR² = 0.004, eliteMajorDominance = 7%);
-  // 3.0 is the calibrated sweet spot — strong skill expression while keeping
-  // PGA-realistic champion totals.
-  if (LabState.config?.ai?.honeyEVMultiplier !== 3.0) {
-    LabState.config = { ...LabState.config, ai: { ...(LabState.config?.ai || {}), honeyEVMultiplier: 3.0 } };
+  // 3.0 was a sweet spot at /18 normalization. 3.2 restores skill signal at
+  // the new /36 divisor without magnitude blowing out.
+  if (LabState.config?.ai?.honeyEVMultiplier !== 3.2) {
+    LabState.config = { ...LabState.config, ai: { ...(LabState.config?.ai || {}), honeyEVMultiplier: 3.2 } };
   }
   // Ensure the unified bundle is in sync after any legacy-path restore so the
   // next save immediately writes the canonical key.
