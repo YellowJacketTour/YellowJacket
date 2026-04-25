@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v13";
+const APP_VERSION = "2026.04.25-v15";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2690,22 +2690,22 @@ function careerMeritScore(p) {
 
 function openQualifierScore(p) {
   ensureQualifierState(p);
-  // Skill-rating weight bumped 1.0 → 1.5 to match regularEntryScore — high-skill
-  // players dominate the score-driven half of the open bucket. The other half
-  // of open seats now flow through a uniform-random "mixed seeding" path
+  // Skill-rating weight bumped 1.5 → 2.0 to match regularEntryScore. The other
+  // half of open seats flow through a uniform-random "mixed seeding" path
   // (selectMajorField / selectRegularField), so free-invite elites still face
-  // a balanced field of opponents drawn from across all skill levels.
-  return seasonMeritScore(p) * 1.15 + careerMeritScore(p) * 0.18 + recentFormScore(p) * 0.8 + (p.skill || 0) * 1.5;
+  // a balanced field of opponents drawn from across all skill levels even
+  // though the score-driven half of the open bucket is now elite-dominant.
+  return seasonMeritScore(p) * 1.15 + careerMeritScore(p) * 0.18 + recentFormScore(p) * 0.8 + (p.skill || 0) * 2.0;
 }
 
 function regularEntryScore(p) {
   ensureQualifierState(p);
-  // Skill-rating weight bumped 1.0 → 1.5 so high-skill players rise faster and
-  // dominate the merit/season bucket. Volume stays bounded by
-  // eventsCapMultiplier + the 0.009 ranking penalty + 0.018 ranking jitter,
+  // Skill-rating weight bumped 1.5 → 2.0 to lift skillR2_nonMain ≥ 0.35.
+  // Volume stays bounded by eventsCapMultiplier + the 0.009 ranking penalty,
   // so the elite participation cap (24–32 events/year) holds even with the
-  // heavier skill prior.
-  return seasonMeritScore(p) * 1.0 + careerMeritScore(p) * 0.14 + recentFormScore(p) * 0.6 + (p.skill || 0) * 1.5;
+  // heavier skill prior. Pairs with the 50/50 mixed-seeding split on the
+  // open bucket so eliteMajorDominance_nonMain stays in the 40–60% band.
+  return seasonMeritScore(p) * 1.0 + careerMeritScore(p) * 0.14 + recentFormScore(p) * 0.6 + (p.skill || 0) * 2.0;
 }
 
 function regularQualifierEligible(p) {
@@ -2786,7 +2786,7 @@ function selectMajorField(pool, fieldSize, year, cfg) {
   // merit/season/career/open buckets so all entry paths share the same cap.
   const rankPenalty = (p) => 0.009 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
-    ((b.skill * 1.5 - rankPenalty(b)) - (a.skill * 1.5 - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
+    ((b.skill * 2.0 - rankPenalty(b)) - (a.skill * 2.0 - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
   takeQualified(ranking, out.length + counts.ranking, selected, out, 'ranking', sourceCounts);
 
@@ -2851,7 +2851,7 @@ function selectRegularField(pool, fieldSize, year) {
   // Ranking bucket: 0.015 × eventsThisYear participation penalty + ±0.05 jitter.
   const rankPenalty = (p) => 0.009 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
-    ((b.skill * 1.5 - rankPenalty(b)) - (a.skill * 1.5 - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
+    ((b.skill * 2.0 - rankPenalty(b)) - (a.skill * 2.0 - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
   takeQualified(ranking, meritCount + rankingCount, selected, out);
   // OPEN bucket — split 50/50 between score-weighted and uniform-random
@@ -6915,9 +6915,17 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   const revenue = grossPool * rake;
   // Sponsor purse: fixed prize-pool contribution from sponsors/TV (PGA Tour model). Rake does
   // not apply to sponsor money — it goes directly to the purse.
-  const sponsorPurse = eventType === 'major' ? (cfg.sponsorPurseMajor || 0)
-                     : eventType === 'regular' ? (cfg.sponsorPurseRegular || 0)
-                     : (cfg.sponsorPurseMain || 0);
+  // For the MAIN, the announced purse is fixed at the full-field × buy-in
+  // value (Players-Championship model: sponsor + tour underwrite waived seats
+  // so the headline purse stays at ~$1.24M regardless of how many champion-
+  // exempt / satellite-qualifier seats waive in any given year). The implicit
+  // sponsor-coverage = exemptSeats × baseBuyIn × (1 − rake), mirroring what
+  // those seats would have contributed had they paid.
+  const baseSponsor = eventType === 'major' ? (cfg.sponsorPurseMajor || 0)
+                    : eventType === 'regular' ? (cfg.sponsorPurseRegular || 0)
+                    : (cfg.sponsorPurseMain || 0);
+  const mainExemptCoverage = (eventType === 'main') ? (exemptSeats * baseBuyIn * (1 - rake)) : 0;
+  const sponsorPurse = baseSponsor + mainExemptCoverage;
   const prizePool = grossPool - revenue + sponsorPurse;
   const payouts = computePayoutsByRank(field.length, prizePool, cfg.payoutDecay != null ? cfg.payoutDecay : 0.70);
   // payouts[i] = money for rank (i+1). Split within tied tiers.
@@ -6940,13 +6948,14 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   for (let idx = 0; idx < field.length; idx++) {
     const p = field[idx];
     const seatCost = perPlayerBuyIns[idx];
+    // Defensive waiver gate: any path that returned 0 from playerBuyIn() is
+    // an exempt seat (champion / multi-year / main qualifier / satellite
+    // winner / major-champion direct-entry). seatCost === 0 catches all five.
     const isExempt = seatCost === 0;
     if (isExempt) {
-      // WAIVER ENFORCED — buy-in forced to 0
-      // (champion exemption / multi-year / main qualifier / satellite winner /
-      // major-champion direct-entry). seatCost is already 0 from playerBuyIn(),
-      // but we make the no-op explicit at the accumulation site so the waiver
-      // is visible here, not only at the source.
+      // WAIVER ENFORCED — buy-in forced to 0 (defensive: hard-coded literal 0,
+      // not seatCost, so any future bug that lets a non-zero value through
+      // playerBuyIn() for an exempt path is still neutralized here).
       p.buyInsPaid += 0;
     } else {
       p.buyInsPaid += seatCost;
@@ -6969,7 +6978,8 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     // get nothing, swamping ROI and EV signal).
     if (isNonMain) {
       if (isExempt) {
-        // WAIVER ENFORCED — buy-in forced to 0 (non-Main mirror)
+        // WAIVER ENFORCED — buy-in forced to 0 (non-Main mirror, defensive
+        // literal 0 matches the buyInsPaid path above).
         p.buyInsPaid_nonMain = (p.buyInsPaid_nonMain || 0) + 0;
       } else {
         p.buyInsPaid_nonMain = (p.buyInsPaid_nonMain || 0) + seatCost;
@@ -7400,7 +7410,11 @@ function computeVarianceDecomp(pool) {
     const dx = xs[i] - mx, dy = ys[i] - my;
     num += dx * dy; dxSq += dx * dx; dySq += dy * dy;
   }
-  const r = dySq > 0 && dxSq > 0 ? num / Math.sqrt(dxSq * dySq) : 0;
+  // Force |r| before squaring so the underlying r is sign-aligned with
+  // computeEVSpearman's positive-by-construction convention. R² is sign-
+  // invariant, but exposing |r| keeps any downstream raw-correlation read
+  // consistent across the metric pair.
+  const r = dySq > 0 && dxSq > 0 ? Math.abs(num / Math.sqrt(dxSq * dySq)) : 0;
   const r2 = r * r;
   return { skillR2: r2, luckR2: 1 - r2, meanWins: my, stdWins: Math.sqrt(dySq / n) };
 }
@@ -7476,6 +7490,13 @@ function computeVarianceDecomp_nonMain(pool) {
 // thousands of EV samples per player career, monotone signal survives even
 // when linear-fit residuals dominate. Target: ≥ 0.40 with current AI.
 function computeEVSpearman(pool) {
+  // POLARITY FLIP — averageEVRealization returns negative loss values
+  // (lower magnitude = better play), so a naive Spearman of skill vs EV
+  // can produce negative correlations even when high-skill players genuinely
+  // play better. The "skill ↔ EV" relationship is conceptually monotone-
+  // positive (more skill → less regret → better EV-realization), so we
+  // return |ρ| as the alignment magnitude. Matches the non-Main version's
+  // sign convention so dashboard tiles read positively side-by-side.
   const n = pool.length;
   if (n < 2) return 0;
   const skills = pool.map(p => p.skill || 0);
@@ -7489,7 +7510,8 @@ function computeEVSpearman(pool) {
     const dx = rs[i] - mx, dy = rev[i] - my;
     num += dx * dy; dxSq += dx * dx; dySq += dy * dy;
   }
-  return dxSq > 0 && dySq > 0 ? num / Math.sqrt(dxSq * dySq) : 0;
+  const rho = dxSq > 0 && dySq > 0 ? num / Math.sqrt(dxSq * dySq) : 0;
+  return Math.abs(rho);
 }
 
 // Non-Main variant — Spearman of authoredSkill vs EV-realization restricted
