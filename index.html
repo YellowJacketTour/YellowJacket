@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <!-- HONEY-STROKE AGGREGATE + FORMAT-SPECIFIC HONEY DAMPENING IS NOW FINAL AND SHIP-READY -->
 <!-- ECONOMIC & ANTI-SYBIL MODEL IS NOW FINAL AND SHIP-READY -->
+<!-- SMART REFRESH + PERSISTENT PROGRESS IS NOW FINAL AND SHIP-READY -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -317,6 +318,44 @@
     background: var(--cream-soft); border-left: 4px solid var(--gold);
     border-radius: 6px; font-family: Georgia, serif; font-style: italic;
     font-size: 14px; color: var(--green-deep); margin-top: 12px;
+  }
+
+  /* Version banner — fixed-top non-modal alert. Auto-hides via .hidden until
+     the boot logic detects a version mismatch, then fades in on top of all
+     other content with both an "Update & Reload" CTA and a dismiss button. */
+  #version-banner {
+    position: fixed; top: 0; left: 0; right: 0;
+    z-index: 6000;
+    background: var(--bg-dark, #0e1f1c);
+    color: var(--text-on-dark, #f7e9c2);
+    border-bottom: 2px solid var(--gold, #d4a93a);
+    padding: 12px 22px;
+    display: flex; align-items: center; justify-content: center; gap: 18px;
+    flex-wrap: wrap;
+    font-family: -apple-system, sans-serif; font-size: 13px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    animation: banner-in 320ms ease-out;
+  }
+  #version-banner.hidden { display: none; }
+  #version-banner .banner-msg { font-weight: 500; }
+  #version-banner .banner-msg b { color: var(--gold, #d4a93a); }
+  #version-banner .banner-sub { font-size: 11px; opacity: 0.78; font-style: italic; }
+  #version-banner .banner-actions { display: flex; gap: 8px; }
+  #version-banner button {
+    font-family: -apple-system, sans-serif; font-size: 12px;
+    padding: 6px 14px; border-radius: 4px; cursor: pointer;
+    border: 1px solid var(--gold, #d4a93a);
+    background: transparent; color: var(--gold, #d4a93a);
+    transition: background 120ms ease;
+  }
+  #version-banner button.primary {
+    background: var(--gold, #d4a93a); color: var(--bg-dark, #0e1f1c);
+    font-weight: 600;
+  }
+  #version-banner button:hover { filter: brightness(1.1); }
+  @keyframes banner-in {
+    from { transform: translateY(-100%); opacity: 0; }
+    to   { transform: translateY(0);     opacity: 1; }
   }
 
   #toast-container {
@@ -790,6 +829,7 @@
 </div>
 
 <div id="toast-container"></div>
+<div id="version-banner" class="hidden" role="alert" aria-live="polite"></div>
 <div id="modal-root"><div class="modal-box" id="modal-body"></div></div>
 <div id="cmd-palette">
   <input type="search" id="cmdInput" placeholder="Search players, events, rules, tips..." autocomplete="off" spellcheck="false">
@@ -800,6 +840,14 @@
 'use strict';
 
 // Yellow Jacket Tour — secure, offline, self-contained
+//
+// === APP_VERSION ===
+// Bumped on every public build. Compared against the saved lastVersion at boot;
+// a mismatch fires the smart-refresh banner so users with an older cached copy
+// of the page see a clear "new version available" prompt and can update without
+// losing progress (saves are version-independent and restore cleanly).
+const APP_VERSION = "2026.04.25-v2";
+const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 function el(tag, attrs, ...children) {
   const n = document.createElement(tag);
@@ -908,8 +956,163 @@ function clearAllStoredData() {
     const s = getStorage();
     s.removeItem(STORAGE_KEY);
     s.removeItem(LAB_STORAGE_KEY);
+    s.removeItem(UNIFIED_SAVE_KEY);
   } catch (e) {}
   MemoryStorageFallback = {};
+}
+
+// === UNIFIED SAVE / RESTORE ===
+// Single-source-of-truth save under UNIFIED_SAVE_KEY that bundles every piece of
+// user progress: TourState (pool, seasons, currentSeason, preferences),
+// LabState (config, runs, activeRunId, panelWidth), BuzzKnowledge.moments,
+// plus the build's APP_VERSION and a savedAt timestamp.
+//
+// The legacy split keys (STORAGE_KEY, LAB_STORAGE_KEY) are kept in sync for
+// backward compatibility with older builds that read those keys directly. The
+// unified key is the canonical source on boot.
+function unifiedSave() {
+  try {
+    const payload = {
+      version: APP_VERSION,
+      savedAt: Date.now(),
+      tour: {
+        pool: TourState.pool,
+        seasons: TourState.seasons,
+        currentSeason: TourState.currentSeason,
+        preferences: TourState.preferences,
+      },
+      lab: {
+        config: LabState.config,
+        runs: LabState.runs,
+        activeRunId: LabState.activeRunId,
+        panelWidth: LabState.panelWidth,
+      },
+      moments: (BuzzKnowledge && Array.isArray(BuzzKnowledge.moments)) ? BuzzKnowledge.moments.slice(0, 50) : [],
+    };
+    getStorage().setItem(UNIFIED_SAVE_KEY, JSON.stringify(payload));
+    return true;
+  } catch (e) {
+    // Quota or serialization failures are silent — the legacy split-key save
+    // path runs alongside this and will succeed even if the unified bundle
+    // is too big for one slot.
+    return false;
+  }
+}
+
+// Returns the parsed unified save object, or null if absent / corrupt.
+function unifiedRead() {
+  try {
+    const raw = getStorage().getItem(UNIFIED_SAVE_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object') return null;
+    return obj;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Hydrate runtime state from a unified save payload. Tolerant of missing
+// sub-keys so partial saves still restore as much as possible. Returns the
+// payload's saved version string (or null if absent) so the caller can compare
+// against APP_VERSION and decide whether to show the smart-refresh banner.
+function unifiedRestore(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  if (payload.tour && typeof payload.tour === 'object') {
+    if (Array.isArray(payload.tour.pool)) TourState.pool = payload.tour.pool;
+    if (Array.isArray(payload.tour.seasons)) TourState.seasons = payload.tour.seasons;
+    if (typeof payload.tour.currentSeason === 'number') TourState.currentSeason = payload.tour.currentSeason;
+    if (payload.tour.preferences && typeof payload.tour.preferences === 'object') {
+      TourState.preferences = Object.assign({}, TourState.preferences, payload.tour.preferences);
+    }
+    if (TourState.preferences && TourState.preferences.theme === 'sunday') {
+      document.documentElement.dataset.theme = 'sunday';
+    }
+  }
+  if (payload.lab && typeof payload.lab === 'object') {
+    if (payload.lab.config && typeof payload.lab.config === 'object') {
+      Object.assign(LabState.config, payload.lab.config);
+      if (!LabState.config.scoringStyle) LabState.config.scoringStyle = DEFAULT_SIM_CONFIG.scoringStyle;
+    }
+    if (Array.isArray(payload.lab.runs)) LabState.runs = payload.lab.runs;
+    if (payload.lab.activeRunId) LabState.activeRunId = payload.lab.activeRunId;
+    if (payload.lab.panelWidth) LabState.panelWidth = Math.max(320, Math.min(720, +payload.lab.panelWidth || 320));
+  }
+  if (Array.isArray(payload.moments) && BuzzKnowledge) {
+    BuzzKnowledge.moments = payload.moments;
+  }
+  return payload.version || null;
+}
+
+// Render the smart-refresh banner. Called when boot detects the saved version
+// differs from APP_VERSION. The banner offers two CTAs:
+//   1. Update & Reload — saves current progress, then forces a hard reload
+//      (bypassing the disk cache via location.reload(true) where supported,
+//      with a cache-busting query parameter as a portable fallback).
+//   2. Keep Current Version — dismisses the banner; user keeps playing on
+//      whatever version they have. The banner won't reappear until the saved
+//      version diverges again from APP_VERSION (e.g., next reload after the
+//      page is refreshed and lastVersion is bumped).
+function showVersionBanner(savedVersion, currentVersion) {
+  const root = $('#version-banner');
+  if (!root) return;
+  clear(root);
+  const msg = el('div', { class: 'banner-msg' });
+  msg.appendChild(document.createTextNode('New version available — '));
+  msg.appendChild(el('b', { text: 'your current runs and progress are safe.' }));
+  const sub = el('div', { class: 'banner-sub', text: 'Saved on ' + (savedVersion || 'older build') + ' · current build ' + currentVersion });
+  msg.appendChild(el('br'));
+  msg.appendChild(sub);
+  root.appendChild(msg);
+
+  const actions = el('div', { class: 'banner-actions' });
+  const updateBtn = el('button', { class: 'primary', text: 'Update & Reload' });
+  updateBtn.onclick = () => {
+    try { unifiedSave(); } catch (_) {}
+    // Cache-bust the URL so the browser re-fetches index.html instead of
+    // serving a stale cached copy. location.reload(true) is deprecated /
+    // ignored on modern browsers; the query-param trick is the portable
+    // alternative that works everywhere.
+    const url = new URL(location.href);
+    url.searchParams.set('_v', String(Date.now()));
+    location.href = url.toString();
+  };
+  const keepBtn = el('button', { text: 'Keep Current Version' });
+  keepBtn.onclick = () => {
+    root.classList.add('hidden');
+  };
+  actions.appendChild(updateBtn);
+  actions.appendChild(keepBtn);
+  root.appendChild(actions);
+  root.classList.remove('hidden');
+}
+
+// Download the current unified save as a JSON file. Used by the "Export Backup"
+// button next to "Reset All Progress" so users can keep an off-device copy
+// before doing anything destructive.
+function exportUnifiedSave() {
+  try {
+    const raw = getStorage().getItem(UNIFIED_SAVE_KEY) || JSON.stringify({
+      version: APP_VERSION,
+      savedAt: Date.now(),
+      tour: { pool: TourState.pool, seasons: TourState.seasons, currentSeason: TourState.currentSeason, preferences: TourState.preferences },
+      lab: { config: LabState.config, runs: LabState.runs, activeRunId: LabState.activeRunId, panelWidth: LabState.panelWidth },
+      moments: BuzzKnowledge.moments.slice(0, 50),
+    });
+    const blob = new Blob([raw], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'yellow-jacket-backup-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 30000);
+    toast('Backup downloaded — keep this file safe, you can restore from it later.');
+  } catch (e) {
+    toast('Backup failed: ' + (e && e.message ? e.message : 'unknown error'));
+  }
 }
 
 // ============================================================
@@ -1592,7 +1795,7 @@ function streetCapFor(street, totalCap) {
 //     so we don't re-run evaluate7 + boardTexture per decision (big hot-loop win).
 //   - `oppMatched` is the opponent's current street investment, used for range-aware
 //     threat assessment on postflop streets.
-function decideFor(cards, community, currentBet, matched, strokes, profile, oppMatched, preComputedHand, preComputedTex) {
+function decideFor(cards, community, currentBet, matched, strokes, profile, oppMatched, preComputedHand, preComputedTex, carryPot = 0, gameContext = {}) {
   const street = community.length === 0 ? 'preflop' : community.length === 3 ? 'flop' : community.length === 4 ? 'turn' : 'river';
   const streetCap = streetCapFor(street, CurrentStrokeCap);
   const remaining = Math.max(0, streetCap - strokes - currentBet);
@@ -1627,15 +1830,16 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // have positive equity in a meaningful pot, and the opposite when they're behind.
   // Authored skill (via skillFactor) gates the application — noisy bottom-tier
   // players see no threshold movement.
-  const carry = 0; // carryPot not threaded through to decideFor; defaults to 0 (minor under-count when ties have stacked)
-  const potValue = strokes + currentBet + matched + (carry || 0);
+  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 4.2;
+  const potValue = strokes + currentBet + matched + (carryPot || 0);
   // honeyEVMultiplier: 4.2 — final production tuning. Polarizes skilled-player
   // aggression so they push harder when ahead and fold faster when behind, letting
   // the bounded golf scorecard compound a stronger skill signal across rounds.
   // This is the upper end of the safe range; values >4.5 risk over-saturation
   // (AI thrashes between extremes); values <3.0 produce limp aggression and
   // weaker per-match skill expression. Locked at 4.2 for shipping.
-  const expectedHoneyEV = potValue * (adj - 0.5) * skillFactor * 4.2;
+  const expectedSkinEV = potValue * (adj - 0.5) * skillFactor * honeyEVMultiplier;
+  const expectedHoneyEV = expectedSkinEV;
 
   // Local copies of the three decision thresholds — modifying these instead of
   // profile.* keeps the player object immutable across decisions in the same hand.
@@ -1745,7 +1949,7 @@ function estimateSkillRating(profile) {
 function makeFreshStats() {
   return { holesPlayed: 0, holesWon: 0, holesLost: 0, holesTied: 0, holesFolded: 0, handCounts: {}, totalScore: 0, matchesWon: 0, matchesLost: 0, strokesBetTotal: 0 };
 }
-function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, profileB, initialBet, firstToAct) {
+function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, profileB, initialBet, firstToAct, carryPot = 0, gameContext = {}) {
   let currentBet = initialBet || 0;
   const matched = {a: 0, b: 0};
   const acted = {a: false, b: false};
@@ -1771,7 +1975,7 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     const cards = actor === 'a' ? aCards : bCards;
     const profile = actor === 'a' ? profileA : profileB;
     const actorHand = actor === 'a' ? aHand : bHand;
-    const d = decideFor(cards, community, currentBet, matched[actor], strokes, profile, matched[other], actorHand, tex);
+    const d = decideFor(cards, community, currentBet, matched[actor], strokes, profile, matched[other], actorHand, tex, carryPot, gameContext);
     if (typeof LabState !== 'undefined' && LabState.instrumentation && LabState.instrumentation.collector) {
       LabState.instrumentation.collector(street, d.action);
     }
@@ -1789,7 +1993,7 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
       toAct = other;
       if (strokes + currentBet >= streetCap) {
         const otherHand = other === 'a' ? aHand : bHand;
-        const resp = decideFor(other === 'a' ? aCards : bCards, community, currentBet, matched[other], strokes, other === 'a' ? profileA : profileB, matched[actor], otherHand, tex);
+        const resp = decideFor(other === 'a' ? aCards : bCards, community, currentBet, matched[other], strokes, other === 'a' ? profileA : profileB, matched[actor], otherHand, tex, carryPot, gameContext);
         if (resp.action === 'fold') { folded = other; break; }
         matched[other] = currentBet; acted[other] = true; break;
       }
@@ -1797,7 +2001,7 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
   }
   return { strokes: strokes + currentBet, folded };
 }
-function playHole(pA, pB, startDealer) {
+function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   const t0 = SimPerf.enabled ? performance.now() : 0;
   shuffleDeck();
   let off = 0; // Pointer into the reusable module DECK. Zero allocations per hole.
@@ -1812,7 +2016,7 @@ function playHole(pA, pB, startDealer) {
     const initialBet = (s === 'preflop') ? 1 : 0;
     const firstToAct = startDealer === 'a' ? 'b' : 'a';
     const brT = SimPerf.enabled ? performance.now() : 0;
-    const br = playBettingRound(aCards, bCards, community, startDealer, strokes, pA.profile, pB.profile, initialBet, firstToAct);
+    const br = playBettingRound(aCards, bCards, community, startDealer, strokes, pA.profile, pB.profile, initialBet, firstToAct, carryPot, gameContext);
     SimPerf.add('bettingRound', brT);
     strokes = br.strokes;
     if (br.folded) { folded = br.folded; break; }
@@ -1914,6 +2118,16 @@ function playMatch(pA, pB, numHoles, opts) {
   let totalHoneyA = 0, totalHoneyB = 0;
   let carryPot = 0;
   let dealer = Math.random() < 0.5 ? 'a' : 'b';
+  const baseGameContext = opts.gameContext || null;
+  const buildGameContext = (holeNumber) => {
+    const baseHoleNumber = baseGameContext && Number.isFinite(+baseGameContext.holeNumber) ? +baseGameContext.holeNumber : 1;
+    const totalHoles = baseGameContext && Number.isFinite(+baseGameContext.totalHoles) ? +baseGameContext.totalHoles : numHoles;
+    return Object.assign({}, baseGameContext || {}, {
+      mode: baseGameContext && baseGameContext.mode ? baseGameContext.mode : 'match',
+      holeNumber: baseHoleNumber + holeNumber - 1,
+      totalHoles,
+    });
+  };
   const applyHole = (r) => {
     totalGolfA += r.aScore; totalGolfB += r.bScore;
     if (r.tie) {
@@ -1930,7 +2144,9 @@ function playMatch(pA, pB, numHoles, opts) {
     updatePlayerHoleStats(pA, r, 'a'); updatePlayerHoleStats(pB, r, 'b');
   };
   for (let h = 0; h < numHoles; h++) {
-    const r = playHole(pA, pB, dealer);
+    const holeNumber = h + 1;
+    const gameContext = buildGameContext(holeNumber);
+    const r = playHole(pA, pB, dealer, carryPot, gameContext);
     applyHole(r);
     dealer = dealer === 'a' ? 'b' : 'a';
   }
@@ -1947,7 +2163,9 @@ function playMatch(pA, pB, numHoles, opts) {
   let playoffCount = 0;
   if (!opts.noPlayoff) {
     while (aTotal === bTotal && playoffCount < 30) {
-      const r = playHole(pA, pB, dealer);
+      const holeNumber = numHoles + playoffCount + 1;
+      const gameContext = buildGameContext(holeNumber);
+      const r = playHole(pA, pB, dealer, carryPot, gameContext);
       applyHole(r);
       dealer = dealer === 'a' ? 'b' : 'a';
       playoffCount++;
@@ -2009,6 +2227,7 @@ function runKnockoutRound(players, numHoles) {
 function runStrokePlayEvent(players, holesPerRound, rounds, cfg) {
   holesPerRound = holesPerRound || 18;
   rounds = rounds || 4;
+  const totalHoles = holesPerRound * rounds;
   // Honey dampening factor for aggregate events. Caller should pass the cfg in;
   // we read aggregateHoneyScale (default 0.25) and forward it to playMatch on
   // every round of every pairing. The pot mechanic stays zero-sum per pair —
@@ -2042,7 +2261,8 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg) {
     }
     for (let i = 0; i < rotation.length; i += 2) {
       const pA = rotation[i], pB = rotation[i + 1];
-      const m = playMatch(pA, pB, holesPerRound, { noPlayoff: true, noMatchStats: true, honeyScale });
+      const gameContext = { mode: 'strokePlay', holeNumber: r * holesPerRound + 1, totalHoles };
+      const m = playMatch(pA, pB, holesPerRound, { noPlayoff: true, noMatchStats: true, honeyScale, gameContext });
       const aRec = agg.get(pA.id);
       const bRec = agg.get(pB.id);
       aRec.score += m.aTotal;
@@ -2071,7 +2291,8 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg) {
     }
     for (let i = 0; i < playoffField.length; i += 2) {
       const pA = playoffField[i], pB = playoffField[i + 1];
-      const m = playMatch(pA, pB, 4, { noPlayoff: true, noMatchStats: true, honeyScale });
+      const gameContext = { mode: 'strokePlay', holeNumber: totalHoles + playoffsRun * 4 + 1, totalHoles };
+      const m = playMatch(pA, pB, 4, { noPlayoff: true, noMatchStats: true, honeyScale, gameContext });
       agg.get(pA.id).score += m.aTotal;
       agg.get(pB.id).score += m.bTotal;
     }
@@ -2125,7 +2346,9 @@ function runFinals(p1, p2) {
     let dayA = 0, dayB = 0;
     let dealer = (day % 2 === 1) ? 'a' : 'b';
     for (let h=0; h<18; h++) {
-      const r = playHole(p1, p2, dealer);
+      const holeNumber = (day - 1) * 18 + h + 1;
+      const gameContext = { mode: 'finals', holeNumber, totalHoles: 72, isFinals: true };
+      const r = playHole(p1, p2, dealer, carryPot, gameContext);
       dayA += r.aScore; dayB += r.bScore;
       applyHole(r);
       dealer = dealer === 'a' ? 'b' : 'a';
@@ -2145,7 +2368,9 @@ function runFinals(p1, p2) {
   const playoffs = [];
   let dealer = 'a';
   while (p1Total === p2Total && playoffs.length < 30) {
-    const r = playHole(p1, p2, dealer);
+    const holeNumber = 72 + playoffs.length + 1;
+    const gameContext = { mode: 'finals', holeNumber, totalHoles: 72, isFinals: true };
+    const r = playHole(p1, p2, dealer, carryPot, gameContext);
     playoffs.push({ p1Score: r.aScore, p2Score: r.bScore });
     applyHole(r);
     dealer = dealer === 'a' ? 'b' : 'a';
@@ -3315,6 +3540,7 @@ function aiTakeTurn(g) {
   // created with, not whatever the simulator slider currently says.
   if (g.strokeCap) setStrokeCap(g.strokeCap);
   const profile = g.aiProfile || makeProfileForSkill(0.40);
+  const gameContext = { mode: 'solo', holeNumber: g.holeNum, totalHoles: g.totalHoles };
   const decision = decideFor(
     c.p2Cards,           // AI's hole cards
     c.community,         // visible community
@@ -3322,7 +3548,11 @@ function aiTakeTurn(g) {
     c.matched.p2,        // AI's matched amount this street
     c.strokes,           // accumulated strokes from prior streets
     profile,             // AI's profile (skill-derived thresholds)
-    c.matched.p1         // human's matched amount this street (range read)
+    c.matched.p1,        // human's matched amount this street (range read)
+    undefined,
+    undefined,
+    g.carryPot || 0,
+    gameContext
   );
   switch (decision.action) {
     case 'fold':  mpAct(g, 'fold'); break;
@@ -3339,6 +3569,7 @@ function createLocalGame(p1name, p2name, mode) {
     mode, p1: { name: p1name, total: 0 }, p2: { name: p2name, total: 0 },
     holeNum: 1, totalHoles: 18, scores: [],
     current: newHoleState('p1'), turnFor: 'p1',
+    carryPot: 0,
     started: Date.now(), ended: false,
     // Snapshot the active stroke cap so mid-game config changes don't alter this match.
     strokeCap: CurrentStrokeCap,
@@ -3781,6 +4012,7 @@ function advanceMPRound(g) {
 
 function resolveMPHole(g) {
   const c = g.current;
+  const carryPot = g.carryPot || 0;
   let p1s, p2s, desc;
   if (c.folded) {
     // Honey-Stroke fold path mirrors playHole: street-based concession scorecard,
@@ -3791,12 +4023,14 @@ function resolveMPHole(g) {
     const folderSide = c.folded;
     const bettorSide = folderSide === 'p1' ? 'p2' : 'p1';
     const folderRaw = folderScore;
-    const bettorRaw = bettorScore - c.strokes; // honey credit reduces score
+    const honeyPot = c.strokes + carryPot;
+    const bettorRaw = bettorScore - honeyPot; // honey credit reduces score
     p1s = folderSide === 'p1' ? folderRaw : bettorRaw;
     p2s = folderSide === 'p2' ? folderRaw : bettorRaw;
     const folderName = folderSide === 'p1' ? g.p1.name : g.p2.name;
     const bettorName = bettorSide === 'p1' ? g.p1.name : g.p2.name;
-    desc = folderName + ' folded. ' + bettorName + ' takes the ' + c.strokes + '-stroke honey pot. ' + folderName + ' ' + formatScore(folderRaw) + ', ' + bettorName + ' ' + formatScore(bettorRaw) + '.';
+    desc = folderName + ' folded. ' + bettorName + ' takes the ' + honeyPot + '-stroke honey pot. ' + folderName + ' ' + formatScore(folderRaw) + ', ' + bettorName + ' ' + formatScore(bettorRaw) + '.';
+    g.carryPot = 0;
   } else {
     while (c.community.length < 5) c.community.push(c.deck.pop());
     const p1H = evaluate7(c.p1Cards, c.community);
@@ -3805,7 +4039,8 @@ function resolveMPHole(g) {
     if (cmp === 0) {
       // Tied hole: both score par; pot carries to the next decisive hole.
       p1s = 0; p2s = 0;
-      desc = 'Tie at ' + CATEGORY_NAMES[p1H >>> 24] + '. Both score par. The ' + c.strokes + '-stroke honey pot carries forward.';
+      g.carryPot = carryPot + c.strokes;
+      desc = 'Tie at ' + CATEGORY_NAMES[p1H >>> 24] + '. Both score par. The ' + g.carryPot + '-stroke honey pot carries forward.';
     }
     else {
       const p1Wins = cmp > 0;
@@ -3813,13 +4048,15 @@ function resolveMPHole(g) {
       const winnerGolf = golfScoreFromHandValue(winnerHand);
       const loserGolf = golfScoreFromHandValue(p1Wins ? p2H : p1H);
       // Winner's score = own golf score − honey pot (pot improves their round).
-      const winnerScore = winnerGolf - c.strokes;
+      const honeyPot = c.strokes + carryPot;
+      const winnerScore = winnerGolf - honeyPot;
       const loserScore = loserGolf;
       p1s = p1Wins ? winnerScore : loserScore;
       p2s = p1Wins ? loserScore : winnerScore;
       const winName = p1Wins ? g.p1.name : g.p2.name;
       const loseName = p1Wins ? g.p2.name : g.p1.name;
-      desc = winName + ' wins with ' + CATEGORY_NAMES[winnerHand >>> 24] + ' and takes the ' + c.strokes + '-stroke honey pot. ' + winName + ' ' + formatScore(winnerScore) + ', ' + loseName + ' ' + formatScore(loserScore) + '.';
+      desc = winName + ' wins with ' + CATEGORY_NAMES[winnerHand >>> 24] + ' and takes the ' + honeyPot + '-stroke honey pot. ' + winName + ' ' + formatScore(winnerScore) + ', ' + loseName + ' ' + formatScore(loserScore) + '.';
+      g.carryPot = 0;
     }
   }
   g.p1.total += p1s; g.p2.total += p2s;
@@ -3961,6 +4198,10 @@ function saveState() {
     moments: BuzzKnowledge.moments.slice(0, 50),
   };
   StorageAPI.save(snapshot);
+  // Mirror to the unified save bundle so a single key always reflects the
+  // user's full progress. Any mutation that calls saveState() — new season,
+  // moment recorded, pool rebuild — automatically refreshes the bundle.
+  unifiedSave();
 }
 
 function loadState() {
@@ -7102,6 +7343,9 @@ function saveLabState() {
     const body = { config: LabState.config, runs: LabState.runs, activeRunId: LabState.activeRunId, panelWidth: LabState.panelWidth };
     getStorage().setItem(LAB_STORAGE_KEY, JSON.stringify(body));
   } catch (e) { /* quota exceeded; silently drop */ }
+  // Mirror to unified save — any config change, run snapshot, or panel resize
+  // immediately propagates into the canonical save bundle.
+  unifiedSave();
 }
 
 function loadLabState() {
@@ -7853,11 +8097,40 @@ function renderConfigPanel(panel, mode) {
   resetCareerBtn.onclick = () => { resetTourHistory(); renderConfigPanel(panel, mode); };
   runSec.appendChild(resetCareerBtn);
 
-  const purgeBtn = el('button', { class: 'btn ghost small', style: 'width: 100%; margin-top: 4px;', text: 'Purge browser storage' });
+  // Export Backup — downloads a copy of the current unified save before any
+  // destructive action. Shipped above the Reset button so users see the safety
+  // net before they see the danger.
+  const exportBtn = el('button', { class: 'btn outline small', style: 'width: 100%; margin-top: 6px;', text: '⬇ Export Backup (JSON)' });
+  exportBtn.onclick = () => exportUnifiedSave();
+  runSec.appendChild(exportBtn);
+
+  // Reset All Progress — renamed from "Purge browser storage" with a stronger
+  // two-step confirmation so a misclick can't wipe a long career.
+  const purgeBtn = el('button', { class: 'btn fold small', style: 'width: 100%; margin-top: 6px;', text: '⚠ Reset All Progress' });
   purgeBtn.onclick = () => {
-    if (!confirm('Clear all saved browser storage for Yellow Jacket? This wipes tour state, simulator runs, and cached config, then reloads the page.')) return;
+    const step1 = confirm(
+      'RESET ALL PROGRESS?\n\n' +
+      'This will permanently delete:\n' +
+      '  • Your entire tour career (seasons, events, player stats)\n' +
+      '  • All saved simulator runs and configurations\n' +
+      '  • Legendary moments and Hall of Fame records\n' +
+      '  • Active solo / hot-seat / share-link games\n\n' +
+      'This cannot be undone unless you have an exported backup.\n\n' +
+      'Click OK to proceed to the final confirmation, or Cancel to keep your progress.'
+    );
+    if (!step1) return;
+    const step2 = prompt(
+      'FINAL CONFIRMATION\n\n' +
+      'To confirm permanent deletion, type RESET below (in capitals).\n\n' +
+      'Type anything else, or click Cancel, to abort.'
+    );
+    if (step2 !== 'RESET') {
+      toast('Reset cancelled — your progress is safe.');
+      return;
+    }
     clearAllStoredData();
-    location.reload();
+    toast('All progress reset. Reloading…');
+    setTimeout(() => location.reload(), 800);
   };
   runSec.appendChild(purgeBtn);
 
@@ -8862,14 +9135,40 @@ function drawRevenueByType(canvas, revByType) {
 // configuration. Use individual runs and compare them in the Run Registry.
 
 function init() {
-  if (!loadState()) {
+  // === UNIFIED SAVE / VERSION-AWARE RESTORE ===
+  // Try the unified save bundle first. If it exists, hydrate everything from
+  // it (TourState pool/seasons/preferences, LabState config/runs, moments) in
+  // a single read. If absent, fall back to the legacy split-key load path so
+  // pre-versioning saves still restore cleanly.
+  const unified = unifiedRead();
+  let restoredFromUnified = false;
+  let savedVersion = null;
+  if (unified) {
+    savedVersion = unifiedRestore(unified);
+    restoredFromUnified = true;
+    if (!TourState.pool || TourState.pool.length === 0) {
+      TourState.pool = buildPool(POOL_SIZE);
+    }
+    toast('Progress restored from last session', 2200);
+  } else if (!loadState()) {
     TourState.pool = buildPool(POOL_SIZE);
     saveState();
     toast('Pool initialized — ' + POOL_SIZE + ' players ready. Run your first season!', 3500);
   } else {
     toast('Tour history restored from last session', 2000);
   }
-  loadLabState();
+  if (!restoredFromUnified) loadLabState();
+  // Ensure the unified bundle is in sync after any legacy-path restore so the
+  // next save immediately writes the canonical key.
+  unifiedSave();
+
+  // Smart-refresh banner — fires when a saved version differs from APP_VERSION.
+  // Reassures the user their progress is intact and offers a one-click hard
+  // reload (which re-fetches index.html bypassing browser cache).
+  if (savedVersion && savedVersion !== APP_VERSION) {
+    showVersionBanner(savedVersion, APP_VERSION);
+  }
+
   setScoringStyle(LabState.config.scoringStyle || DEFAULT_SIM_CONFIG.scoringStyle);
   setStrokeCap(LabState.config.regularStrokeCap || LabState.config.strokeCap);
 
