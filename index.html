@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v9";
+const APP_VERSION = "2026.04.25-v10";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2634,6 +2634,7 @@ function buildPool(size) {
       majorWins: 0, regularWins: 0, mainWins: 0, totalWins: 0, runnerUps: 0,
       eventsEntered: 0, majorsEntered: 0, regularsEntered: 0, mainsEntered: 0,
       lastMajorWin: null, firstMajorWin: null,
+      lastMainWin: null,
       careerSpanStart: null, careerSpanEnd: null,
       bestFinalsScore: 999, recentForm: [],
       currentSeasonPoints: 0, lastSeasonPoints: 0, qualSeasonYear: 0,
@@ -6480,6 +6481,7 @@ function buildPoolFromConfig(cfg) {
       majorWins: 0, regularWins: 0, mainWins: 0, totalWins: 0, runnerUps: 0,
       eventsEntered: 0, majorsEntered: 0, regularsEntered: 0, mainsEntered: 0,
       lastMajorWin: null, firstMajorWin: null,
+      lastMainWin: null,
       careerSpanStart: null, careerSpanEnd: null,
       bestFinalsScore: 999, recentForm: [],
       currentSeasonPoints: 0, lastSeasonPoints: 0, qualSeasonYear: 0,
@@ -6632,7 +6634,11 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   // crossed the threshold. mainQualifierUntil doesn't need a snapshot because
   // it's only mutated in major-event tails, never during the main itself.
   const preEventLastMajorWin = new Map();
-  for (const p of field) preEventLastMajorWin.set(p.id, p.lastMajorWin);
+  const preEventLastMainWin = new Map();
+  for (const p of field) {
+    preEventLastMajorWin.set(p.id, p.lastMajorWin);
+    preEventLastMainWin.set(p.id, p.lastMainWin);
+  }
   // bracket survival: quartiles of original field
   const sortedBySkill = field.slice().sort((a, b) => b.skill - a.skill);
   const tier = (p) => {
@@ -6808,8 +6814,11 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   if (eventType === 'major') {
     champ.majorWins++; champ.lastMajorWin = year;
     if (champ.firstMajorWin == null) champ.firstMajorWin = year;
-  } else if (eventType === 'regular') champ.regularWins++;
-  else champ.mainWins++;
+  } else if (eventType === 'regular') {
+    champ.regularWins++;
+  } else {
+    champ.mainWins++; champ.lastMainWin = year;
+  }
   champ.totalWins++; ru.runnerUps++;
   if (champScore < champ.bestFinalsScore) champ.bestFinalsScore = champScore;
 
@@ -6818,25 +6827,41 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
                : eventType === 'regular' ? (cfg.buyInRegular || 0)
                : (cfg.buyInMain || 0);
   const exemptionYearsCfg = cfg.exemptionYears != null ? cfg.exemptionYears : 3;
-  // Two free-entry paths:
-  //   (1) Major champion exemption — past major winners (PRIOR to this event)
-  //       inside the exemption window enter majors for no buy-in (PGA Masters
-  //       Champions Dinner / lifetime exemption analog). Reads lastMajorWin
-  //       from the pre-event snapshot so a fresh winner of this very event
-  //       doesn't get retroactively waived.
-  //   (2) Main-event satellite qualifiers — players flagged mainQualifierUntil
-  //       === year (top-N finishers in this year's majors) enter the Main
-  //       free. The flag is set in major-event tails BEFORE the main runs,
-  //       so the live read of mainQualifierUntil is correct (no snapshot).
-  // Both paths return EXACTLY 0 so buyInsPaid for an exempt seat is forced
-  // to zero in the field loop below — totalExemptSeats counts these waived
-  // seats for the CSV economics block.
+  // ALL automatic-invite paths return EXACTLY 0 so buyInsPaid for an exempt
+  // seat is forced to zero in the field loop below — totalExemptSeats counts
+  // these waived seats for the CSV economics block.
+  //
+  // MAJOR waivers:
+  //   (M1) Champion exemption — past major winners (PRIOR to this event)
+  //        within cfg.exemptionYears. Reads lastMajorWin from the pre-event
+  //        snapshot so a fresh winner of this very event isn't retroactively
+  //        waived for the event they just won.
+  //
+  // MAIN waivers (any one of the three triggers a waiver):
+  //   (m1) Satellite qualifier — mainQualifierUntil === year (top-N finishers
+  //        in this year's majors). Flag is set in major-event tails BEFORE
+  //        the main runs, so the live read is correct (no snapshot needed).
+  //   (m2) Main champion exemption — past Main winners within the exemption
+  //        window. Reads lastMainWin from snapshot to avoid retroactive
+  //        waiver for a brand-new Main champion.
+  //   (m3) Major champion direct-entry — selectFieldLab grants past major
+  //        winners direct-entry seats in the Main (line 6523, hasChampExempt
+  //        rule), and the economic-model comment explicitly tags those
+  //        direct-entry exempt seats as FREE. Same snapshot read as (M1).
+  //
+  // Regulars have no auto-invite path — every regular entrant pays.
   function playerBuyIn(p) {
     if (eventType === 'major') {
       const lastWin = preEventLastMajorWin.get(p.id);
       if (lastWin != null && (year - lastWin) <= exemptionYearsCfg) return 0;
     }
-    if (eventType === 'main' && p.mainQualifierUntil === year) return 0;
+    if (eventType === 'main') {
+      if (p.mainQualifierUntil === year) return 0;
+      const lastMain = preEventLastMainWin.get(p.id);
+      if (lastMain != null && (year - lastMain) <= exemptionYearsCfg) return 0;
+      const lastMaj = preEventLastMajorWin.get(p.id);
+      if (lastMaj != null && (year - lastMaj) <= exemptionYearsCfg) return 0;
+    }
     return baseBuyIn;
   }
   const perPlayerBuyIns = field.map(playerBuyIn);
