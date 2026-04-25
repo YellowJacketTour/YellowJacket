@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v8";
+const APP_VERSION = "2026.04.25-v9";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -6617,6 +6617,22 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     if (p.finalTableCount == null) p.finalTableCount = 0;
     if (p.careerScore == null) p.careerScore = 0;
   }
+  // === EXEMPTION SNAPSHOT — pre-event freeze ===
+  // playerBuyIn() runs AFTER runFinals/runAggregate, by which time the new
+  // champion's lastMajorWin has been bumped to the current year — so without
+  // a snapshot, a brand-new winner gets a retroactive waiver for the very
+  // event they just won (year - lastMajorWin = 0 falls inside the exemption
+  // window). That is the root cause of negative elite ROI: top-skill players
+  // win their first major and then their entry fee for that event silently
+  // disappears, distorting net buy-ins downstream.
+  //
+  // Fix: snapshot lastMajorWin at field-entry time and read from the snapshot
+  // when computing buy-ins. New champions still earn the waiver for FUTURE
+  // events within the exemption window — just not for the event in which they
+  // crossed the threshold. mainQualifierUntil doesn't need a snapshot because
+  // it's only mutated in major-event tails, never during the main itself.
+  const preEventLastMajorWin = new Map();
+  for (const p of field) preEventLastMajorWin.set(p.id, p.lastMajorWin);
   // bracket survival: quartiles of original field
   const sortedBySkill = field.slice().sort((a, b) => b.skill - a.skill);
   const tier = (p) => {
@@ -6803,17 +6819,30 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
                : (cfg.buyInMain || 0);
   const exemptionYearsCfg = cfg.exemptionYears != null ? cfg.exemptionYears : 3;
   // Two free-entry paths:
-  //   (1) Major champion exemption — past major winners inside the exemption window
-  //       enter majors for no buy-in (PGA Masters Champions Dinner / lifetime exemption).
-  //   (2) Main-event satellite qualifiers — players flagged mainQualifierUntil === year
-  //       (top-N finishers in this year's majors) enter the Main free.
+  //   (1) Major champion exemption — past major winners (PRIOR to this event)
+  //       inside the exemption window enter majors for no buy-in (PGA Masters
+  //       Champions Dinner / lifetime exemption analog). Reads lastMajorWin
+  //       from the pre-event snapshot so a fresh winner of this very event
+  //       doesn't get retroactively waived.
+  //   (2) Main-event satellite qualifiers — players flagged mainQualifierUntil
+  //       === year (top-N finishers in this year's majors) enter the Main
+  //       free. The flag is set in major-event tails BEFORE the main runs,
+  //       so the live read of mainQualifierUntil is correct (no snapshot).
+  // Both paths return EXACTLY 0 so buyInsPaid for an exempt seat is forced
+  // to zero in the field loop below — totalExemptSeats counts these waived
+  // seats for the CSV economics block.
   function playerBuyIn(p) {
-    if (eventType === 'major' && p.majorWins > 0 && p.lastMajorWin != null && (year - p.lastMajorWin) <= exemptionYearsCfg) return 0;
+    if (eventType === 'major') {
+      const lastWin = preEventLastMajorWin.get(p.id);
+      if (lastWin != null && (year - lastWin) <= exemptionYearsCfg) return 0;
+    }
     if (eventType === 'main' && p.mainQualifierUntil === year) return 0;
     return baseBuyIn;
   }
   const perPlayerBuyIns = field.map(playerBuyIn);
   const grossPool = perPlayerBuyIns.reduce((a, b) => a + b, 0);
+  // exemptSeats = count of waived buy-ins this event. Flows through to the
+  // CSV economics block (totalExemptSeats) so the waiver volume is visible.
   const exemptSeats = perPlayerBuyIns.filter(v => v === 0).length;
   const rake = cfg.rakePercent != null ? cfg.rakePercent : 0.03;
   const revenue = grossPool * rake;
