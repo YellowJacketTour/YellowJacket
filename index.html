@@ -1313,11 +1313,9 @@ function activeScoringModel() { return SCORING_STYLES['honey-stroke']; }
 // "equity given opponent reached this street voluntarily."
 const WIN_PROB = [0.05, 0.38, 0.72, 0.87, 0.92, 0.96, 0.985, 0.999, 1.0, 1.0];
 
-// honeyNormalizationDivisor = 36 (final production value)
-// This is twice the original /18 because the honey feedback loop proved
-// stronger than a single round of golf. It keeps champion scores in realistic
-// PGA range (-8 to -14) even when skilled players win large pots consistently.
-const honeyNormalizationDivisor = 36;
+// honeyNormalizationDivisor = 72 (4×18, like 4 rounds of golf / majors).
+// Golf dominates; honey is the light smoothing drizzle.
+const honeyNormalizationDivisor = 72;
 
 function rankName(r) { return RANK_NAMES[r] || String(r); }
 
@@ -2311,8 +2309,7 @@ function playMatch(pA, pB, numHoles, opts) {
   //   - tied holes accumulate the pot into carryPot; next decisive hole's winner sweeps it
   //   - net honey credit = totalHoneyA − totalHoneyB (zero-sum: only imbalance moves the score)
   //
-  // honeyNormalizationDivisor = 36 (single source of truth — final production value for this test)
-  // net honey is now strictly divided by this value in both aggregate and finals scoring.
+  // honeyNormalizationDivisor = 72 (4×18, like 4 rounds of golf / majors). Golf dominates; honey is the light smoothing drizzle.
   // Round total: roundA = totalGolfA − (netHoneyA / honeyNormalizationDivisor)
   //              roundB = totalGolfB − (netHoneyB / honeyNormalizationDivisor)
   // Winning more pots IMPROVES (reduces) your round score. Leftover end-of-round carry
@@ -2552,8 +2549,7 @@ function runFinals(p1, p2) {
     }
     days.push({ day, p1Score: dayA, p2Score: dayB });
   }
-  // honeyNormalizationDivisor = 36 (single source of truth — final production value for this test)
-  // net honey is now strictly divided by this value in both aggregate and finals scoring.
+  // honeyNormalizationDivisor = 72 (4×18, like 4 rounds of golf / majors). Golf dominates; honey is the light smoothing drizzle.
   const computeFinalsTotals = () => {
     const netA = p1HoneyTotal - p2HoneyTotal;
     const netB = p2HoneyTotal - p1HoneyTotal;
@@ -7852,7 +7848,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('invariant.honeyDivisor', 1);
   cfgRow('invariant.carryOverEnabled', true);
   cfgRow('scoring.honeyMagnitudeTamed', true);
-  cfgRow('scoring.honeyNormalizationDivisor', 36);
+  cfgRow('scoring.honeyNormalizationDivisor', 72);
   cfgRow('skillMetricDefinition', 'average EV realization per decision (pure poker skill, not ROI)');
   cfgRow('ui.largeSimMode', LabState.config.largeSimMode ? 'enabled' : 'disabled');
   cfgRow('ai.thresholdCoupling.bet', 0.8);
