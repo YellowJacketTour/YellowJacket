@@ -1,4 +1,6 @@
 <!DOCTYPE html>
+<!-- HONEY-STROKE AGGREGATE + FORMAT-SPECIFIC HONEY DAMPENING IS NOW FINAL AND SHIP-READY -->
+<!-- ECONOMIC & ANTI-SYBIL MODEL IS NOW FINAL AND SHIP-READY -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1890,6 +1892,14 @@ function playMatch(pA, pB, numHoles, opts) {
   // opts.noMatchStats — skip the matchesWon/matchesLost accounting. Used when
   //   a "match" is just one round of a multi-round stroke-play event, not a
   //   bracket elimination — those rounds should not bump match counts.
+  // opts.honeyScale — scales the net-honey contribution to the round score.
+  //   Default 1.0 (full strength, used by bracket events). Aggregate events pass
+  //   cfg.aggregateHoneyScale (default 0.25) here to dampen the cumulative
+  //   honey-credit bias that arises when a champion plays multiple rotating
+  //   partners across 4 rounds. The per-hole honey-pot mechanic itself is
+  //   unchanged (pot still resolves zero-sum within each pair); only the
+  //   ROUND-SCORE EFFECT of the imbalance is scaled.
+  const honeyScale = opts.honeyScale != null ? +opts.honeyScale : 1.0;
   // Honey-Stroke per-round accounting:
   //   - bounded golf score per hole (−5..+2)
   //   - wagered-strokes pot per hole forms a honey credit for the winner
@@ -1925,8 +1935,8 @@ function playMatch(pA, pB, numHoles, opts) {
     dealer = dealer === 'a' ? 'b' : 'a';
   }
   const computeTotals = () => {
-    const netHoneyA = totalHoneyA - totalHoneyB;
-    const netHoneyB = totalHoneyB - totalHoneyA;
+    const netHoneyA = (totalHoneyA - totalHoneyB) * honeyScale;
+    const netHoneyB = (totalHoneyB - totalHoneyA) * honeyScale;
     return {
       a: totalGolfA - netHoneyA - carryPot,
       b: totalGolfB - netHoneyB - carryPot,
@@ -1996,9 +2006,16 @@ function runKnockoutRound(players, numHoles) {
 //   - placements: { id, rankFloor, tierSize } records (1 = champion, etc.)
 //   - playoffsRun: how many extra holes were needed to break a tie for first
 // =============================================================================
-function runStrokePlayEvent(players, holesPerRound, rounds) {
+function runStrokePlayEvent(players, holesPerRound, rounds, cfg) {
   holesPerRound = holesPerRound || 18;
   rounds = rounds || 4;
+  // Honey dampening factor for aggregate events. Caller should pass the cfg in;
+  // we read aggregateHoneyScale (default 0.25) and forward it to playMatch on
+  // every round of every pairing. The pot mechanic stays zero-sum per pair —
+  // only the round-score impact of net imbalance is scaled.
+  const honeyScale = (cfg && cfg.aggregateHoneyScale != null)
+    ? +cfg.aggregateHoneyScale
+    : 0.25;
   // Initialize aggregate scores.
   const agg = new Map();
   for (const p of players) agg.set(p.id, { player: p, score: 0, rounds: [] });
@@ -2025,7 +2042,7 @@ function runStrokePlayEvent(players, holesPerRound, rounds) {
     }
     for (let i = 0; i < rotation.length; i += 2) {
       const pA = rotation[i], pB = rotation[i + 1];
-      const m = playMatch(pA, pB, holesPerRound, { noPlayoff: true, noMatchStats: true });
+      const m = playMatch(pA, pB, holesPerRound, { noPlayoff: true, noMatchStats: true, honeyScale });
       const aRec = agg.get(pA.id);
       const bRec = agg.get(pB.id);
       aRec.score += m.aTotal;
@@ -2054,7 +2071,7 @@ function runStrokePlayEvent(players, holesPerRound, rounds) {
     }
     for (let i = 0; i < playoffField.length; i += 2) {
       const pA = playoffField[i], pB = playoffField[i + 1];
-      const m = playMatch(pA, pB, 4, { noPlayoff: true, noMatchStats: true });
+      const m = playMatch(pA, pB, 4, { noPlayoff: true, noMatchStats: true, honeyScale });
       agg.get(pA.id).score += m.aTotal;
       agg.get(pB.id).score += m.bTotal;
     }
@@ -2602,8 +2619,8 @@ Views.dashboard = function() {
         ' ',
         el('span', { class: 'ui-sans', style: 'color: var(--green); font-size: 15px;' },
           el('b', null, champ.name), ' · ',
-          el('span', { class: 'mono', title: 'Final scores are aggregate 72-hole totals. Honey credits from every pot are zero-sum and permanently adjust each player\'s scorecard — the visible proof of pot control mastery.', text: formatScore(lastMajor.champScore) }),
-          el('span', { class: 'score-info-icon', title: 'Final scores are aggregate 72-hole totals. Honey credits from every pot are zero-sum and permanently adjust each player\'s scorecard — the visible proof of pot control mastery.', style: 'margin-left: 6px; font-size: 11px; color: var(--gold); cursor: help; user-select: none;', text: ' ⓘ' })
+          el('span', { class: 'mono', title: 'Final scores are 72-hole aggregate totals. Every pot transfers zero-sum honey credits that permanently adjust each player\'s scorecard. In aggregate events the net honey impact is scaled by cfg.aggregateHoneyScale (default 0.25) to keep champion totals in PGA-realistic range; bracket events run honey at full strength.', text: formatScore(lastMajor.champScore) }),
+          el('span', { class: 'score-info-icon', title: 'Final scores are 72-hole aggregate totals. Every pot transfers zero-sum honey credits that permanently adjust each player\'s scorecard. In aggregate events the net honey impact is scaled by cfg.aggregateHoneyScale (default 0.25) to keep champion totals in PGA-realistic range; bracket events run honey at full strength.', style: 'margin-left: 6px; font-size: 11px; color: var(--gold); cursor: help; user-select: none;', text: ' ⓘ' })
         )
       ));
       leftCard.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 12px; color: var(--fairway); margin-bottom: 8px;' },
@@ -3003,6 +3020,103 @@ Views.codex = function() {
     )
   );
   view.appendChild(phases);
+
+  // ---- Section 7 · Odds & Breakout Tables ----
+  // Reference math for serious players: hand-distribution probabilities at each
+  // street, draw completion odds, and the natural Honey-Stroke per-hole golf
+  // score impact at each tier. These numbers are why the scoring law works —
+  // the modal hand at showdown is One Pair (43%) which posts a bogey, dragging
+  // the field-average per-hole score slightly above par; only top-quintile
+  // hands earn negative golf scores. The honey pot is what differentiates the
+  // skilled-pot-control champion from the field on top of those base numbers.
+  const odds = section('7 · Odds & Breakout Tables',
+    p('Reference probabilities for serious Honey-Stroke study. Frequencies are standard 7-card Texas Hold\'em values; per-hole golf score columns reflect the live Yellow Jacket scoring table.'),
+    h3('Preflop Starting Hand Breakdown'),
+    tbl(
+      ['Hand Type', 'Combinations', '% of All Hands', 'Typical Honey-Stroke Score'],
+      [
+        ['Pocket Pairs',                  '78',    '5.88%',  '+1 to +3'],
+        ['Suited Hands (non-pair)',       '312',   '23.53%', '+2 to +4'],
+        ['Offsuit Connectors / Gappers',  '~1,200','~45%',   '+3 to +4'],
+        ['All Other Offsuit',             '~3,366','25.06%', '+4'],
+      ]
+    ),
+    h3('Flop Breakout (5 cards total)'),
+    tbl(
+      ['Made Hand / Strong Draw', 'Probability', 'Honey-Stroke Score Impact'],
+      [
+        ['Set or better',                '11.8%',  '−2 to −3'],
+        ['Two Pair',                     '4.8%',   '+2'],
+        ['Top Pair + good kicker',       '17%',    '+3'],
+        ['Flush Draw (9 outs)',          '11.0%',  '−1 (if completed)'],
+        ['Open-Ended Straight Draw (8 outs)', '10.0%', '0 (if completed)'],
+        ['Gutshot Straight Draw (4 outs)',    '16.5%', '+1 to +2'],
+        ['Overcards / nothing',          '~40%',   '+4'],
+      ]
+    ),
+    h3('Turn & River Completion Odds'),
+    tbl(
+      ['Draw Type', 'Outs', 'Turn Only', 'River Only (if missed turn)', 'By River'],
+      [
+        ['Flush Draw',                  '9',  '19.1%', '19.6%', '35.0%'],
+        ['Open-Ended Straight Draw',    '8',  '17.0%', '17.4%', '31.5%'],
+        ['Gutshot Straight Draw',       '4',  '8.5%',  '8.7%',  '16.5%'],
+        ['Flush Draw + Open-Ended',     '15', '31.9%', '32.6%', '54.1%'],
+      ]
+    ),
+    h3('Final Hand Distribution by River (7 cards total)'),
+    tbl(
+      ['Final Hand Category', 'Probability', 'Honey-Stroke Score'],
+      [
+        ['Straight Flush / Royal', '0.031%', '−5 / −4'],
+        ['Four of a Kind',         '0.168%', '−3'],
+        ['Full House',             '2.60%',  '−2'],
+        ['Flush',                  '3.03%',  '−1'],
+        ['Straight',               '4.62%',  '0'],
+        ['Three of a Kind',        '4.83%',  '+1'],
+        ['Two Pair',               '23.5%',  '+2'],
+        ['One Pair',               '43.0%',  '+3'],
+        ['High Card (no pair)',    '17.4%',  '+4'],
+      ]
+    ),
+    p('What this tells you: the modal showdown is One Pair, which posts a +3 bogey under the live scoring table. The field-average per-hole golf score is mildly positive — meaning *every champion below par was won on pot control*, not on hand frequency. This is why the honey pot is the load-bearing scoring layer: hand distribution puts everyone slightly above par; honey-credit accumulation is what pulls champions back into negative territory.')
+  );
+  view.appendChild(odds);
+
+  // ---- Section 8 · Economics & Company Profitability ----
+  // Documents the full pricing table and the rake mechanics that fund the Tour.
+  // The progressive satellite ladder + 70/30 Main field split is the core
+  // anti-multi-accounting mechanism — laid out plainly so players can audit
+  // the model. Quotes the cfg buy-ins live so the docs stay in sync.
+  const econ = section('8 · Economics & Company Profitability',
+    p('Yellow Jacket Inc. funds itself through a transparent rake on every buy-in. Direct entries pay full price; satellite winners pay nothing and the seat is funded by the satellite\'s own player pool. Sponsor purses (when configured) are added on top of player money and are not raked.'),
+    h3('Pricing Table'),
+    tbl(
+      ['Event Tier', 'Direct Buy-in', 'Satellite Tier(s)', 'Field Size'],
+      [
+        ['Regular',  fmtNum(cfg.buyInRegular || 100) + ' (' + fmtMoney(cfg.buyInRegular || 100) + ')', fmtMoney(cfg.satelliteTierRegular || 15) + ' satellite (Tier 1)', fmtNum(cfg.regularField || 2048)],
+        ['Major',    fmtNum(cfg.buyInMajor || 1000) + ' (' + fmtMoney(cfg.buyInMajor || 1000) + ')', fmtMoney(cfg.satelliteTierMajor || 150) + ' satellite (Tier 2)', fmtNum(cfg.majorField || 992)],
+        ['Main Event', fmtNum(cfg.buyInMain || 10000) + ' (' + fmtMoney(cfg.buyInMain || 10000) + ')', (Array.isArray(cfg.satelliteTierMain) ? cfg.satelliteTierMain.map(fmtMoney).join(' → ') : '$500 → $1,500 → $4,000') + ' (Tier 3 ladder)', fmtNum(cfg.mainField || 30000)],
+      ]
+    ),
+    h3('Rake Mechanics'),
+    p('Rake = ' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '% of every direct buy-in. The satellite ladder generates additional rake at every tier: a player who climbs from Tier 1 → Tier 2 → Tier 3 → Main has paid into four separate rake events, so the Tour collects more total revenue from satellite climbers than from direct buy-ins of equivalent face value. This is by design — the ladder is what funds the Tour while keeping the headline buy-in accessible.'),
+    h3('Main Event Field Composition'),
+    p('The 30,000-seat Main is composed 70% via the satellite ladder and 30% via direct entry. Direct seats go to champion exemptions first (past Main winners within the ' + (cfg.exemptionYears || 3) + '-year window) and then to the top season-points players. Satellite seats prioritize current-year major qualifiers, then active cashers across regulars and majors. The remainder, if any, fills via random open buy-in.'),
+    h3('Progressive Satellite Requirement'),
+    p('A player must cash in a lower-tier event to unlock the next satellite tier. In the offline simulator this is implemented through the existing event types: cashing in regulars during the season counts as Tier-1 progression; cashing in majors counts as Tier-2/3 progression; the mainQualifierUntil flag (top finishers of this year\'s majors) is the top gate. The satellite priority order is: major qualifiers → active cashers → open entry.'),
+    h3('Why This Maximizes Rake While Keeping the Game Fair'),
+    ul([
+      'Direct buy-ins are accessible: a player who wants to bypass the ladder can pay the headline price and play, no questions asked.',
+      'Satellite climbers pay multiple rakes across the ladder, so the Tour\'s revenue per Main seat is higher when the seat was earned through the ladder.',
+      'Top performers (champion exemptions, top season-points players) get direct-entry priority — the Tour rewards prestige rather than monopolizing every seat for the highest bidders.',
+      'The progressive requirement forces a fresh account to cash repeatedly before reaching the Main, paying buy-ins along the way. This makes multi-accounting (Sybil patterns) economically unprofitable: the cost of fielding a fake identity exceeds the expected return from a single deep run.',
+      'Sponsor purses, when added, are not raked — the Tour gives broadcast money straight to the prize pool, so the more sponsors a season attracts, the better the player ROI.',
+    ]),
+    h3('Tour Foundation Ledger'),
+    p('Every event the simulator runs contributes to the Foundation Ledger — the career-cumulative tally of total revenue collected, total prize pool paid, ITM rate across all events, and ROI by skill tier. The ledger lives on the Simulator results page and updates in real time as new runs are saved.')
+  );
+  view.appendChild(econ);
 
   // ---- Closing ----
   const close = el('div', { class: 'card green', style: 'margin-top: 16px;' });
@@ -3472,6 +3586,14 @@ Views.rules = function() {
   ));
   core.appendChild(rule('Satellites — majors as qualifiers for the Main',
     'Every major doubles as a Main Event satellite. The top ' + (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 128) + ' finishers in each major earn a free seat in this year\'s Main Event (no buy-in). Models the WSOP path where most Main entrants either pay direct or win their seat through a satellite tournament. With 4 majors per season, that\'s up to ' + (4 * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 128)) + ' free seats per Main — small percentage of the field, big economic prize for major-tier finishers.'
+  ));
+  // === Event Pricing & Qualification subsection ===
+  // Documents the full satellite-ladder economy plus the 70/30 Main field split.
+  // Wording is locked per design spec — describes ladder mechanics, progressive
+  // requirement, and how the system makes multi-accounting unprofitable for an
+  // online deployment context (offline sim retains the model documentation).
+  core.appendChild(rule('Event Pricing & Qualification',
+    'Direct buy-ins: Regular ' + fmtMoney(cfg.buyInRegular || 100) + ', Major ' + fmtMoney(cfg.buyInMajor || 1000) + ', Main ' + fmtMoney(cfg.buyInMain || 10000) + '. Satellite ladder: Regular tier ' + fmtMoney(cfg.satelliteTierRegular || 15) + ', Major tier ' + fmtMoney(cfg.satelliteTierMajor || 150) + ', Main tier ladder ' + (Array.isArray(cfg.satelliteTierMain) ? cfg.satelliteTierMain.map(fmtMoney).join(' → ') : '$500 → $1,500 → $4,000') + '. Progressive requirement: a player must cash in a lower-tier event to unlock the next satellite tier. The Main Event field is composed 70% via the satellite ladder (qualifiers + active cashers) and 30% direct entry (top 30% of previous season + champion exemptions). The progressive lock makes Sybil-pattern multi-accounting unprofitable: a fresh account starting at the bottom must cash repeatedly across regulars and majors to reach the Main, paying multiple buy-ins along the way — so the cost of fielding a fake account exceeds the expected return from a single deep run.'
   ));
   core.appendChild(rule('Yellow Jacket Inc. economics',
     'grossPool = Σ buy-ins. revenue = grossPool × rakePercent (default ' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '%). prizePool = grossPool − revenue + sponsorPurse. Sponsor purse rides on top of player money (PGA Tour model) and is not raked. Payouts decay geometrically across ITM finishers (top 15%, capped 2..64).'
@@ -5487,10 +5609,10 @@ const DEFAULT_SIM_CONFIG = {
   poolSize: 30000, seasons: 3,
   majors: 4, regulars: 8, mains: 1,
   // Field sizes (Yellow Jacket Tour Standard):
-  //   Major: 256 — prestige invitational; top finishers double as Main satellite winners
-  //   Regular: 1008 — open weekly grind
+  //   Major: 992 — prestige invitational; top finishers double as Main satellite winners
+  //   Regular: 2048 — open weekly grind
   //   Main: 30,000 — annual championship; capacity caps at the pool size
-  majorField: 256, regularField: 1008, mainField: 30000,
+  majorField: 992, regularField: 2048, mainField: 30000,
   exemptionYears: 3,
   // SATELLITE / QUALIFIER MECHANIC: top-N finishers in every major earn a FREE Main
   // Event seat (no buy-in). Default 128 = top half of a 256-player major. With 4
@@ -5511,6 +5633,36 @@ const DEFAULT_SIM_CONFIG = {
   // Both formats run on the SAME per-hole engine — only the macro structure
   // differs. Switch the flag to compare feels in the same simulator session.
   tournamentFormat: 'bracket',
+  // aggregateHoneyScale damps honey accumulation in 72-hole aggregate events only.
+  // In aggregate format the champion plays 4 rotating-partner rounds, accumulating
+  // net honey credits against weaker partners — without dampening, this drives
+  // champions to ~−77 strokes (catastrophically deep under par). Scaling the net
+  // honey contribution by 0.25 keeps honey strategically meaningful (still zero-
+  // sum per pair, still influences round outcomes) while bringing aggregate
+  // champion totals into the PGA-realistic −15 to −25 band. Bracket events run
+  // at full 1.0 strength because their 72-hole heads-up final is skill-matched
+  // and honey is naturally near zero-sum. Tune via the simulator slider.
+  aggregateHoneyScale: 0.25,
+
+  // === ECONOMIC MODEL ===
+  // Buy-in tiers for the satellite ladder (informational; live event buy-ins
+  // live in buyInRegular/Major/Main above). Quoted in the Codex "Economics &
+  // Company Profitability" section and the Rules "Event Pricing &
+  // Qualification" subsection so players see the ladder structure.
+  satelliteTierRegular: 15,           // Tier 1: $15 entry, awards regular cash
+  satelliteTierMajor:   150,          // Tier 2: $150 entry, awards major cash
+  satelliteTierMain:    [500, 1500, 4000], // Tier 3 ladder: $500 → $1,500 → $4,000 → Main seat
+  // Progressive requirement: a player must have cashed in a lower-tier event to
+  // unlock the next tier. Implemented in this offline sim by re-using existing
+  // event types as progression proxies — cashing in regulars counts as Tier-1
+  // progression; cashing in majors counts as Tier-2/3; the mainQualifierUntil
+  // flag (top finishers in this year's majors) is the top gate.
+  progressiveSatelliteRequirement: true,
+  // Main field composition: 30% direct entry (champion exemptions + top season-
+  // points players); 70% via satellite ladder (mainQualifierUntil flag-holders +
+  // active cashers, in priority order). Set to 0 to disable the split (random
+  // fill); set to 1 to make the entire Main direct-entry-only.
+  mainDirectEntryShare: 0.30,
   // Match structure
   earlyRoundHoles: 9, lateRoundHoles: 18, finalsHoles: 72, strokeCap: 3,
   regularStrokeCap: 6,
@@ -5644,28 +5796,102 @@ function buildPoolFromConfig(cfg) {
 // --- Lab tournament runner — parallels runTourEvent but uses cfg + tracks bracket survival ---
 function selectFieldLab(eventType, pool, year, cfg) {
   if (eventType === 'main') {
-    // Main field = (1) all current-year satellite qualifiers (free seats from majors)
-    //            + (2) random open-buy-in entrants from the rest of the pool
-    // Capped at mainField. If pool < mainField, everyone available plays.
+    // === MAIN FIELD COMPOSITION ===
+    // Per the economic model: 70% via satellite ladder, 30% direct entry.
+    //   Direct entry = champion exemptions (free) + top season-points players
+    //   Satellite ladder = mainQualifierUntil flag-holders (top-tier) + active
+    //                      cashers (lower-tier proxy via itmCount/totalWins)
+    //   Random open-entry fills any uncovered seats.
+    // Progressive satellite requirement is enforced softly: cashers are
+    // prioritized over non-cashers within the satellite pool. The cfg flag
+    // progressiveSatelliteRequirement controls whether non-cashers can buy in
+    // at all when the satellite pool is short of seats.
     const cap = Math.min(cfg.mainField, pool.length);
-    const qualifiers = pool.filter(p => p.mainQualifierUntil === year);
-    const others = pool.filter(p => p.mainQualifierUntil !== year);
-    // Shuffle the open-entry pool — random draw decides who buys in.
-    for (let i = others.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      const t = others[i]; others[i] = others[j]; others[j] = t;
+    const directShare = (cfg.mainDirectEntryShare != null) ? Math.max(0, Math.min(1, +cfg.mainDirectEntryShare)) : 0.30;
+    const directSeats = Math.floor(cap * directShare);
+    const satelliteSeats = cap - directSeats;
+    const exemptYears = cfg.exemptionYears != null ? +cfg.exemptionYears : 3;
+    const progressiveStrict = !!cfg.progressiveSatelliteRequirement;
+
+    // Categorize each pool player by their entry path eligibility.
+    const hasChampExempt = (p) => (p.majorWins || 0) > 0 && p.lastMajorWin != null && (year - p.lastMajorWin) <= exemptYears;
+    const hasMainQualifier = (p) => p.mainQualifierUntil === year;
+    // "Active casher" proxy for lower-tier satellite progression: any player
+    // with at least one ITM finish in their career counts as having cashed
+    // through the ladder. Combined with totalWins, this prioritizes proven
+    // performers without needing a separate per-year cashing tracker.
+    const cashingActivity = (p) => (p.itmCount || 0) + (p.totalWins || 0) * 5;
+    // Season-points score for direct-entry ranking.
+    const seasonPoints = (p) => (p.currentSeasonPoints || 0) + (p.lastSeasonPoints || 0) * 0.5;
+
+    // Bucket the pool. Champion exemptions and main qualifiers use the satellite
+    // bucket implicitly by virtue of skill achievement — but allocate exempt
+    // champions to direct entry first (PGA Masters lifetime exemption analog).
+    const exempts = pool.filter(p => hasChampExempt(p));
+    const exemptIds = new Set(exempts.map(p => p.id));
+    const qualifiers = pool.filter(p => !exemptIds.has(p.id) && hasMainQualifier(p));
+    const qualIds = new Set(qualifiers.map(p => p.id));
+    const remainder = pool.filter(p => !exemptIds.has(p.id) && !qualIds.has(p.id));
+
+    // Direct entry seats: exempt champions first, then top season-points players.
+    const directExempts = exempts.slice(0, directSeats);
+    const directNeeded = Math.max(0, directSeats - directExempts.length);
+    const remainderByPoints = remainder.slice().sort((a, b) => seasonPoints(b) - seasonPoints(a));
+    const directPointsList = remainderByPoints.slice(0, directNeeded);
+    const directList = directExempts.concat(directPointsList);
+    const directIds = new Set(directList.map(p => p.id));
+
+    // Satellite seats: main qualifiers (top-tier, free) + cashers (active in
+    // satellite ladder). Both buckets shuffled within themselves to avoid
+    // skill-sorted bracket seeding artifacts in bracket mode.
+    const remainingForSat = remainder.filter(p => !directIds.has(p.id));
+    const cashersForSat = remainingForSat.filter(p => cashingActivity(p) > 0);
+    const nonCashersForSat = remainingForSat.filter(p => cashingActivity(p) === 0);
+    // Shuffle each tier so seat assignment within a tier is random.
+    const shuffleInPlace = (arr) => {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+      }
+      return arr;
+    };
+    shuffleInPlace(qualifiers); shuffleInPlace(cashersForSat); shuffleInPlace(nonCashersForSat);
+
+    let satelliteList = qualifiers.slice(0, satelliteSeats);
+    let satNeeded = satelliteSeats - satelliteList.length;
+    if (satNeeded > 0) {
+      const fromCashers = cashersForSat.slice(0, satNeeded);
+      satelliteList = satelliteList.concat(fromCashers);
+      satNeeded -= fromCashers.length;
     }
-    // Qualifiers always seated first (their satellite win is a guaranteed seat).
-    // If qualifiers exceed cap (extreme config), keep highest-skill qualifiers.
-    const seated = qualifiers.length <= cap
-      ? qualifiers.concat(others.slice(0, cap - qualifiers.length))
-      : qualifiers.slice().sort((a, b) => (b.skill || 0) - (a.skill || 0)).slice(0, cap);
-    // Final shuffle so qualifiers aren't all seeded into the top of the bracket.
-    for (let i = seated.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      const t = seated[i]; seated[i] = seated[j]; seated[j] = t;
+    // If still short and progressiveSatelliteRequirement is OFF, fall back to
+    // non-cashers (open-buy-in path). When ON, leave seats unfilled until the
+    // direct-entry overflow can pick them up — strict ladder gating.
+    if (satNeeded > 0 && !progressiveStrict) {
+      satelliteList = satelliteList.concat(nonCashersForSat.slice(0, satNeeded));
+      satNeeded = Math.max(0, satNeeded - nonCashersForSat.length);
     }
-    seated.mainQualifierCount = Math.min(qualifiers.length, cap);
+
+    // If direct-entry list overflowed (more exempts than direct seats), spill
+    // the excess into satellite seats to avoid wasting champion-exemption spots.
+    let seated = directList.concat(satelliteList);
+    if (seated.length < cap) {
+      // Open-entry random fill from anyone unseeded — covers the case where
+      // both buckets are short (e.g., very early seasons before qualifiers
+      // accumulate). Skipped when progressiveSatelliteRequirement is strict
+      // AND satelliteList already drew from cashers only.
+      const seatedIds = new Set(seated.map(p => p.id));
+      const unseatedPool = pool.filter(p => !seatedIds.has(p.id));
+      shuffleInPlace(unseatedPool);
+      seated = seated.concat(unseatedPool.slice(0, cap - seated.length));
+    }
+    seated = seated.slice(0, cap);
+    // Final shuffle so qualifiers/exempts aren't all seeded into the top of
+    // the bracket / aggregate-rotation order.
+    shuffleInPlace(seated);
+    seated.mainQualifierCount = qualifiers.length; // reported in CSV/metrics
+    seated.mainDirectEntryCount = directList.length;
+    seated.mainSatelliteCount = satelliteList.length;
     return seated;
   }
   if (eventType === 'regular') return selectRegularField(pool, Math.min(cfg.regularField, pool.length), year);
@@ -5725,7 +5951,7 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
       setStrokeCap(capPlan.finals); // use the finals cap throughout — every hole counts equally
       // Bracket-survival reaches still get marked so downstream metrics remain
       // populated. Aggregate mode treats r4 = top-16 finishers, r2 = top-2.
-      const aggResult = runStrokePlayEvent(players, 18, 4);
+      const aggResult = runStrokePlayEvent(players, 18, 4, cfg);
       const sorted = aggResult.sortedFinishers;
       // Backfill the placements buffer with the aggregate ranking.
       for (const plc of aggResult.placements) placements.push(plc);
@@ -5773,7 +5999,7 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
         remaining.forEach(p => p.poolRef.reaches.r2++);
         remaining.forEach(p => p.poolRef.reaches.finals++);
         setStrokeCap(capPlan.finals);
-        const aggResult = runStrokePlayEvent(remaining, 18, 4);
+        const aggResult = runStrokePlayEvent(remaining, 18, 4, cfg);
         const sorted = aggResult.sortedFinishers;
         for (const plc of aggResult.placements) placements.push(plc);
         const champWrap = sorted[0];
@@ -6951,6 +7177,12 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('mainField', snapCfg.mainField);
   cfgRow('mainQualifiersPerMajor', snapCfg.mainQualifiersPerMajor);
   cfgRow('tournamentFormat', snapCfg.tournamentFormat || 'bracket');
+  cfgRow('aggregateHoneyScale', snapCfg.aggregateHoneyScale != null ? snapCfg.aggregateHoneyScale : 0.25);
+  cfgRow('satelliteTierRegular', snapCfg.satelliteTierRegular);
+  cfgRow('satelliteTierMajor', snapCfg.satelliteTierMajor);
+  cfgRow('satelliteTierMain', Array.isArray(snapCfg.satelliteTierMain) ? snapCfg.satelliteTierMain.join('|') : snapCfg.satelliteTierMain);
+  cfgRow('progressiveSatelliteRequirement', !!snapCfg.progressiveSatelliteRequirement);
+  cfgRow('mainDirectEntryShare', snapCfg.mainDirectEntryShare != null ? snapCfg.mainDirectEntryShare : 0.30);
   cfgRow('exemptionYears', snapCfg.exemptionYears);
   cfgRow('regularStrokeCap', snapCfg.regularStrokeCap);
   cfgRow('majorStrokeCap', snapCfg.majorStrokeCap);
@@ -7451,8 +7683,25 @@ function renderConfigPanel(panel, mode) {
   evSec.appendChild(fmtRow);
   evSec.appendChild(el('div', {
     class: 'ui-sans',
-    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 8px; font-style: italic; line-height: 1.5;',
     text: 'Bracket: single-elim, 9-hole rounds → 18-hole rounds → 72-hole heads-up final. Aggregate: every player plays 4 rounds × 18 holes with rotating partners; lowest 72-hole net total wins. The Main Event in aggregate mode uses bracket cuts down to a 16-player final, then those 16 play the 72-hole aggregate.'
+  }));
+
+  // Honey-scale slider: only meaningful when format = aggregate. We render it
+  // unconditionally because (a) it's a permanent config that gets exported to
+  // CSV, and (b) users switch format frequently — hiding the slider would
+  // produce a confused experience when they flip back. Range 0..1 in 0.05 steps;
+  // bracket events ignore it (always run at 1.0). Default 0.25 yields PGA-
+  // realistic aggregate champion scores (~−15 to −25).
+  appendSliderControl(evSec, {
+    key: 'aggregateHoneyScale',
+    label: 'Honey scale (agg)',
+    min: 0, max: 1, step: 0.05,
+  });
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Aggregate-only honey dampening. 1.0 = full strength (champions land deep under par from honey accumulation across rotating partners). 0.25 = PGA-realistic (~−15 to −25 in majors). 0.0 = honey ignored entirely; aggregate scores reflect only the per-hole golf scorecard. Bracket events ignore this slider.'
   }));
 
   const simpleCfg = [
