@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none';">
 <meta name="referrer" content="no-referrer">
-<title>Yellow Jacket Tour · Stroke-Honey Edition</title>
+<title>Yellow Jacket Tour · Honey-Stroke Edition</title>
 <style>
   :root {
     /* --- raw palette (never changes between themes) --- */
@@ -744,7 +744,7 @@
       </svg>
       <div>
         <div class="brand-name">Yellow Jacket</div>
-        <div class="brand-sub">TOUR · STROKE-HONEY</div>
+        <div class="brand-sub">TOUR · HONEY-STROKE</div>
       </div>
     </div>
 
@@ -757,8 +757,10 @@
       <a href="#analytics" data-route="analytics"><span class="ico">📊</span> Analytics</a>
       <a href="#compare" data-route="compare"><span class="ico">🆚</span> Compare</a>
       <a href="#buzz" data-route="buzz"><span class="ico">🐝</span> Buzz's Corner</a>
-      <a href="#multiplayer" data-route="multiplayer"><span class="ico">🎮</span> Play</a>
+      <a href="#solo" data-route="solo"><span class="ico">🐝</span> Single Player</a>
+      <a href="#multiplayer" data-route="multiplayer"><span class="ico">🎮</span> Multiplayer</a>
       <a href="#rules" data-route="rules"><span class="ico">📘</span> Rulebook</a>
+      <a href="#codex" data-route="codex"><span class="ico">📖</span> Codex</a>
     </nav>
 
     <div class="sidebar-foot">
@@ -779,7 +781,9 @@
     <div class="view" data-view="compare"></div>
     <div class="view" data-view="rules"></div>
     <div class="view" data-view="buzz"></div>
+    <div class="view" data-view="solo"></div>
     <div class="view" data-view="multiplayer"></div>
+    <div class="view" data-view="codex"></div>
   </main>
 </div>
 
@@ -915,7 +919,7 @@ const RANK_NAMES = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
 const CATEGORY_NAMES = ['High Card','One Pair','Two Pair','Three of a Kind','Straight','Flush','Full House','Four of a Kind','Straight Flush','Royal Flush'];
 // golfNameForScore maps a STROKE SCORE to its golf term — it is NOT indexed by hand category,
 // because the same hand can post different scores depending on kicker rank (e.g. a Pair with
-// JJ posts 0/par but with 33 posts +1/bogey under the Stroke-Honey scorecard mapping). The
+// JJ posts 0/par but with 33 posts +1/bogey under the Honey-Stroke scorecard mapping). The
 // golf label always derives from the resolved per-hole score.
 //   0 = Par · -1 = Birdie · -2 = Eagle · -3 = Albatross · -4 = Condor · -5 = Ostrich
 //   -6 = Phoenix · -7 = Dragon · -8 = Paragon · -9 = Zenith · -10 or deeper = Hole-in-One
@@ -937,7 +941,7 @@ const GOLF_NAMES = ['Birdie','Eagle','Eagle','Albatross','Albatross','Condor','C
 let CurrentStrokeCap = 3;
 function setStrokeCap(n) { CurrentStrokeCap = Math.max(1, Math.min(10, (+n) || 3)); }
 // =============================================================================
-// SCORING — Stroke-Honey is the sole, permanent scoring law for Yellow Jacket Tour.
+// SCORING — Honey-Stroke is the sole, permanent scoring law for Yellow Jacket Tour.
 // Two-layer design:
 //   1) Scorecard layer:  hand category → bounded golf-style hole score via
 //      golfScoreFromHandValue() (range −5..+2). Keeps individual holes realistic.
@@ -952,25 +956,25 @@ function setStrokeCap(n) { CurrentStrokeCap = Math.max(1, Math.min(10, (+n) || 3
 // supporting knobs (loserBase, strokeTransfer, hole-score clamp) have been retired.
 // =============================================================================
 const SCORING_STYLES = {
-  'stroke-honey': {
-    key: 'stroke-honey',
-    name: 'Stroke-Honey',
-    shortName: 'Stroke-Honey',
+  'honey-stroke': {
+    key: 'honey-stroke',
+    name: 'Honey-Stroke',
+    shortName: 'Honey-Stroke',
     desc: 'Hand category sets a bounded golf score per hole (−5..+2). Wagered strokes form a honey pot taken by the hole winner; tied holes carry the pot to the next decisive hole. Net honey credits subtract from round total — winning pots improves your golf score.',
-    useStrokeHoney: true,
+    useHoneyStroke: true,
     carryOverEnabled: true,
     honeyDivisor: 1,
   },
 };
-let CurrentScoringStyleKey = 'stroke-honey';
+let CurrentScoringStyleKey = 'honey-stroke';
 let CurrentScoringModel = SCORING_STYLES[CurrentScoringStyleKey];
-function resolveScoringModel(key) { return SCORING_STYLES['stroke-honey']; }
+function resolveScoringModel(key) { return SCORING_STYLES['honey-stroke']; }
 function setScoringStyle(_key) {
-  CurrentScoringStyleKey = 'stroke-honey';
-  CurrentScoringModel = SCORING_STYLES['stroke-honey'];
+  CurrentScoringStyleKey = 'honey-stroke';
+  CurrentScoringModel = SCORING_STYLES['honey-stroke'];
   return CurrentScoringModel;
 }
-function activeScoringModel() { return SCORING_STYLES['stroke-honey']; }
+function activeScoringModel() { return SCORING_STYLES['honey-stroke']; }
 // Baseline equity of hero's category — the AI's perceived win probability used to
 // drive bet/call/fold decisions. CRITICAL CALIBRATION NOTE:
 //
@@ -1269,11 +1273,11 @@ function compareHand(a, b) { return a - b; }
 function handCat(hv) { return hv >>> 24; }
 function handK1(hv) { return (hv >>> 20) & 0xF; }
 // Legacy helpers `loserHandCredit` and `computeShowdownScore` were removed when the
-// codebase consolidated on Stroke-Honey as the sole scoring law. Showdown resolution
-// now lives in playHole's stroke-honey path (see below).
+// codebase consolidated on Honey-Stroke as the sole scoring law. Showdown resolution
+// now lives in playHole's honey-stroke path (see below).
 
 // =====================================================================================
-// STROKE-HONEY scoring: hand-category → bounded golf-style hole score.
+// HONEY-STROKE scoring: hand-category → bounded golf-style hole score.
 // =====================================================================================
 //
 // Maps a packed handValue (from evaluate7) to a per-hole golf score in the range
@@ -1610,7 +1614,7 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // post-equity estimate (skilled players' lower noise still gives them sharper EV).
   adj = Math.max(0.01, Math.min(1.0, adj + (Math.random() - 0.5) * profile.noise));
 
-  // === STROKE-HONEY AI: THRESHOLD-COUPLED HONEY EV ===
+  // === HONEY-STROKE AI: THRESHOLD-COUPLED HONEY EV ===
   // Couple expectedHoneyEV directly to the CORE decision thresholds (bet / fold / raise)
   // rather than mutating adj downstream. The previous adj-only patches failed because
   // by the time adj was being adjusted, the threshold checks below had already been
@@ -1816,7 +1820,7 @@ function playHole(pA, pB, startDealer) {
     if (strokes >= CurrentStrokeCap && s !== 'river') { while (community.length < 5) community.push(DECK[off++]); break; }
   }
   if (folded) {
-    // Stroke-Honey fold path: street-based concession scorecard. The wagered-strokes
+    // Honey-Stroke fold path: street-based concession scorecard. The wagered-strokes
     // pot becomes a honey credit for the non-folder; the folder takes a small positive
     // scorecard penalty scaled to how late the fold came:
     //   Preflop:  bettor  0,  folder +2  (least pressure → smallest reward)
@@ -1840,7 +1844,7 @@ function playHole(pA, pB, startDealer) {
   const aH = evaluate7(aCards, community);
   const bH = evaluate7(bCards, community);
   const cmp = aH - bH;
-  // Stroke-Honey showdown path: each player gets their OWN hand's bounded golf score
+  // Honey-Stroke showdown path: each player gets their OWN hand's bounded golf score
   // (so a loser with a strong hand still posts a reasonable number). Hole's pot of
   // `strokes` becomes a honey credit for the winner; on a tie the pot carries forward
   // (always — carryOverEnabled is a permanent invariant).
@@ -1879,8 +1883,14 @@ function updatePlayerHoleStats(player, r, side) {
     stats.handCounts[name] = (stats.handCounts[name] || 0) + 1;
   }
 }
-function playMatch(pA, pB, numHoles) {
-  // Stroke-Honey per-round accounting:
+function playMatch(pA, pB, numHoles, opts) {
+  opts = opts || {};
+  // opts.noPlayoff — skip the sudden-death loop on tied scores. Used by
+  //   aggregate stroke-play rounds where ties are valid mid-tournament outcomes.
+  // opts.noMatchStats — skip the matchesWon/matchesLost accounting. Used when
+  //   a "match" is just one round of a multi-round stroke-play event, not a
+  //   bracket elimination — those rounds should not bump match counts.
+  // Honey-Stroke per-round accounting:
   //   - bounded golf score per hole (−5..+2)
   //   - wagered-strokes pot per hole forms a honey credit for the winner
   //   - tied holes accumulate the pot into carryPot; next decisive hole's winner sweeps it
@@ -1925,19 +1935,23 @@ function playMatch(pA, pB, numHoles) {
   let totals = computeTotals();
   let aTotal = totals.a, bTotal = totals.b;
   let playoffCount = 0;
-  while (aTotal === bTotal && playoffCount < 30) {
-    const r = playHole(pA, pB, dealer);
-    applyHole(r);
-    dealer = dealer === 'a' ? 'b' : 'a';
-    playoffCount++;
-    totals = computeTotals();
-    aTotal = totals.a; bTotal = totals.b;
+  if (!opts.noPlayoff) {
+    while (aTotal === bTotal && playoffCount < 30) {
+      const r = playHole(pA, pB, dealer);
+      applyHole(r);
+      dealer = dealer === 'a' ? 'b' : 'a';
+      playoffCount++;
+      totals = computeTotals();
+      aTotal = totals.a; bTotal = totals.b;
+    }
   }
   const winner = resolveTieWinner(pA, pB, aTotal, bTotal);
   const loser = winner === pA ? pB : pA;
   pA.stats.totalScore += aTotal; pB.stats.totalScore += bTotal;
-  if (winner === pA) { pA.stats.matchesWon++; pB.stats.matchesLost++; }
-  else { pB.stats.matchesWon++; pA.stats.matchesLost++; }
+  if (!opts.noMatchStats) {
+    if (winner === pA) { pA.stats.matchesWon++; pB.stats.matchesLost++; }
+    else { pB.stats.matchesWon++; pA.stats.matchesLost++; }
+  }
   return { winner, loser, aTotal, bTotal, playoffCount };
 }
 // Fair tiebreaker when 30 playoff holes still haven't resolved a match.
@@ -1966,8 +1980,109 @@ function runKnockoutRound(players, numHoles) {
   }
   return { winners, losers, bracketSize };
 }
+
+// =============================================================================
+// AGGREGATE STROKE-PLAY EVENT — PGA Masters-style format.
+// Every player in the field plays 4 rounds × 18 holes = 72 holes total. Each
+// round you're paired with a fresh opponent (random rotation). Per-hole zero-
+// sum honey credits still apply within each pairing — they cancel at the field
+// level but individual players finish net + or net − across rotations. After
+// 72 holes, lowest aggregate net score = champion.
+//
+// Players: array of bracket-wrapper objects (the same {id, profile, stats, ...}
+// shape produced by the existing field-mapping in runTourEventLab).
+// Returns: { sortedFinishers, placements, playoffsRun }
+//   - sortedFinishers: players sorted by aggregate score (lowest first)
+//   - placements: { id, rankFloor, tierSize } records (1 = champion, etc.)
+//   - playoffsRun: how many extra holes were needed to break a tie for first
+// =============================================================================
+function runStrokePlayEvent(players, holesPerRound, rounds) {
+  holesPerRound = holesPerRound || 18;
+  rounds = rounds || 4;
+  // Initialize aggregate scores.
+  const agg = new Map();
+  for (const p of players) agg.set(p.id, { player: p, score: 0, rounds: [] });
+  // Each round: shuffle field and pair off. Odd field gets a bye player who
+  // posts a 0 round (no honey changes, no golf changes — they sit out a round).
+  // Bye assignment rotates so no one player gets multiple byes if avoidable.
+  const byeHistory = new Set();
+  for (let r = 0; r < rounds; r++) {
+    const rotation = players.slice();
+    for (let i = rotation.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = rotation[i]; rotation[i] = rotation[j]; rotation[j] = t;
+    }
+    let byePlayer = null;
+    if (rotation.length % 2 === 1) {
+      // Pull the first player not previously bye-d (or the first if all have).
+      let idx = rotation.findIndex(p => !byeHistory.has(p.id));
+      if (idx === -1) idx = 0;
+      byePlayer = rotation.splice(idx, 1)[0];
+      byeHistory.add(byePlayer.id);
+      const a = agg.get(byePlayer.id);
+      a.rounds.push({ round: r + 1, score: 0, opponent: null });
+      // bye contributes 0 to score (neither helps nor hurts)
+    }
+    for (let i = 0; i < rotation.length; i += 2) {
+      const pA = rotation[i], pB = rotation[i + 1];
+      const m = playMatch(pA, pB, holesPerRound, { noPlayoff: true, noMatchStats: true });
+      const aRec = agg.get(pA.id);
+      const bRec = agg.get(pB.id);
+      aRec.score += m.aTotal;
+      bRec.score += m.bTotal;
+      aRec.rounds.push({ round: r + 1, score: m.aTotal, opponent: pB.id });
+      bRec.rounds.push({ round: r + 1, score: m.bTotal, opponent: pA.id });
+    }
+  }
+  // Sort by aggregate score (lowest first).
+  const sorted = players.slice().sort((p1, p2) => agg.get(p1.id).score - agg.get(p2.id).score);
+  // Sudden-death playoff: if 2+ players tied for first after 72 holes, pair
+  // them up and play short 4-hole aggregates until someone leads. Bounded at
+  // 8 playoff rounds total.
+  let playoffsRun = 0;
+  const lowest = agg.get(sorted[0].id).score;
+  let tied = sorted.filter(p => agg.get(p.id).score === lowest);
+  while (tied.length > 1 && playoffsRun < 8) {
+    const playoffField = tied.slice();
+    for (let i = playoffField.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = playoffField[i]; playoffField[i] = playoffField[j]; playoffField[j] = t;
+    }
+    if (playoffField.length % 2 === 1) {
+      // Odd tied count — give the first a bye this playoff round.
+      playoffField.shift();
+    }
+    for (let i = 0; i < playoffField.length; i += 2) {
+      const pA = playoffField[i], pB = playoffField[i + 1];
+      const m = playMatch(pA, pB, 4, { noPlayoff: true, noMatchStats: true });
+      agg.get(pA.id).score += m.aTotal;
+      agg.get(pB.id).score += m.bTotal;
+    }
+    playoffsRun++;
+    sorted.sort((p1, p2) => agg.get(p1.id).score - agg.get(p2.id).score);
+    const newLowest = agg.get(sorted[0].id).score;
+    tied = sorted.filter(p => agg.get(p.id).score === newLowest);
+  }
+  // Build placements array (1 = champion, 2 = runner-up, etc., with tied tiers).
+  // Group adjacent equal-score players into tiers.
+  const placements = [];
+  let i = 0;
+  while (i < sorted.length) {
+    const tierScore = agg.get(sorted[i].id).score;
+    let tierEnd = i;
+    while (tierEnd < sorted.length && agg.get(sorted[tierEnd].id).score === tierScore) tierEnd++;
+    const tierSize = tierEnd - i;
+    const rankFloor = i + 1;
+    for (let k = i; k < tierEnd; k++) {
+      placements.push({ id: sorted[k].id, rankFloor, tierSize });
+      sorted[k].eliminatedAtBracket = rankFloor; // re-use bracket field for rank
+    }
+    i = tierEnd;
+  }
+  return { sortedFinishers: sorted, placements, playoffsRun, aggregateMap: agg };
+}
 function runFinals(p1, p2) {
-  // 4 days × 18 holes = 72-hole finals. Identical Stroke-Honey accounting to playMatch.
+  // 4 days × 18 holes = 72-hole finals. Identical Honey-Stroke accounting to playMatch.
   // stats.totalScore is intentionally NOT reset here — leaving bracket-round strokes
   // intact lets careerScore represent the true per-event stroke load (bracket + finals).
   const days = [];
@@ -2329,7 +2444,7 @@ function composite(p) { return p.majorWins * 10 + p.mainWins * 5 + p.regularWins
 // Buzz knowledge base
 const BuzzKnowledge = {
   faqs: [
-    { cat: 'rules', q: 'What is the scoring system?', a: 'Stroke-Honey. Two layers: (1) the scorecard — your hand category sets a bounded golf score for the hole (Royal Flush −5 down to High Card +2). (2) the honey pot — wagered strokes form a pot that the hole winner takes as a honey credit. Round score = totalGolfScore − netHoneyCredits − carryLeftover. Lower wins.' },
+    { cat: 'rules', q: 'What is the scoring system?', a: 'Honey-Stroke. Two layers: (1) the scorecard — your hand category sets a bounded golf score for the hole (Royal Flush −5 down to High Card +2). (2) the honey pot — wagered strokes form a pot that the hole winner takes as a honey credit. Round score = totalGolfScore − netHoneyCredits − carryLeftover. Lower wins.' },
     { cat: 'rules', q: 'What does the honey credit do?', a: 'It SUBTRACTS from your round score. Winning more honey pots than your opponent improves your golf number 1:1. Net honey credits are zero-sum across both players, so balanced betting cancels out — only the imbalance moves the score.' },
     { cat: 'rules', q: 'What happens on a tied hole?', a: 'Both players score 0 (par) and the wagered-strokes pot accumulates into a carry pot for the next decisive hole. Multiple consecutive ties stack; the winner of the next decisive hole sweeps the entire accumulated carry.' },
     { cat: 'rules', q: 'What happens on a fold?', a: 'The folder takes a small positive scorecard penalty scaled by street: Tea Box +2, Drive/Hazard +1, Putt 0. The bettor scores 0 to −2 AND takes the wagered-strokes pot as a honey credit — forcing a late-street fold is doubly valuable.' },
@@ -2354,7 +2469,7 @@ const BuzzKnowledge = {
     { cat: 'tournament', q: 'How are Regulars different from Majors?', a: 'Regulars (field 1,008) select 65% by season merit + 20% by ranking + 15% open-qualifier. Majors (field 256) are tighter and prestige-weighted: 18% champion exemptions + 32% ranking + 22% season + 13% career + 15% open. Regulars are the weekly grind; majors are the Big Four — and they double as Main Event satellites.' },
     { cat: 'tournament', q: 'What is the Main Event?', a: 'The annual championship — a 30,000-seat open field, the largest event on the calendar. Anyone in the player pool can buy in, but every year up to 512 free seats are awarded via majors (the satellite path). Modeled after the WSOP Main Event: the cap is set by venue capacity, not selectivity.' },
     { cat: 'tournament', q: 'What is a satellite seat?', a: 'A free Main Event entry earned by finishing high in a major. By default the top 128 finishers in each major qualify — that\'s up to 512 free Main seats per year. Sting your way deep in any major and you skip the $10,000 Main buy-in. This is the WSOP satellite economy in miniature: cheap effort to qualify, big prize attached.' },
-    { cat: 'history', q: 'What scoring variants were tested?', a: 'Several experimental ladders (Model B, HC=Par variants, HC=Bogey, Stroke-Transfer) were prototyped before the Yellow Jacket Tour converged on Stroke-Honey as the production scoring law. The two-layer design — bounded scorecard plus honey pot — keeps individual hole scores realistic while preserving WSOP-style stack pressure across the round.' },
+    { cat: 'history', q: 'What scoring variants were tested?', a: 'Several experimental ladders (Model B, HC=Par variants, HC=Bogey, Stroke-Transfer) were prototyped before the Yellow Jacket Tour converged on Honey-Stroke as the production scoring law. The two-layer design — bounded scorecard plus honey pot — keeps individual hole scores realistic while preserving WSOP-style stack pressure across the round.' },
     { cat: 'history', q: 'Why is it called Yellow Jacket?', a: 'The game combines poker and golf scored like a tournament. The bumblebee mascot wears a tiny golden jacket - a nod to the Masters green jacket. Also, it stings when you lose.' },
     { cat: 'history', q: 'Who is Buzz?', a: 'I am Buzz, your AI coach. I know every rule, every hand, every notable moment from the Tour. Ask me anything about the game.' },
   ],
@@ -2435,7 +2550,7 @@ function onHashChange() {
     location.replace(location.pathname + location.search + '#simulator?mode=' + mode + extra);
     return;
   }
-  const valid = ['dashboard','simulator','events','players','hof','analytics','compare','rules','buzz','multiplayer'];
+  const valid = ['dashboard','simulator','events','players','hof','analytics','compare','rules','buzz','solo','multiplayer','codex'];
   const name = valid.indexOf(parsed.view) !== -1 ? parsed.view : 'dashboard';
   if (name === 'players' && !parsed.params.profileId) PlayersState.profileId = null;
   if (document.startViewTransition) {
@@ -2453,7 +2568,7 @@ Views.dashboard = function() {
   const head = el('div', { class: 'page-header' });
   head.appendChild(el('div', null,
     el('h1', { text: 'Dashboard' }),
-    el('div', { class: 'sub', text: 'Yellow Jacket Tour · Stroke-Honey Edition' })
+    el('div', { class: 'sub', text: 'Yellow Jacket Tour · Honey-Stroke Edition' })
   ));
   head.appendChild(el('div', null,
     el('button', { class: 'btn gold', onclick: () => location.hash = '#simulator' }, 'Run a Season →')
@@ -2487,7 +2602,8 @@ Views.dashboard = function() {
         ' ',
         el('span', { class: 'ui-sans', style: 'color: var(--green); font-size: 15px;' },
           el('b', null, champ.name), ' · ',
-          el('span', { class: 'mono', text: formatScore(lastMajor.champScore) })
+          el('span', { class: 'mono', title: 'Final scores are aggregate 72-hole totals. Honey credits from every pot are zero-sum and permanently adjust each player\'s scorecard — the visible proof of pot control mastery.', text: formatScore(lastMajor.champScore) }),
+          el('span', { class: 'score-info-icon', title: 'Final scores are aggregate 72-hole totals. Honey credits from every pot are zero-sum and permanently adjust each player\'s scorecard — the visible proof of pot control mastery.', style: 'margin-left: 6px; font-size: 11px; color: var(--gold); cursor: help; user-select: none;', text: ' ⓘ' })
         )
       ));
       leftCard.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 12px; color: var(--fairway); margin-bottom: 8px;' },
@@ -2709,13 +2825,200 @@ function renderFAQs() {
   });
 }
 
-Views.multiplayer = function() {
-  const view = $('[data-view="multiplayer"]'); clear(view);
-  view.appendChild(el('div', { class: 'crumb', text: 'Tour Home · Play' }));
+// =============================================================================
+// YELLOW JACKET CODEX — the advanced player's master manual.
+// Polished long-form documentation of scoring, format, strategy, and lore.
+// Lives at #codex; complements the Rulebook (which is the live config snapshot).
+// =============================================================================
+Views.codex = function() {
+  const view = $('[data-view="codex"]'); clear(view);
+  view.appendChild(el('div', { class: 'crumb', text: 'Tour Home · Codex' }));
   view.appendChild(el('div', { class: 'page-header' },
     el('div', null,
-      el('h1', { text: 'Play' }),
-      el('div', { class: 'sub', text: 'Solo vs AI · pass-the-device · share-link' }))
+      el('h1', { text: 'The Yellow Jacket Codex' }),
+      el('div', { class: 'sub', text: 'Master manual · Honey-Stroke scoring, tournament formats, strategy, lore' }))
+  ));
+
+  const cfg = (typeof LabState !== 'undefined' && LabState.config) ? LabState.config : (typeof DEFAULT_SIM_CONFIG !== 'undefined' ? DEFAULT_SIM_CONFIG : {});
+  const fmtNum = (n) => (n != null ? n.toLocaleString() : '?');
+
+  // Helper: section card with H2 + body content.
+  function section(title, ...children) {
+    const card = el('div', { class: 'card', style: 'margin-top: 16px;' });
+    card.appendChild(el('h2', { text: title }));
+    children.forEach(c => card.appendChild(c));
+    return card;
+  }
+  function p(text) {
+    return el('p', { class: 'ui-sans', style: 'font-size: 13px; line-height: 1.6; color: var(--text-primary); margin-top: 6px;', text: text });
+  }
+  function h3(text) {
+    return el('h3', { style: 'margin-top: 14px; color: var(--gold);', text: text });
+  }
+  function ul(items) {
+    const list = el('ul', { class: 'ui-sans', style: 'font-size: 13px; line-height: 1.7; color: var(--text-primary); margin-top: 6px; padding-left: 22px;' });
+    items.forEach(i => list.appendChild(el('li', null, typeof i === 'string' ? document.createTextNode(i) : i)));
+    return list;
+  }
+  function tbl(headers, rows) {
+    const t = el('table', { style: 'margin-top: 8px; font-size: 12px;' });
+    const thead = el('thead');
+    const tr = el('tr');
+    headers.forEach(h => tr.appendChild(el('th', { text: h })));
+    thead.appendChild(tr);
+    t.appendChild(thead);
+    const tb = el('tbody');
+    rows.forEach(r => {
+      const row = el('tr');
+      r.forEach(c => row.appendChild(el('td', { text: c })));
+      tb.appendChild(row);
+    });
+    t.appendChild(tb);
+    return t;
+  }
+
+  // ---- Welcome ----
+  const intro = el('div', { class: 'card accent' });
+  intro.appendChild(el('h2', { text: 'Welcome to the Codex' }));
+  intro.appendChild(p('The Yellow Jacket Tour is a hybrid card-and-golf game. Hands of heads-up Texas Hold\'em are scored on a golf scorecard. Wagered strokes form honey pots that adjust your final score. Survive 72 holes against the world\'s best, and you wear the Yellow Jacket itself.'));
+  intro.appendChild(p('This Codex is the master manual. It explains the Honey-Stroke law, the two tournament formats supported by the engine, the strategy that separates elite players from the field, and the lore that gives the Tour its character.'));
+  view.appendChild(intro);
+
+  // ---- The Honey-Stroke Scoring Law ----
+  const law = section('1 · The Honey-Stroke Scoring Law',
+    p('Every hole of the Yellow Jacket Tour is a single hand of heads-up Texas Hold\'em with two layers of consequences:'),
+    h3('Layer 1: The Scorecard'),
+    p('Your hand category at showdown sets a bounded golf score for the hole. The mapping is fixed and well-known:'),
+    tbl(
+      ['Hand category', 'Golf name', 'Score'],
+      [
+        ['Royal / Straight Flush', 'Hole-in-One', '−5'],
+        ['Four of a Kind', 'Albatross', '−4'],
+        ['Full House (J+ trips)', 'Premium Eagle', '−3'],
+        ['Full House (standard)', 'Eagle', '−2'],
+        ['Flush (T-high+) / Straight (9-high+)', 'Premium Birdie', '−2'],
+        ['Flush / Straight (standard)', 'Birdie', '−1'],
+        ['Three of a Kind', 'Birdie', '−1'],
+        ['Two Pair (J+ top)', 'Birdie', '−1'],
+        ['Two Pair (standard)', 'Par', '0'],
+        ['Pair (TT+)', 'Par', '0'],
+        ['Pair (under tens)', 'Bogey', '+1'],
+        ['High Card (J-high+)', 'Bogey', '+1'],
+        ['High Card (weak)', 'Double Bogey', '+2'],
+      ]
+    ),
+    h3('Layer 2: The Honey Pot'),
+    p('Wagered strokes form the honey pot. The hole winner takes the entire pot as a honey credit that subtracts from their final score. Tied holes carry the pot forward to sweeten the next decisive hole. Multiple consecutive ties pile up; whichever player wins the next clean hole sweeps the entire accumulated carry.'),
+    h3('Layer 3: Folds (street-based concession)'),
+    p('Folding is not flat. The folder takes a small positive scorecard penalty scaled by how late the fold came: Tea Box +2, Drive/Hazard +1, Putt 0. The bettor who forced the fold scores 0 to −2 AND takes the wagered-strokes pot. So forcing a late-street fold is doubly valuable: smaller scorecard hit on you, bigger pot in your basket.'),
+    h3('Per-Round Score'),
+    p('roundScore = totalGolfScore − netHoneyCredits − carryLeftover. Net honey credits are zero-sum across both players in a hand, so balanced betting cancels and only imbalance moves the score. Lower wins.'),
+    h3('Permanent Invariants'),
+    ul([
+      'honeyDivisor = 1 — net honey imbalance feeds the round total at full strength.',
+      'carryOverEnabled = true — tied holes always carry forward.',
+      'These are not user-tunable. They are the law.',
+    ])
+  );
+  view.appendChild(law);
+
+  // ---- Tournament Formats ----
+  const fmt = section('2 · Tournament Formats',
+    p('The Yellow Jacket engine supports two tournament structures. Each captures a different cultural feel.'),
+    h3('Bracket Knockout (WSOP feel)'),
+    p('Default. Single-elimination bracket. Each round is a heads-up match: 9-hole rounds while the field is larger than 16, then 18-hole rounds until only 2 finalists remain. Those two play a 72-hole heads-up final (4 days × 18 holes). Champion is the last player standing.'),
+    p('Drama-forward: every match has elimination pressure. One cooler can end your event. Rewards short-burst dominance.'),
+    h3('Aggregate Stroke Play (PGA Masters feel)'),
+    p('Optional, configurable. Every player in the field plays 4 rounds × 18 holes = 72 holes. Each round you are paired with a fresh opponent (rotating-partner stroke play). Per-hole zero-sum honey credits still apply within each pairing. After 72 holes, the player with the lowest total net score is crowned. Cuts at 36 and 54 holes optionally trim the field.'),
+    p('Authentic golf-major feel. Champions earn it across 72 holes, not by surviving one bracket. Lower per-event variance, stronger long-run skill signal.'),
+    h3('The Main Event (always hybrid in aggregate mode)'),
+    p('When the engine runs aggregate format, the Main Event still uses bracket cuts to trim its 30,000-seat field down to 9–18 finalists, who then play a 72-hole aggregate stroke-play final among themselves. WSOP cuts → PGA-Masters final.'),
+    h3('Playoffs'),
+    p('Sudden death only when needed. If two or more players are tied for first after 72 holes, a 2–4 hole aggregate playoff resolves the tie. No mandatory 1v1 final ever required.')
+  );
+  view.appendChild(fmt);
+
+  // ---- Strategy ----
+  const strat = section('3 · Strategy for the Elite',
+    h3('Honey-EV thinking'),
+    p('Every wagered stroke is a permanent adjustment to your scorecard. Treat large pots as exponentially more valuable than small ones — winning a big honey pot is worth more than several small ones combined. Aggressively build pots when you have equity; tighten dramatically when you do not.'),
+    h3('Threshold polarization'),
+    p('The Honey-Stroke AI reflects how skilled players actually play: bet/raise more aggressively in big pots with positive equity, fold faster in big pots with negative equity. Watch a Pro-tier or Elite-tier AI in Single Player mode and notice the polarization — that is the optimal pattern.'),
+    h3('Stroke-cap discipline'),
+    p('Every event has a per-street cap (Tea Box 25%, Drive 50%, Hazard 75%, Putt 100% of the event maximum). Use the cap, do not chase past it. Late-street pressure is most effective: Putt-street folds give the bettor a −2 scorecard reward.'),
+    h3('Tied-hole arithmetic'),
+    p('Carry pots are sneaky. After two tied holes, the next decisive winner picks up triple-loaded honey. If you suspect a tied showdown is coming on the river, consider the carry value to whoever wins the next hole. Sometimes a small bet on a tied river is worth more than a big bet on a decisive one.'),
+    h3('Major qualifier path'),
+    p('Top finishers in each major earn a free Main Event seat (the satellite mechanic). Defaults: top ' + (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 128) + ' qualifiers per major × 4 majors = up to ' + (4 * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 128)) + ' free seats per Main. Worth $10,000 each. Major performance compounds.'),
+    h3('Long-run skill signal'),
+    p('Real poker tournaments produce high single-event variance even for the best players. The simulator\'s linear skillR² is naturally low (0.001–0.05 range) because one Main lottery win can dominate a career. The sharper signals are:'),
+    ul([
+      'eliteMajorDominance — % of major wins captured by the top-10% skill tier (target: 25%+)',
+      'skillSpearman — rank correlation between skill and total wins (target: 0.15+)',
+      'finalsSkillEdge — mean skill difference between finalist and runner-up (target: positive)',
+    ])
+  );
+  view.appendChild(strat);
+
+  // ---- Economics ----
+  const eco = section('4 · Tour Economics',
+    p('Yellow Jacket Inc. operates the Tour. Buy-ins flow into a gross pool; rake (' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '% by default) goes to the foundation; the remainder forms the prize pool. Sponsor purses (TV / broadcast money in the real-world golf model) ride on top of the player money and are not raked.'),
+    h3('Buy-ins by event class'),
+    tbl(
+      ['Event', 'Buy-in', 'Field size'],
+      [
+        ['Major', '$' + fmtNum(cfg.buyInMajor != null ? cfg.buyInMajor : 1000), fmtNum(cfg.majorField != null ? cfg.majorField : 256)],
+        ['Regular', '$' + fmtNum(cfg.buyInRegular != null ? cfg.buyInRegular : 100), fmtNum(cfg.regularField != null ? cfg.regularField : 1008)],
+        ['Main Event', '$' + fmtNum(cfg.buyInMain != null ? cfg.buyInMain : 10000), fmtNum(cfg.mainField != null ? cfg.mainField : 30000)],
+      ]
+    ),
+    h3('Payout structure'),
+    p('Geometric decay (default ' + (cfg.payoutDecay != null ? cfg.payoutDecay : 0.70) + ') across in-the-money finishers. Top 15% of the field cashes (min 2 places, max 64 places). Champion takes the largest single payout; subsequent places decay geometrically toward the cut line.'),
+    h3('Champion exemption'),
+    p('Past major winners enter majors free for ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years after their last win. Compounds career advantage for proven champions.')
+  );
+  view.appendChild(eco);
+
+  // ---- Lore ----
+  const lore = section('5 · Lore — Honey, the Hive, and the Sting',
+    p('Every wager pours a drop of honey into the pot. Win the hand and the honey is yours; tie and it carries forward, sweetening the next pot.'),
+    p('A bluff is a sting: a yellow jacket\'s feint that dares the opponent to stay. A successful sting takes the honey untouched. A called sting draws blood from your own stack. Bumble bees gather quietly; yellow jackets sting to claim the hive.'),
+    h3('Legendary Under-Par Doubles'),
+    p('It is both mathematically possible and exceptionally rare for multiple players to finish a 72-hole final under par. When this happens, the match enters Yellow Jacket lore. It is the ultimate sign of true masters pushing each other to greatness — the highest possible honor short of wearing the Yellow Jacket itself.')
+  );
+  view.appendChild(lore);
+
+  // ---- The Phases of a Hole ----
+  const phases = section('6 · The Phases of a Hole',
+    p('Every hole has five named phases. Internal logic still uses standard poker street names; the display is themed throughout the UI.'),
+    tbl(
+      ['Phase', 'Poker street', 'What happens'],
+      [
+        ['Tea Box', 'Pre-flop', 'Hole cards dealt; blind posted; first round of betting.'],
+        ['Drive', 'Flop', 'Three community cards revealed; second round of betting.'],
+        ['Hazard', 'Turn', 'Fourth community card; third round of betting.'],
+        ['Putt', 'River', 'Fifth and final community card; final round of betting.'],
+        ['The Cup', 'Showdown', 'Cards revealed; hole resolves; honey + scorecard credited.'],
+      ]
+    )
+  );
+  view.appendChild(phases);
+
+  // ---- Closing ----
+  const close = el('div', { class: 'card green', style: 'margin-top: 16px;' });
+  close.appendChild(el('h2', { text: 'The Yellow Jacket' }));
+  close.appendChild(p('Win the Main Event in any season and you wear the Yellow Jacket — the highest honor on the Tour. Past champions enter all subsequent majors free for three years. Their names live in the Hall of Fame. Their best round numbers carry through the Codex like signatures.'));
+  close.appendChild(p('There is only one way to wear the Jacket. Earn it.'));
+  view.appendChild(close);
+};
+
+Views.solo = function() {
+  const view = $('[data-view="solo"]'); clear(view);
+  view.appendChild(el('div', { class: 'crumb', text: 'Tour Home · Single Player' }));
+  view.appendChild(el('div', { class: 'page-header' },
+    el('div', null,
+      el('h1', { text: 'Single Player' }),
+      el('div', { class: 'sub', text: 'Heads-up vs a Yellow Jacket AI of your chosen skill' }))
   ));
 
   // === SOLO vs AI ===
@@ -2783,7 +3086,20 @@ Views.multiplayer = function() {
   } }, 'Start Solo Match'));
   view.appendChild(soloCard);
 
-  const cols = el('div', { class: 'grid-2', style: 'margin-top: 18px;' });
+  view.appendChild(el('div', { id: 'activeMpSolo', style: 'margin-top: 24px;' }));
+  renderActiveMP();
+};
+
+Views.multiplayer = function() {
+  const view = $('[data-view="multiplayer"]'); clear(view);
+  view.appendChild(el('div', { class: 'crumb', text: 'Tour Home · Multiplayer' }));
+  view.appendChild(el('div', { class: 'page-header' },
+    el('div', null,
+      el('h1', { text: 'Multiplayer' }),
+      el('div', { class: 'sub', text: 'Play against a friend — pass-the-device or async share-link' }))
+  ));
+
+  const cols = el('div', { class: 'grid-2' });
 
   const hsCard = el('div', { class: 'card accent' });
   hsCard.appendChild(el('h2', { text: '🎮 Hot-Seat' }));
@@ -2812,7 +3128,7 @@ Views.multiplayer = function() {
   cols.appendChild(slCard);
 
   view.appendChild(cols);
-  view.appendChild(el('div', { id: 'activeMP', style: 'margin-top: 24px;' }));
+  view.appendChild(el('div', { id: 'activeMpHQ', style: 'margin-top: 24px;' }));
   renderActiveMP();
 };
 
@@ -2929,17 +3245,27 @@ function newHoleState(dealer) {
 }
 
 function renderActiveMP() {
-  const root = $('#activeMP');
+  // Two possible mount points now (the views are split into Single Player and
+  // Multiplayer pages). Pick the mount that matches the active game's mode so
+  // a solo match renders on the Single Player page and a hot-seat / share-link
+  // match renders on the Multiplayer page. Whichever mount isn't relevant gets
+  // cleared so a stale game doesn't leak across pages.
+  const g = TourState.activeGame;
+  const soloRoot = $('#activeMpSolo');
+  const hqRoot = $('#activeMpHQ');
+  const targetIsSolo = g && g.mode === 'solo';
+  const root = targetIsSolo ? soloRoot : hqRoot;
+  const otherRoot = targetIsSolo ? hqRoot : soloRoot;
+  if (otherRoot) clear(otherRoot);
   if (!root) return;
   clear(root);
-  const g = TourState.activeGame;
   if (!g) return;
 
   const wrap = el('div', { class: 'game-wrap' });
   const header = el('div', { class: 'card', style: 'background: var(--cream-soft);' });
   const headerInner = el('div', { style: 'display: flex; justify-content: space-between; align-items: center;' });
   headerInner.appendChild(el('div', null,
-    el('h2', { text: g.mode === 'hotseat' ? 'Hot-Seat Match' : 'Share-Link Match' }),
+    el('h2', { text: g.mode === 'hotseat' ? 'Hot-Seat Match' : g.mode === 'solo' ? 'Solo Match · vs ' + g.p2.name : 'Share-Link Match' }),
     el('div', { class: 'ui-sans', style: 'font-size: 12px; color: var(--fairway);', text: g.p1.name + ' (' + formatScore(g.p1.total) + ')  vs  ' + g.p2.name + ' (' + formatScore(g.p2.total) + ')  ·  Hole ' + g.holeNum + '/' + g.totalHoles })
   ));
   headerInner.appendChild(el('button', { class: 'btn ghost small', onclick: () => { if (confirm('End game?')) { TourState.activeGame = null; renderActiveMP(); } } }, 'End game'));
@@ -3033,7 +3359,7 @@ Views.rules = function() {
   const head = el('div', { class: 'page-header' });
   head.appendChild(el('div', null,
     el('h1', { text: 'Rulebook' }),
-    el('div', { class: 'sub', text: 'Yellow Jacket Tour · Stroke-Honey Edition' })
+    el('div', { class: 'sub', text: 'Yellow Jacket Tour · Honey-Stroke Edition' })
   ));
   head.appendChild(buzzAvatarSVG(64));
   view.appendChild(head);
@@ -3051,7 +3377,7 @@ Views.rules = function() {
     if (delta) b.appendChild(el('div', { class: 'kpi-delta', text: delta }));
     return b;
   }
-  cfgStrip.appendChild(snap('Scoring system', 'Stroke-Honey', 'Tour Standard'));
+  cfgStrip.appendChild(snap('Scoring system', 'Honey-Stroke', 'Tour Standard'));
   cfgStrip.appendChild(snap('Regular cap', (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6), 'strokes max'));
   cfgStrip.appendChild(snap('Major cap', (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10), 'strokes max'));
   cfgStrip.appendChild(snap('Main cap', (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' / ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10), 'early · finals'));
@@ -3064,7 +3390,7 @@ Views.rules = function() {
 
   // Core rules section
   const core = el('div', { class: 'card green', style: 'margin-top: 16px;' });
-  core.appendChild(el('h2', { text: 'The Stroke-Honey System' }));
+  core.appendChild(el('h2', { text: 'The Honey-Stroke System' }));
   core.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 13px; color: var(--text-primary); line-height: 1.55; margin-bottom: 12px;',
     text: 'Heads-up Texas Hold\'em on a golf scorecard. Hand strength sets your per-hole golf score; bet sizing forms a side pot of strokes — the honey pot. Net honey wins subtract from your round total, so claiming the bigger pots improves your golf number.'
   }));
@@ -3126,8 +3452,20 @@ Views.rules = function() {
   core.appendChild(rule('Pot-odds-aware AI with honey-EV foresight',
     'AI opponents estimate their hand equity each street. They couple equity to honey-pot expected value: when adj > 50% the AI lowers its bet/raise thresholds (becomes more aggressive) and lowers its fold threshold (rarely folds with positive equity). When adj < 50% the same coupling drives faster folds and tighter calls. The polarized response is what translates the pot-reward math into observable skill across a season.'
   ));
+  // === Aggregate-stroke-play lore — describes the future-target Honey-Stroke
+  // format. This text ships with the Rules tab regardless of whether the engine
+  // currently runs bracket-knockout or aggregate stroke play, because the Rules
+  // tab is documentation. When the engine flips to aggregate stroke play this
+  // section becomes the live description; until then it describes the planned
+  // structure. Wording locked exactly per design spec — do not paraphrase. ===
+  core.appendChild(rule('Scoring the Honey-Stroke Final',
+    'Regulars and Majors are decided by a full 72-hole aggregate score — four complete rounds of 18 holes. The Main Event follows a WSOP-style mass field with cuts, leading to a final 72-hole aggregate among the surviving qualifiers. Every hole still transfers zero-sum honey credits. Your pot control directly adjusts your final scorecard. The player with the lowest total net score after 72 holes is crowned champion.'
+  ));
+  core.appendChild(rule('Legendary Under-Par Doubles',
+    'It is both mathematically possible and exceptionally rare for multiple players to finish a 72-hole final under par. When this happens, the match enters Yellow Jacket lore. It is the ultimate sign of true masters pushing each other to greatness — the highest possible honor short of wearing the Yellow Jacket itself.'
+  ));
   core.appendChild(rule('Sudden-death playoffs',
-    'If round totals are tied after the full event length (9-hole knockouts, 18-hole later rounds, 72-hole finals), players continue one hole at a time. First player to end a hole ahead wins. Max 30 playoff holes before a fair-coin tiebreaker.'
+    'If two or more players are tied for first after 72 holes, the match enters a short sudden-death playoff (2-4 hole aggregate, 1v1 or small group). No mandatory 72-hole heads-up final for any event — playoffs only fire when needed.'
   ));
   core.appendChild(rule('Field selection',
     'Regulars: 65% season merit + 20% ranking + 15% open qualifier (default field 1,008). Majors: 18% champion exemptions + 32% ranking + 22% season + 13% career + 15% open (default field 256). Mains: 30,000-seat open championship — satellite qualifiers seated first, remaining seats filled by random open buy-ins from the rest of the pool. Past major champions enter majors free within ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years of their last win.'
@@ -3291,6 +3629,12 @@ function mpAct(g, action, amount) {
   }
   if (g.mode === 'hotseat' && c.toAct) g.turnFor = null;
   renderActiveMP();
+  // CRITICAL: any action that just transfers the turn within the same betting
+  // round (a check that doesn't close it, a bet, a raise) falls through to here
+  // without firing the AI scheduler in the early-return paths above. Hook it
+  // unconditionally so the AI gets called whenever it's now p2's turn in solo
+  // mode. Without this, the human's bet/raise leaves Hive Scout frozen forever.
+  scheduleAITurnIfNeeded(g);
 }
 
 function advanceMPRound(g) {
@@ -3317,7 +3661,7 @@ function resolveMPHole(g) {
   const c = g.current;
   let p1s, p2s, desc;
   if (c.folded) {
-    // Stroke-Honey fold path mirrors playHole: street-based concession scorecard,
+    // Honey-Stroke fold path mirrors playHole: street-based concession scorecard,
     // bettor takes the wagered pot as a honey credit which subtracts from their score.
     const streetIdx = (c.community.length < 3) ? 0 : (c.community.length === 3) ? 1 : (c.community.length === 4) ? 2 : 3;
     const folderScore = [2, 1, 1, 0][streetIdx];
@@ -3442,7 +3786,9 @@ function renderCmdResults(query) {
     { cat: 'go', label: '📊 Analytics', action: () => { location.hash = '#analytics'; closeCmd(); } },
     { cat: 'go', label: '🆚 Compare', action: () => { location.hash = '#compare'; closeCmd(); } },
     { cat: 'go', label: '🐝 Buzz Corner', action: () => { location.hash = '#buzz'; closeCmd(); } },
-    { cat: 'go', label: '🎮 Play (Solo / Hot-Seat / Share-Link)', action: () => { location.hash = '#multiplayer'; closeCmd(); } },
+    { cat: 'go', label: '🐝 Single Player (vs AI)', action: () => { location.hash = '#solo'; closeCmd(); } },
+    { cat: 'go', label: '🎮 Multiplayer (Hot-Seat / Share-Link)', action: () => { location.hash = '#multiplayer'; closeCmd(); } },
+    { cat: 'go', label: '📖 Codex (master manual)', action: () => { location.hash = '#codex'; closeCmd(); } },
   ];
   const faqMatches = BuzzKnowledge.faqs.filter(f => !q || f.q.toLowerCase().includes(q) || f.a.toLowerCase().includes(q)).slice(0, 6);
   const playerMatches = q && TourState.pool ? TourState.pool.filter(p => p.name.toLowerCase().includes(q) || String(p.id).includes(q)).slice(0, 5) : [];
@@ -5152,15 +5498,28 @@ const DEFAULT_SIM_CONFIG = {
   // Main field. Models WSOP satellite economics: cheap-effort path to the Main is
   // "win deep in a major"; expensive path is paying buyInMain at the door.
   mainQualifiersPerMajor: 128,
+  // TOURNAMENT FORMAT — switches between two structurally different event types:
+  //   'bracket' (default, WSOP feel): single-elim bracket. 9-hole rounds while
+  //     field > 16, then 18-hole rounds until 2 remain, then 72-hole heads-up
+  //     final via runFinals. Champion = last player standing. Drama-forward;
+  //     each match is elimination-pressure.
+  //   'aggregate' (PGA Masters feel): regulars and majors play 4 rounds × 18
+  //     holes = 72 holes total, with rotating-partner pairings each round. The
+  //     Main Event keeps bracket cuts down to a 16-player final field, then
+  //     those 16 play 72-hole aggregate. Per-hole zero-sum honey credits still
+  //     apply within each pairing. Champion = lowest aggregate net score.
+  // Both formats run on the SAME per-hole engine — only the macro structure
+  // differs. Switch the flag to compare feels in the same simulator session.
+  tournamentFormat: 'bracket',
   // Match structure
   earlyRoundHoles: 9, lateRoundHoles: 18, finalsHoles: 72, strokeCap: 3,
   regularStrokeCap: 6,
   majorStrokeCap: 10,
   mainStrokeCap: 6,
   mainFinalsStrokeCap: 10,
-  // Stroke-Honey is the sole scoring law. carryOverEnabled (true) and honeyDivisor (1)
-  // are permanent invariants on SCORING_STYLES['stroke-honey'] — not user-tunable.
-  scoringStyle: 'stroke-honey',
+  // Honey-Stroke is the sole scoring law. carryOverEnabled (true) and honeyDivisor (1)
+  // are permanent invariants on SCORING_STYLES['honey-stroke'] — not user-tunable.
+  scoringStyle: 'honey-stroke',
   // σ of the truncated-Normal used to sample authored skills. Default 0.18 gives most
   // players in [0.14, 0.86]. Narrow (0.10) = homogeneous pool; wide (0.28) = dramatic tails.
   skillSpread: 0.18,
@@ -5212,7 +5571,7 @@ const LabState = {
 };
 
 const LAB_PRESETS = {
-  strokeHoney: { name: 'Stroke-Honey (Tour Standard)', desc: 'Default Yellow Jacket Tour configuration: Stroke-Honey scoring, three-season run, calibrated rake and payouts.', patch: {} },
+  honeyStroke: { name: 'Honey-Stroke (Tour Standard)', desc: 'Default Yellow Jacket Tour configuration: Honey-Stroke scoring, three-season run, calibrated rake and payouts.', patch: {} },
   wide:        { name: 'Wide skill spread', desc: 'All profile axes ±50% wider — exaggerated tail outcomes for stress-testing.', patch: { noiseSpread: 0.35, betSpread: 0.40, foldSpread: 0.35, raiseSpread: 0.40 } },
   bimodal:     { name: 'Bimodal aggression', desc: 'Half passive, half aggressive population.', patch: { raiseCenter: 0.70, raiseSpread: 0.50 } },
   'narrow-elite': { name: 'Narrow elite', desc: 'Compressed skill range — homogeneous tour for upper-bound testing.', patch: { noiseSpread: 0.10, betSpread: 0.10, foldSpread: 0.08, raiseSpread: 0.08 } },
@@ -5349,31 +5708,117 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     for (const p of losers) placements.push({ id: p.id, rankFloor, tierSize });
   }
 
+  // Format dispatch. 'bracket' = single-elim (WSOP feel); 'aggregate' = 72-hole
+  // stroke play (PGA feel). The Main Event in 'aggregate' mode is hybrid: bracket
+  // cuts down to 16 finalists, then those 16 play the 72-hole stroke-play final.
+  const tournamentFormat = (cfg && cfg.tournamentFormat) === 'aggregate' ? 'aggregate' : 'bracket';
+  const isAggregate = tournamentFormat === 'aggregate';
+  // For aggregate Main: keep bracket cuts down to this finalist count.
+  const aggregateMainFinalists = 16;
+  let finals; // populated by either branch below
+
   try {
-    setStrokeCap(capPlan.knockout);
-    while (remaining.length > 16) {
-      const r = runKnockoutRound(remaining, cfg.earlyRoundHoles);
-      recordLosersAtBracketSize(r.losers, r.bracketSize);
-      remaining = r.winners;
+    if (isAggregate && eventType !== 'main') {
+      // === AGGREGATE STROKE PLAY (regulars + majors) ===
+      // Every player plays 4 rounds × 18 holes = 72 holes total; rotating pairings
+      // each round; lowest aggregate score wins. No bracket survival pressure.
+      setStrokeCap(capPlan.finals); // use the finals cap throughout — every hole counts equally
+      // Bracket-survival reaches still get marked so downstream metrics remain
+      // populated. Aggregate mode treats r4 = top-16 finishers, r2 = top-2.
+      const aggResult = runStrokePlayEvent(players, 18, 4);
+      const sorted = aggResult.sortedFinishers;
+      // Backfill the placements buffer with the aggregate ranking.
+      for (const plc of aggResult.placements) placements.push(plc);
+      // Mark reaches based on rank tiers so existing tier metrics keep working.
+      for (let i = 0; i < sorted.length; i++) {
+        if (i < 16) sorted[i].poolRef.reaches.r4++;
+        if (i < 2) sorted[i].poolRef.reaches.r2++;
+        if (i < 2) sorted[i].poolRef.reaches.finals++;
+      }
+      // Synthesize a finals-shaped object so downstream code keeps working.
+      const champWrap = sorted[0];
+      const ruWrap = sorted[1] || sorted[0];
+      const champAgg = aggResult.aggregateMap.get(champWrap.id);
+      const ruAgg = aggResult.aggregateMap.get(ruWrap.id);
+      finals = {
+        winner: champWrap, loser: ruWrap,
+        p1: champWrap, p2: ruWrap,
+        p1Total: champAgg.score, p2Total: ruAgg.score,
+        days: champAgg.rounds.map((r, i) => ({
+          day: i + 1,
+          p1Score: r.score,
+          p2Score: ruAgg.rounds[i] ? ruAgg.rounds[i].score : 0,
+        })),
+        playoffs: { length: aggResult.playoffsRun },
+      };
+    } else {
+      // === BRACKET KNOCKOUT (default; or aggregate Main pre-cut) ===
+      setStrokeCap(capPlan.knockout);
+      while (remaining.length > 16) {
+        const r = runKnockoutRound(remaining, cfg.earlyRoundHoles);
+        recordLosersAtBracketSize(r.losers, r.bracketSize);
+        remaining = r.winners;
+      }
+      if (remaining.length <= 16) remaining.forEach(p => p.poolRef.reaches.r4++);
+      if (isAggregate && eventType === 'main') {
+        // === HYBRID MAIN ===
+        // Continue bracket until we have aggregateMainFinalists (default 16). If
+        // already <=16, we're at the cut already. Then those 16 play 72-hole
+        // aggregate stroke play to crown the champion.
+        while (remaining.length > aggregateMainFinalists) {
+          const r = runKnockoutRound(remaining, cfg.lateRoundHoles);
+          recordLosersAtBracketSize(r.losers, r.bracketSize);
+          remaining = r.winners;
+        }
+        remaining.forEach(p => p.poolRef.reaches.r2++);
+        remaining.forEach(p => p.poolRef.reaches.finals++);
+        setStrokeCap(capPlan.finals);
+        const aggResult = runStrokePlayEvent(remaining, 18, 4);
+        const sorted = aggResult.sortedFinishers;
+        for (const plc of aggResult.placements) placements.push(plc);
+        const champWrap = sorted[0];
+        const ruWrap = sorted[1] || sorted[0];
+        const champAgg = aggResult.aggregateMap.get(champWrap.id);
+        const ruAgg = aggResult.aggregateMap.get(ruWrap.id);
+        finals = {
+          winner: champWrap, loser: ruWrap,
+          p1: champWrap, p2: ruWrap,
+          p1Total: champAgg.score, p2Total: ruAgg.score,
+          days: champAgg.rounds.map((r, i) => ({
+            day: i + 1,
+            p1Score: r.score,
+            p2Score: ruAgg.rounds[i] ? ruAgg.rounds[i].score : 0,
+          })),
+          playoffs: { length: aggResult.playoffsRun },
+        };
+      } else {
+        // === FULL BRACKET (default path) ===
+        while (remaining.length > 2) {
+          const r = runKnockoutRound(remaining, cfg.lateRoundHoles);
+          recordLosersAtBracketSize(r.losers, r.bracketSize);
+          remaining = r.winners;
+        }
+        if (remaining.length <= 2) remaining.forEach(p => p.poolRef.reaches.r2++);
+        remaining.forEach(p => p.poolRef.reaches.finals++);
+        setStrokeCap(capPlan.finals);
+        finals = runFinals(remaining[0], remaining[1]);
+      }
     }
-    if (remaining.length <= 16) remaining.forEach(p => p.poolRef.reaches.r4++);
-    while (remaining.length > 2) {
-      const r = runKnockoutRound(remaining, cfg.lateRoundHoles);
-      recordLosersAtBracketSize(r.losers, r.bracketSize);
-      remaining = r.winners;
-    }
-    if (remaining.length <= 2) remaining.forEach(p => p.poolRef.reaches.r2++);
-    remaining.forEach(p => p.poolRef.reaches.finals++);
-    setStrokeCap(capPlan.finals);
-    var finals = runFinals(remaining[0], remaining[1]);
   } finally {
     setStrokeCap(priorStrokeCap);
   }
   const champ = finals.winner.poolRef;
   const ru = finals.loser.poolRef;
   champ.reaches.champ++;
-  placements.push({ id: ru.id, rankFloor: 2, tierSize: 1 });
-  placements.push({ id: champ.id, rankFloor: 1, tierSize: 1 });
+  // Bracket mode pushes its 1st/2nd placements here (aggregate already pushed
+  // a full ranking earlier in the branch). Skip the duplicate push for aggregate.
+  if (!isAggregate || (isAggregate && eventType === 'main')) {
+    if (placements.findIndex(p => p.id === ru.id && p.rankFloor === 2) === -1 &&
+        !isAggregate) {
+      placements.push({ id: ru.id, rankFloor: 2, tierSize: 1 });
+      placements.push({ id: champ.id, rankFloor: 1, tierSize: 1 });
+    }
+  }
   applyQualificationPoints(field, placements, eventType, year);
 
   // SATELLITE QUALIFIERS — majors double as Main Event satellites. The top-N
@@ -6479,7 +6924,7 @@ function _exportRunToCSVImpl(snap) {
   // === LIVE CONFIG SNAPSHOT FOR AUDITABILITY ===
   // Every key setting that drives the simulation is recorded here so each CSV is
   // self-describing — anyone reviewing results can verify exactly what config the
-  // numbers came from. Stroke-Honey invariants (honeyDivisor=1, carryOverEnabled=true)
+  // numbers came from. Honey-Stroke invariants (honeyDivisor=1, carryOverEnabled=true)
   // are recorded as constants for the record; they are no longer user-tunable.
   rows.push([]);
   rows.push(['--- live config snapshot ---']);
@@ -6487,7 +6932,7 @@ function _exportRunToCSVImpl(snap) {
     if (value === undefined || value === null) return;
     rows.push(['cfg.' + label, typeof value === 'number' ? String(value) : value]);
   };
-  cfgRow('scoringStyle', 'stroke-honey');
+  cfgRow('scoringStyle', 'honey-stroke');
   cfgRow('invariant.honeyDivisor', 1);
   cfgRow('invariant.carryOverEnabled', true);
   cfgRow('ai.honeyEVMultiplier', 4.2);
@@ -6505,6 +6950,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('regularField', snapCfg.regularField);
   cfgRow('mainField', snapCfg.mainField);
   cfgRow('mainQualifiersPerMajor', snapCfg.mainQualifiersPerMajor);
+  cfgRow('tournamentFormat', snapCfg.tournamentFormat || 'bracket');
   cfgRow('exemptionYears', snapCfg.exemptionYears);
   cfgRow('regularStrokeCap', snapCfg.regularStrokeCap);
   cfgRow('majorStrokeCap', snapCfg.majorStrokeCap);
@@ -6978,6 +7424,37 @@ function renderConfigPanel(panel, mode) {
   // Event structure
   const evSec = el('div', { class: 'lab-section' });
   evSec.appendChild(el('h4', { text: 'Event structure' }));
+
+  // Tournament format toggle — promoted to the very top of Event structure and
+  // shown in BOTH Simple and Advanced modes, because the bracket vs aggregate
+  // choice is a fundamental gameplay decision, not a fine-tune. Bracket = WSOP
+  // feel (single-elim → 72-hole heads-up final). Aggregate = PGA Masters feel
+  // (4 rounds × 18 holes with rotating partners; Main keeps a bracket cut down
+  // to 16 finalists, then those 16 play 72-hole aggregate).
+  const fmtRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px;' });
+  fmtRow.appendChild(el('label', { text: 'Format', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const fmtSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 'bracket',   label: 'Bracket knockout (WSOP feel)' },
+    { v: 'aggregate', label: 'Aggregate stroke play (PGA Masters feel)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if ((LabState.config.tournamentFormat || 'bracket') === o.v) opt.selected = true;
+    fmtSel.appendChild(opt);
+  });
+  fmtSel.onchange = () => {
+    LabState.config.tournamentFormat = fmtSel.value;
+    saveLabState();
+    if (typeof updateRuntimeEstimate === 'function') updateRuntimeEstimate();
+  };
+  fmtRow.appendChild(fmtSel);
+  evSec.appendChild(fmtRow);
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Bracket: single-elim, 9-hole rounds → 18-hole rounds → 72-hole heads-up final. Aggregate: every player plays 4 rounds × 18 holes with rotating partners; lowest 72-hole net total wins. The Main Event in aggregate mode uses bracket cuts down to a 16-player final, then those 16 play the 72-hole aggregate.'
+  }));
+
   const simpleCfg = [
     ['seasons', 'Seasons to run', 1, 100, 1],
   ];
@@ -7054,7 +7531,7 @@ function renderConfigPanel(panel, mode) {
   scoreSec.appendChild(el('div', {
     class: 'cfg-static',
     style: 'padding: 8px 10px; background: var(--card-bg, rgba(0,0,0,0.04)); border-left: 3px solid var(--gold); margin-bottom: 8px; font-size: 11px;',
-    text: 'Stroke-Honey (Tour Standard) — permanent.'
+    text: 'Honey-Stroke (Tour Standard) — permanent.'
   }));
   scoreSec.appendChild(el('div', {
     class: 'ui-sans',
@@ -7085,7 +7562,7 @@ function renderConfigPanel(panel, mode) {
       repeatRuns: 10,
       seed: 20260424,
       label: '',
-      scoringStyle: 'stroke-honey',
+      scoringStyle: 'honey-stroke',
     });
     saveLabState();
     renderConfigPanel(panel, mode);
@@ -7576,7 +8053,7 @@ function renderActiveRun(root, r) {
     kpis.appendChild(kpi('Finals skill-edge', f.mean.toFixed(3), tag));
     kpis.appendChild(kpi('Finals upset rate', (f.upsetRate * 100).toFixed(0) + '%', f.upsetRate > 0.45 ? 'near-random finals' : f.upsetRate > 0.35 ? 'some skill' : 'skill dominates'));
   }
-  // Below-par rate benchmark for Stroke-Honey. Calibration band: 60–85% under typical
+  // Below-par rate benchmark for Honey-Stroke. Calibration band: 60–85% under typical
   // cfg (most clean showdowns post a non-positive golf score; HC bogeys and decisive
   // folds push the rate up; deep-stack timewasters drag it down).
   (function () {
@@ -7584,7 +8061,7 @@ function renderActiveRun(root, r) {
     const target = 70;
     const delta = rate - target;
     const signed = (delta >= 0 ? '+' : '') + delta.toFixed(0) + 'pp';
-    kpis.appendChild(kpi('Below-par rate', rate.toFixed(0) + '%', 'vs Stroke-Honey target 70% · ' + signed));
+    kpis.appendChild(kpi('Below-par rate', rate.toFixed(0) + '%', 'vs Honey-Stroke target 70% · ' + signed));
   })();
   // Surface Codex's Median major-winner percentile (the headline signal for whether
   // majors are a true elite filter or a broader ecosystem). Healthy band: top 8–15%.
