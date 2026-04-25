@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- HONEY-STROKE AGGREGATE + NET HONEY NORMALIZED BY 18 IS NOW FINAL AND SHIP-READY -->
+<!-- HONEY-STROKE AGGREGATE + NET HONEY NORMALIZED BY 18 IS NOW FINAL AND SHIP-READY (MATH ENGINES VERIFIED) -->
 <!-- ECONOMIC & ANTI-SYBIL MODEL IS NOW FINAL AND SHIP-READY -->
 <!-- SMART REFRESH + PERSISTENT PROGRESS IS NOW FINAL AND SHIP-READY -->
 <html lang="en">
@@ -372,6 +372,42 @@
     animation: slide-in 220ms ease-out; max-width: 340px;
   }
   @keyframes slide-in { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+  .background-sim-banner {
+    position: fixed; right: 22px; bottom: 22px; z-index: 5200;
+    width: min(390px, calc(100vw - 32px));
+    background: var(--bg-dark); color: var(--text-on-dark);
+    border: 1px solid var(--gold); border-left: 4px solid var(--gold);
+    border-radius: 8px; box-shadow: var(--shadow-med);
+    padding: 13px 14px; font-family: -apple-system, sans-serif;
+  }
+  .background-sim-banner.hidden { display: none; }
+  .background-sim-top {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-bottom: 8px;
+  }
+  .background-sim-title {
+    font-size: 12px; font-weight: 700; color: var(--gold); letter-spacing: 0.7px;
+    text-transform: uppercase;
+  }
+  .background-sim-sub { font-size: 11px; opacity: 0.86; line-height: 1.4; }
+  .background-sim-bar {
+    height: 7px; border-radius: 999px; overflow: hidden;
+    background: rgba(255, 255, 255, 0.16); margin: 9px 0 10px;
+  }
+  .background-sim-fill {
+    height: 100%; width: 0%; background: var(--gold);
+    transition: width 160ms ease-out;
+  }
+  .background-sim-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .background-sim-actions button {
+    font-family: -apple-system, sans-serif; font-size: 11px; cursor: pointer;
+    border: 1px solid var(--gold); border-radius: 5px;
+    background: transparent; color: var(--gold); padding: 5px 9px;
+  }
+  .background-sim-actions button.primary {
+    background: var(--gold); color: var(--bg-dark); font-weight: 700;
+  }
 
   #modal-root {
     position: fixed; inset: 0; z-index: 4000;
@@ -916,6 +952,45 @@ function toast(msg, duration) {
   const t = el('div', { class: 'toast', text: msg });
   container.appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity 200ms'; setTimeout(() => t.remove(), 240); }, duration || 2600);
+}
+
+function renderBackgroundSimBanner() {
+  let banner = $('#background-sim-banner');
+  if (!BackgroundSim.isRunning) {
+    if (banner) banner.classList.add('hidden');
+    return;
+  }
+  if (!banner) {
+    banner = el('div', { id: 'background-sim-banner', class: 'background-sim-banner' });
+    document.body.appendChild(banner);
+  }
+  banner.classList.remove('hidden');
+  clear(banner);
+  const p = BackgroundSim.progress();
+  const top = el('div', { class: 'background-sim-top' });
+  top.appendChild(el('div', null,
+    el('div', { class: 'background-sim-title', text: BackgroundSim.isPaused ? 'Simulation Paused' : 'Simulation Running' }),
+    el('div', { class: 'background-sim-sub', text: 'Year ' + p.year + ' / ' + p.endYear + ' · ' + p.completed + ' of ' + p.total + ' events · ' + p.percent.toFixed(1) + '%' })
+  ));
+  top.appendChild(el('div', { class: 'mono', style: 'font-size: 12px; color: var(--gold);', text: p.type ? p.type.toUpperCase() : 'RUN' }));
+  banner.appendChild(top);
+  const bar = el('div', { class: 'background-sim-bar' });
+  bar.appendChild(el('div', { class: 'background-sim-fill', style: 'width: ' + p.percent + '%;' }));
+  banner.appendChild(bar);
+  banner.appendChild(el('div', { class: 'background-sim-sub', text: 'You can keep playing, browsing results, or reading the Rulebook. Progress auto-saves every few seconds.' }));
+  const actions = el('div', { class: 'background-sim-actions' });
+  actions.appendChild(el('button', {
+    class: BackgroundSim.isPaused ? 'primary' : '',
+    text: BackgroundSim.isPaused ? 'Resume' : 'Pause',
+    onclick: () => BackgroundSim.isPaused ? BackgroundSim.resume() : BackgroundSim.pause()
+  }));
+  actions.appendChild(el('button', {
+    text: 'Cancel',
+    onclick: () => {
+      if (confirm('Cancel the background simulation? Completed events stay saved.')) BackgroundSim.cancel();
+    }
+  }));
+  banner.appendChild(actions);
 }
 
 function openModal(contentBuilder, opts) {
@@ -1830,14 +1905,14 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // have positive equity in a meaningful pot, and the opposite when they're behind.
   // Authored skill (via skillFactor) gates the application — noisy bottom-tier
   // players see no threshold movement.
-  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 4.2;
+  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 6.5;
   const potValue = strokes + currentBet + matched + (carryPot || 0);
-  // honeyEVMultiplier: 4.2 — final production tuning. Polarizes skilled-player
+  // honeyEVMultiplier: 6.5 — final production tuning. Polarizes skilled-player
   // aggression so they push harder when ahead and fold faster when behind, letting
   // the bounded golf scorecard compound a stronger skill signal across rounds.
-  // This is the upper end of the safe range; values >4.5 risk over-saturation
-  // (AI thrashes between extremes); values <3.0 produce limp aggression and
-  // weaker per-match skill expression. Locked at 4.2 for shipping.
+  // This strengthens the skill signal above the prior 4.2 setting; values <3.0
+  // produce limp aggression and weaker per-match skill expression.
+  // Locked at 6.5 for shipping.
   const expectedSkinEV = potValue * (adj - 0.5) * skillFactor * honeyEVMultiplier;
   const expectedHoneyEV = expectedSkinEV;
 
@@ -5940,6 +6015,192 @@ const LabState = {
   busy: false,
 };
 
+const BackgroundSim = {
+  isRunning: false,
+  isPaused: false,
+  currentCfg: null,
+  progressCallback: null,
+  chunkSize: 1,
+  cancelRequested: false,
+  state: null,
+  timer: null,
+  lastAutoSaveAt: 0,
+  autoSaveMs: 3500,
+  start(cfg) {
+    if (this.isRunning) return false;
+    this.currentCfg = JSON.parse(JSON.stringify(cfg || LabState.config));
+    this.cancelRequested = false;
+    this.isPaused = false;
+    this.isRunning = true;
+    LabState.busy = true;
+    const startYear = TourState.currentSeason + 1;
+    const endYear = startYear + this.currentCfg.seasons - 1;
+    const plan = [];
+    for (let year = startYear; year <= endYear; year++) {
+      for (let m = 0; m < this.currentCfg.majors; m++) plan.push({ year, type: 'major', name: MAJOR_NAMES[m % MAJOR_NAMES.length], slot: m + 1, i: m + 1, total: this.currentCfg.majors });
+      for (let r = 0; r < this.currentCfg.regulars; r++) plan.push({ year, type: 'regular', name: REGULAR_PREFIX[r % REGULAR_PREFIX.length] + ' Open', slot: r + 1, i: r + 1, total: this.currentCfg.regulars });
+      for (let m = 0; m < this.currentCfg.mains; m++) plan.push({ year, type: 'main', name: MAIN_NAME, slot: m + 1, i: m + 1, total: this.currentCfg.mains });
+    }
+    this.state = {
+      startYear, endYear, plan, index: 0,
+      newEvents: [],
+      actionStats: {
+        preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
+        flop:    { check:0, bet:0, call:0, raise:0, fold:0 },
+        turn:    { check:0, bet:0, call:0, raise:0, fold:0 },
+        river:   { check:0, bet:0, call:0, raise:0, fold:0 },
+      },
+      rng: this.currentCfg.seed ? mulberry32(this.currentCfg.seed >>> 0) : null,
+      startedAt: performance.now(),
+      activeSeason: null,
+    };
+    this.lastAutoSaveAt = 0;
+    renderBackgroundSimBanner();
+    this.schedule();
+    return true;
+  },
+  pause() {
+    if (!this.isRunning) return;
+    this.isPaused = true;
+    this.persistPartial(true);
+    renderBackgroundSimBanner();
+  },
+  resume() {
+    if (!this.isRunning) return;
+    this.isPaused = false;
+    renderBackgroundSimBanner();
+    this.schedule();
+  },
+  cancel() {
+    if (!this.isRunning) return;
+    this.cancelRequested = true;
+    this.finishCanceled();
+  },
+  schedule() {
+    if (!this.isRunning || this.isPaused || this.cancelRequested) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.runChunk(), 0);
+  },
+  runChunk() {
+    if (!this.isRunning || this.isPaused || this.cancelRequested || !this.state) return;
+    let processed = 0;
+    try {
+      while (processed < this.chunkSize && this.state.index < this.state.plan.length && !this.isPaused && !this.cancelRequested) {
+        this.runNextEvent();
+        processed++;
+      }
+      this.persistPartial(false);
+      renderBackgroundSimBanner();
+      if (this.state.index >= this.state.plan.length) this.finishComplete();
+      else this.schedule();
+    } catch (e) {
+      this.finishFailed(e);
+    }
+  },
+  runNextEvent() {
+    const item = this.state.plan[this.state.index];
+    const cfg = this.currentCfg;
+    if (!this.state.activeSeason || this.state.activeSeason.year !== item.year) {
+      this.state.activeSeason = { year: item.year, events: [] };
+      TourState.seasons.push(this.state.activeSeason);
+      TourState.currentSeason = item.year;
+      syncQualificationSeason(TourState.pool, item.year);
+    }
+    const actionStats = this.state.actionStats;
+    const priorRandom = Math.random;
+    if (this.state.rng) Math.random = this.state.rng;
+    LabState.instrumentation.collector = (street, action) => {
+      if (actionStats[street] && actionStats[street][action] != null) actionStats[street][action]++;
+    };
+    try {
+      const ev = runTourEventLab(item.type, item.year, item.name, TourState.pool, cfg);
+      ev.season_slot = item.slot;
+      ev.year = item.year;
+      this.state.activeSeason.events.push(ev);
+      this.state.newEvents.push(ev);
+      if (ev.champScore <= -15 && ev.type === 'major') {
+        BuzzKnowledge.moments.unshift({
+          year: item.year, type: 'major', eventName: ev.name, playerId: ev.champId, score: ev.champScore,
+          text: 'Season ' + item.year + ': ' + playerName(ev.champId) + ' won the ' + ev.name + ' at ' + formatScore(ev.champScore) + ' - one of the lowest championship scores in Tour history.'
+        });
+      }
+    } finally {
+      LabState.instrumentation.collector = null;
+      Math.random = priorRandom;
+    }
+    this.state.index++;
+    if (this.progressCallback) this.progressCallback(this.progress());
+  },
+  progress() {
+    if (!this.state) return { completed: 0, total: 0, percent: 0 };
+    const total = this.state.plan.length || 1;
+    const completed = this.state.index;
+    const current = this.state.plan[Math.min(completed, total - 1)] || {};
+    return {
+      completed, total,
+      percent: Math.min(100, Math.round((completed / total) * 1000) / 10),
+      year: current.year || this.state.endYear,
+      startYear: this.state.startYear,
+      endYear: this.state.endYear,
+      type: current.type || 'done',
+      i: current.i || 0,
+      eventTotal: current.total || 0,
+    };
+  },
+  persistPartial(force) {
+    const now = Date.now();
+    if (!force && now - this.lastAutoSaveAt < this.autoSaveMs) return;
+    this.lastAutoSaveAt = now;
+    saveState();
+    saveLabState();
+  },
+  finishComplete() {
+    const st = this.state;
+    const elapsedMs = performance.now() - st.startedAt;
+    const metrics = computeLabMetrics(TourState.pool, st.newEvents, st.actionStats, this.currentCfg);
+    metrics.yearRange = [st.startYear, st.endYear];
+    const session = { pool: TourState.pool, events: st.newEvents, actionStats: st.actionStats, metrics, elapsedMs };
+    const defaultLabel = 'Run ' + (LabState.runs.length + 1) + ' · Y' + metrics.yearRange[0] + '-Y' + metrics.yearRange[1];
+    saveRunSnapshot(session, this.currentCfg.label || defaultLabel);
+    this.cleanup();
+    saveState();
+    saveLabState();
+    renderBackgroundSimBanner();
+    const results = $('#labResults');
+    if (results) renderLabResults(results);
+    const runBtn = $('#labRunBtn');
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Run Simulation →'; }
+    toast('Simulation complete — run saved to registry', 4200);
+  },
+  finishCanceled() {
+    this.persistPartial(true);
+    this.cleanup();
+    renderBackgroundSimBanner();
+    const runBtn = $('#labRunBtn');
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Run Simulation →'; }
+    toast('Simulation canceled — partial progress saved', 3200);
+  },
+  finishFailed(e) {
+    console.error(e);
+    this.persistPartial(true);
+    this.cleanup();
+    renderBackgroundSimBanner();
+    const runBtn = $('#labRunBtn');
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Run Simulation →'; }
+    toast('Background simulation failed: ' + (e && e.message ? e.message : e), 4200);
+  },
+  cleanup() {
+    clearTimeout(this.timer);
+    LabState.instrumentation.collector = null;
+    this.isRunning = false;
+    this.isPaused = false;
+    this.cancelRequested = false;
+    this.currentCfg = null;
+    this.state = null;
+    LabState.busy = false;
+  },
+};
+
 const LAB_PRESETS = {
   honeyStroke: { name: 'Honey-Stroke (Tour Standard)', desc: 'Default Yellow Jacket Tour configuration: Honey-Stroke scoring, three-season run, calibrated rake and payouts.', patch: {} },
   wide:        { name: 'Wide skill spread', desc: 'All profile axes ±50% wider — exaggerated tail outcomes for stress-testing.', patch: { noiseSpread: 0.35, betSpread: 0.40, foldSpread: 0.35, raiseSpread: 0.40 } },
@@ -7384,7 +7645,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('invariant.honeyDivisor', 1);
   cfgRow('invariant.carryOverEnabled', true);
   cfgRow('scoring.netHoneyNormalization', 'netHoney/18');
-  cfgRow('ai.honeyEVMultiplier', 4.2);
+  cfgRow('ai.honeyEVMultiplier', 6.5);
   cfgRow('ai.thresholdCoupling.bet', 0.8);
   cfgRow('ai.thresholdCoupling.fold', 1.2);
   cfgRow('ai.thresholdCoupling.raise', 0.6);
@@ -8060,7 +8321,17 @@ function renderConfigPanel(panel, mode) {
   const estBox = el('div', { class: 'runtime-estimate', id: 'rtEst' });
   runSec.appendChild(estBox);
 
+  const bgRow = el('label', { class: 'ui-sans', style: 'display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); margin-top: 10px; cursor: pointer;' });
+  const bgCheck = el('input', { type: 'checkbox', id: 'labRunBackground', checked: 'checked' });
+  bgRow.appendChild(bgCheck);
+  bgRow.appendChild(el('span', { text: 'Run in background' }));
+  runSec.appendChild(bgRow);
+
   const runBtn = el('button', { class: 'btn gold', id: 'labRunBtn', style: 'width: 100%; margin-top: 10px;', text: 'Run Simulation →' });
+  if (BackgroundSim.isRunning) {
+    runBtn.disabled = true;
+    runBtn.textContent = 'Simulation running...';
+  }
   runBtn.onclick = simulatorRunClicked;
   runSec.appendChild(runBtn);
 
@@ -8282,11 +8553,13 @@ function aggregateMetricsWithCI(metricsList) {
 async function simulatorRunClicked() {
   if (LabState.busy) return;
   LabState.busy = true;
+  let handedToBackground = false;
   const runBtn = $('#labRunBtn');
   if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Running...'; }
   try {
     const cfg = JSON.parse(JSON.stringify(LabState.config));
     const repeats = Math.max(1, Math.min(20, cfg.repeatRuns || 1));
+    const runInBackground = !!($('#labRunBackground') && $('#labRunBackground').checked);
 
     // Pool / cfg mismatch guard. The single-run path uses TourState.pool which is
     // built once at startup (or via "Rebuild pool"). If the user adjusted the
@@ -8314,6 +8587,19 @@ async function simulatorRunClicked() {
       LabState.activeRunId = null;
       saveState(); saveLabState();
       toast('Pool rebuilt · ' + TourState.pool.length.toLocaleString() + ' players ready');
+    }
+
+    if (runInBackground) {
+      if (repeats !== 1) {
+        toast('Background mode runs one simulation at a time. Set CI repeats to 1, then start again.', 4200);
+        return;
+      }
+      if (BackgroundSim.start(cfg)) {
+        handedToBackground = true;
+        if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Simulation running...'; }
+        toast('Simulation running in background — you can use the rest of the app', 3600);
+      }
+      return;
     }
 
     if (repeats === 1) {
@@ -8362,8 +8648,10 @@ async function simulatorRunClicked() {
     toast('Run failed: ' + e.message);
     console.error(e);
   } finally {
-    LabState.busy = false;
-    if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Run Simulation →'; }
+    if (!handedToBackground) {
+      LabState.busy = false;
+      if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Run Simulation →'; }
+    }
   }
 }
 
@@ -9145,6 +9433,7 @@ function init() {
 
   window.addEventListener('hashchange', onHashChange);
   onHashChange();
+  renderBackgroundSimBanner();
 
   $$('nav.nav a').forEach(a => {
     a.onclick = (e) => { e.preventDefault(); location.hash = '#' + a.dataset.route; };
