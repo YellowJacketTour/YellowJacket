@@ -1623,13 +1623,13 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // players see no threshold movement.
   const carry = 0; // carryPot not threaded through to decideFor; defaults to 0 (minor under-count when ties have stacked)
   const potValue = strokes + currentBet + matched + (carry || 0);
-  // honeyEVMultiplier: 3.8 — bumped from 3.0 to strengthen the skill signal at high
-  // pool sizes, where the larger Main field washes out individual-match variance.
-  // Higher multiplier polarizes skilled-player aggression more sharply: they push
-  // harder when ahead, fold faster when behind, leaving room for the bounded golf
-  // scorecard to compound across rounds. Tuning this knob trades skill-expression
-  // (skillR²) against per-hand variance — keep within [2.5, 4.5].
-  const expectedHoneyEV = potValue * (adj - 0.5) * skillFactor * 3.8;
+  // honeyEVMultiplier: 4.2 — final production tuning. Polarizes skilled-player
+  // aggression so they push harder when ahead and fold faster when behind, letting
+  // the bounded golf scorecard compound a stronger skill signal across rounds.
+  // This is the upper end of the safe range; values >4.5 risk over-saturation
+  // (AI thrashes between extremes); values <3.0 produce limp aggression and
+  // weaker per-match skill expression. Locked at 4.2 for shipping.
+  const expectedHoneyEV = potValue * (adj - 0.5) * skillFactor * 4.2;
 
   // Local copies of the three decision thresholds — modifying these instead of
   // profile.* keeps the player object immutable across decisions in the same hand.
@@ -2711,14 +2711,79 @@ function renderFAQs() {
 
 Views.multiplayer = function() {
   const view = $('[data-view="multiplayer"]'); clear(view);
-  view.appendChild(el('div', { class: 'crumb', text: 'Tour Home · Multiplayer' }));
+  view.appendChild(el('div', { class: 'crumb', text: 'Tour Home · Play' }));
   view.appendChild(el('div', { class: 'page-header' },
     el('div', null,
-      el('h1', { text: 'Multiplayer' }),
-      el('div', { class: 'sub', text: 'Play against a friend — secure & offline' }))
+      el('h1', { text: 'Play' }),
+      el('div', { class: 'sub', text: 'Solo vs AI · pass-the-device · share-link' }))
   ));
 
-  const cols = el('div', { class: 'grid-2' });
+  // === SOLO vs AI ===
+  const soloCard = el('div', { class: 'card', style: 'border-top: 3px solid var(--gold);' });
+  soloCard.appendChild(el('h2', { text: '🐝 Solo vs AI' }));
+  soloCard.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 13px; color: var(--fairway); margin-bottom: 14px;' },
+    'Heads-up match against a Yellow Jacket AI of your chosen skill. The AI decides via the same threshold-coupled honey-EV logic the simulator uses — every opponent plays from a real pool profile, not a script.'
+  ));
+
+  // Tier preset buttons. Selected skill stored on the card via dataset for the
+  // Start handler to read. Default selection = Casual (the "first match" feel).
+  const TIERS = [
+    { key: 'beginner', name: 'Beginner', skill: 0.15, blurb: 'New to honey. Folds wide, calls down too often.' },
+    { key: 'casual',   name: 'Casual',   skill: 0.40, blurb: 'Plays most hands. Some pot-odds awareness.' },
+    { key: 'pro',      name: 'Pro',      skill: 0.65, blurb: 'Disciplined. Reads the board and the bet.' },
+    { key: 'elite',    name: 'Elite',    skill: 0.85, blurb: 'Polarized aggression. Punishes every mistake.' },
+  ];
+  soloCard.dataset.skill = '0.40';
+  soloCard.dataset.tier = 'casual';
+  const tierRow = el('div', { style: 'display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;' });
+  const tierBlurb = el('div', { class: 'ui-sans', style: 'font-size: 11px; color: var(--text-secondary); font-style: italic; margin-bottom: 12px; min-height: 16px;', text: TIERS[1].blurb });
+  TIERS.forEach(t => {
+    const btn = el('button', { class: 'btn outline small', text: t.name + ' · ' + t.skill.toFixed(2), title: t.blurb });
+    if (t.key === 'casual') btn.classList.add('active');
+    btn.onclick = () => {
+      Array.from(tierRow.children).forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      soloCard.dataset.skill = String(t.skill);
+      soloCard.dataset.tier = t.key;
+      tierBlurb.textContent = t.blurb;
+    };
+    tierRow.appendChild(btn);
+  });
+  soloCard.appendChild(tierRow);
+  soloCard.appendChild(tierBlurb);
+
+  // Match length + your name on one row.
+  const optsRow = el('div', { style: 'display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px;' });
+  optsRow.appendChild(el('label', { class: 'ui-sans', style: 'font-size: 12px;', text: 'Holes:' }));
+  const holesSel = el('select', { id: 'soloHoles' });
+  [['9', '9 (quick)'], ['18', '18 (round)'], ['36', '36 (double round)'], ['72', '72 (full finals)']].forEach(([v, label]) => {
+    const opt = el('option', { value: v, text: label });
+    if (v === '18') opt.selected = true;
+    holesSel.appendChild(opt);
+  });
+  optsRow.appendChild(holesSel);
+  optsRow.appendChild(el('label', { class: 'ui-sans', style: 'font-size: 12px; margin-left: 12px;', text: 'Cap:' }));
+  const capSel = el('select', { id: 'soloCap' });
+  [['3', '3 (regular)'], ['6', '6 (regular tour)'], ['10', '10 (major / finals)']].forEach(([v, label]) => {
+    const opt = el('option', { value: v, text: label });
+    if (v === '6') opt.selected = true;
+    capSel.appendChild(opt);
+  });
+  optsRow.appendChild(capSel);
+  soloCard.appendChild(optsRow);
+
+  soloCard.appendChild(el('input', { type: 'text', id: 'soloName', placeholder: 'Your name (optional)', style: 'width: 100%; margin-bottom: 10px;' }));
+  soloCard.appendChild(el('button', { class: 'btn gold', onclick: () => {
+    const skill = +soloCard.dataset.skill || 0.40;
+    const tier = soloCard.dataset.tier || 'casual';
+    const holes = +($('#soloHoles').value) || 18;
+    const cap = +($('#soloCap').value) || 6;
+    const playerName = ($('#soloName').value || 'You').slice(0, 24);
+    startSolo(playerName, skill, tier, holes, cap);
+  } }, 'Start Solo Match'));
+  view.appendChild(soloCard);
+
+  const cols = el('div', { class: 'grid-2', style: 'margin-top: 18px;' });
 
   const hsCard = el('div', { class: 'card accent' });
   hsCard.appendChild(el('h2', { text: '🎮 Hot-Seat' }));
@@ -2764,6 +2829,79 @@ function startShareLink() {
   TourState.activeGame.shareLink = encodeGameToURL(TourState.activeGame);
   renderActiveMP();
   toast('Share-Link game started — copy the link and send to your opponent.');
+}
+
+// Themed AI opponent names by skill tier — gives each match a personality.
+const SOLO_AI_NAMES = {
+  beginner: ['Pollen', 'Larva', 'Bumble Jr', 'Honey Cub', 'Drone Recruit'],
+  casual:   ['Worker Bee', 'Honey Picker', 'Wasp Cadet', 'Hive Scout', 'Nectar Drifter'],
+  pro:      ['Forager', 'Stinger', 'Hive Tactician', 'Comb Master', 'Apex Drone'],
+  elite:    ['Queen Bee', 'Hive Champion', 'The Swarm', 'Royal Stinger', 'Nectar King'],
+};
+function pickAINameForTier(tier) {
+  const list = SOLO_AI_NAMES[tier] || SOLO_AI_NAMES.casual;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+function startSolo(playerName, skill, tier, holes, cap) {
+  const aiName = pickAINameForTier(tier);
+  const aiProfile = makeProfileForSkill(Math.max(0.05, Math.min(0.95, +skill || 0.40)));
+  // Sync the global stroke cap so AI's decideFor uses the same cap as the human's UI.
+  setStrokeCap(cap);
+  const g = createLocalGame(playerName, aiName, 'solo');
+  g.totalHoles = Math.max(1, Math.min(144, +holes || 18));
+  g.strokeCap = cap;
+  g.aiSkill = skill;
+  g.aiTier = tier;
+  g.aiProfile = aiProfile;
+  // Human is p1; AI is p2. turnFor stays 'p1' so the action UI is always shown
+  // for the human's perspective (no pass-the-device prompt).
+  g.turnFor = 'p1';
+  TourState.activeGame = g;
+  renderActiveMP();
+  toast('Solo match started · ' + holes + ' holes vs ' + aiName + ' (skill ' + (+skill).toFixed(2) + ')');
+  // If the deal landed with AI to act first (heads-up dealer convention puts the
+  // non-dealer on the action), kick off their turn after the render settles.
+  scheduleAITurnIfNeeded(g);
+}
+
+// In solo mode, after every state change check whether it's the AI's turn and,
+// if so, queue their decision asynchronously. The brief delay (350ms) gives the
+// human time to read the action that just happened — the AI doesn't feel robotic.
+function scheduleAITurnIfNeeded(g) {
+  if (!g || g.mode !== 'solo' || g.ended) return;
+  const c = g.current;
+  if (!c || c.result || c.toAct == null) return;
+  if (c.toAct !== 'p2') return; // p2 is always the AI in solo mode
+  setTimeout(() => aiTakeTurn(g), 350);
+}
+
+function aiTakeTurn(g) {
+  if (!g || g.mode !== 'solo' || g.ended) return;
+  const c = g.current;
+  if (!c || c.result || c.toAct !== 'p2') return;
+  // Re-sync the global stroke cap in case the user opened the simulator and
+  // changed it mid-match — the AI must respect the cap that this match was
+  // created with, not whatever the simulator slider currently says.
+  if (g.strokeCap) setStrokeCap(g.strokeCap);
+  const profile = g.aiProfile || makeProfileForSkill(0.40);
+  const decision = decideFor(
+    c.p2Cards,           // AI's hole cards
+    c.community,         // visible community
+    c.currentBet,        // street's current bet
+    c.matched.p2,        // AI's matched amount this street
+    c.strokes,           // accumulated strokes from prior streets
+    profile,             // AI's profile (skill-derived thresholds)
+    c.matched.p1         // human's matched amount this street (range read)
+  );
+  switch (decision.action) {
+    case 'fold':  mpAct(g, 'fold'); break;
+    case 'check': mpAct(g, 'check'); break;
+    case 'call':  mpAct(g, 'call'); break;
+    case 'bet':   mpAct(g, 'bet', Math.max(1, decision.amount | 0)); break;
+    case 'raise': mpAct(g, 'raise', Math.max(1, decision.amount | 0)); break;
+    default:      mpAct(g, 'check'); break; // safety fallback
+  }
 }
 
 function createLocalGame(p1name, p2name, mode) {
@@ -3036,8 +3174,14 @@ Views.rules = function() {
 function renderGameTable(g) {
   const tbl = el('div', { class: 'game-table' });
   const c = g.current;
-  const showP2 = g.mode === 'hotseat' ? g.turnFor === 'p2' : true;
-  const showP1 = g.mode === 'hotseat' ? g.turnFor === 'p1' : true;
+  // Solo mode: AI's hole cards (p2) hidden until showdown — same fog-of-war as a
+  // real opponent. Hotseat: cards visible only to whoever has the device. Sharelink:
+  // both visible (each player only sees their own URL state, this is the merged view).
+  const showP2 = g.mode === 'hotseat' ? g.turnFor === 'p2'
+              : g.mode === 'solo'    ? false
+              : true;
+  const showP1 = g.mode === 'hotseat' ? g.turnFor === 'p1'
+              : true; // human (solo) and sharelink both see p1
   const resolvedOrShowdown = c.result || c.street === 'showdown';
 
   const p2Seat = el('div', { class: 'seat' });
@@ -3075,6 +3219,10 @@ function renderGameTable(g) {
   if (c.result) {
     actions.appendChild(el('div', { class: 'result-banner' }, c.result.desc));
     if (!g.ended) actions.appendChild(el('button', { class: 'btn gold', onclick: () => mpNextHole(g) }, 'Next Hole →'));
+  } else if (g.mode === 'solo' && c.toAct !== 'p1') {
+    // AI is thinking — show a passive banner instead of action buttons. The
+    // scheduleAITurnIfNeeded timer will fire and apply the AI's move shortly.
+    actions.appendChild(el('div', { class: 'result-banner' }, '🐝 ', el('b', { text: g.p2.name }), ' is sizing up the pot…'));
   } else if (g.mode === 'hotseat' && g.turnFor !== c.toAct && g.turnFor != null) {
     actions.appendChild(el('div', { class: 'result-banner' }, 'Pass the device to ', el('b', { text: (c.toAct === 'p1' ? g.p1.name : g.p2.name) })));
     actions.appendChild(el('button', { class: 'btn outline small', onclick: () => { g.turnFor = c.toAct; renderActiveMP(); } }, 'Ready'));
@@ -3120,18 +3268,18 @@ function mpAct(g, action, amount) {
   const other = actor === 'p1' ? 'p2' : 'p1';
   if (action === 'fold') {
     c.folded = actor;
-    resolveMPHole(g); renderActiveMP(); return;
+    resolveMPHole(g); renderActiveMP(); scheduleAITurnIfNeeded(g); return;
   }
   if (action === 'check') {
     if (c.currentBet !== c.matched[actor]) return;
     c.hasActed[actor] = true;
-    if (c.hasActed[other] && c.matched[other] === c.currentBet) { advanceMPRound(g); renderActiveMP(); return; }
+    if (c.hasActed[other] && c.matched[other] === c.currentBet) { advanceMPRound(g); renderActiveMP(); scheduleAITurnIfNeeded(g); return; }
     c.toAct = other;
   } else if (action === 'call') {
     if (c.currentBet <= c.matched[actor]) return;
     c.matched[actor] = c.currentBet;
     c.hasActed[actor] = true;
-    advanceMPRound(g); renderActiveMP(); return;
+    advanceMPRound(g); renderActiveMP(); scheduleAITurnIfNeeded(g); return;
   } else if (action === 'bet' || action === 'raise') {
     const gameCap = g.strokeCap || CurrentStrokeCap;
     if (!amount || c.strokes + c.currentBet + amount > gameCap) return;
@@ -3225,6 +3373,9 @@ function mpNextHole(g) {
   g.turnFor = g.mode === 'hotseat' ? null : 'p1';
   if (g.mode === 'sharelink') g.shareLink = encodeGameToURL(g);
   renderActiveMP();
+  // If the new hole's first action falls on the AI (because dealer alternated
+  // and they're now the non-dealer / first to act preflop), kick their turn.
+  scheduleAITurnIfNeeded(g);
 }
 
 function simpleHash(s) {
@@ -6339,7 +6490,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('scoringStyle', 'stroke-honey');
   cfgRow('invariant.honeyDivisor', 1);
   cfgRow('invariant.carryOverEnabled', true);
-  cfgRow('ai.honeyEVMultiplier', 3.8);
+  cfgRow('ai.honeyEVMultiplier', 4.2);
   cfgRow('ai.thresholdCoupling.bet', 0.8);
   cfgRow('ai.thresholdCoupling.fold', 1.2);
   cfgRow('ai.thresholdCoupling.raise', 0.6);
