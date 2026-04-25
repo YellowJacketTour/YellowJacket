@@ -1277,6 +1277,12 @@ function activeScoringModel() { return SCORING_STYLES['honey-stroke']; }
 // "equity given opponent reached this street voluntarily."
 const WIN_PROB = [0.05, 0.38, 0.72, 0.87, 0.92, 0.96, 0.985, 0.999, 1.0, 1.0];
 
+// honeyNormalizationDivisor = 36 (final production value)
+// This is twice the original /18 because the honey feedback loop proved
+// stronger than a single round of golf. It keeps champion scores in realistic
+// PGA range (-8 to -14) even when skilled players win large pots consistently.
+const honeyNormalizationDivisor = 36;
+
 function rankName(r) { return RANK_NAMES[r] || String(r); }
 
 // -------------------------------------------------------------------------
@@ -1905,18 +1911,19 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // have positive equity in a meaningful pot, and the opposite when they're behind.
   // Authored skill (via skillFactor) gates the application — noisy bottom-tier
   // players see no threshold movement.
-  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 2.8;
+  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 3.0;
   // Pot value cap — clamps the honey-EV input so a single mega-pot can't drive
   // AI thresholds into saturation. With CurrentStrokeCap = 6 (regulars) the cap
   // lands at 12 strokes; with cap = 10 (majors / finals) it lands at 20. Beyond
   // that the AI's expectedHoneyEV behaves the same regardless of pot size,
   // which compresses champion-score outliers without flattening skill signal.
   const potValue = Math.min(CurrentStrokeCap * 2.0, strokes + currentBet + matched + (carryPot || 0));
-  // honeyEVMultiplier: 2.8 — final production tuning. Lower than earlier 4.2
-  // and 3.8 settings; calibrated for prestigious PGA-style realism (avgChampScore
-  // ≈ -8 to -14, belowParRate ~70-85%, no champion deeper than -20). Below 2.5
-  // the AI plays limp and skill signal weakens; above 3.5 it over-polarizes and
-  // champion scores spread into deep-under-par tail. Locked at 2.8 for shipping.
+  // honeyEVMultiplier: 3.0 — final production tuning (sweet spot). 2.8 was
+  // tested and collapsed skill signal (skillR² = 0.004, elite-major-dominance
+  // 7%, Elite ROI -92%). 4.2 over-polarized into deep-under-par champions.
+  // 3.0 calibrates for PGA-realistic totals (avgChampScore ≈ -8 to -14,
+  // belowParRate 65-85%) WHILE preserving the elite-tier-rewards-skill signal.
+  // Below 2.9 skill collapses; above 3.2 magnitude blows out. Locked at 3.0.
   const expectedSkinEV = potValue * (adj - 0.5) * skillFactor * honeyEVMultiplier;
   const expectedHoneyEV = expectedSkinEV;
 
@@ -2183,8 +2190,11 @@ function playMatch(pA, pB, numHoles, opts) {
   //   - tied holes accumulate the pot into carryPot; next decisive hole's winner sweeps it
   //   - net honey credit = totalHoneyA − totalHoneyB (zero-sum: only imbalance moves the score)
   //
-  // Round total: roundA = totalGolfA − (netHoneyA / 18)
-  //              roundB = totalGolfB − (netHoneyB / 18)
+  // honeyNormalizationDivisor = 36 (final production value)
+  // This replaces the old aggregateHoneyScale slider. It normalizes net honey
+  // to realistic PGA round totals while preserving full poker skill signal.
+  // Round total: roundA = totalGolfA − (netHoneyA / honeyNormalizationDivisor)
+  //              roundB = totalGolfB − (netHoneyB / honeyNormalizationDivisor)
   // Winning more pots IMPROVES (reduces) your round score. Leftover end-of-round carry
   // applies equally to both players, shifting the floor but preserving order.
   let totalGolfA = 0, totalGolfB = 0;
@@ -2227,8 +2237,8 @@ function playMatch(pA, pB, numHoles, opts) {
     const netHoneyA = totalHoneyA - totalHoneyB;
     const netHoneyB = totalHoneyB - totalHoneyA;
     return {
-      a: totalGolfA - (netHoneyA / 18),
-      b: totalGolfB - (netHoneyB / 18),
+      a: totalGolfA - (netHoneyA / honeyNormalizationDivisor),
+      b: totalGolfB - (netHoneyB / honeyNormalizationDivisor),
     };
   };
   let totals = computeTotals();
@@ -2422,12 +2432,15 @@ function runFinals(p1, p2) {
     }
     days.push({ day, p1Score: dayA, p2Score: dayB });
   }
+  // honeyNormalizationDivisor = 36 (final production value)
+  // This replaces the old aggregateHoneyScale slider. It normalizes net honey
+  // to realistic PGA round totals while preserving full poker skill signal.
   const computeFinalsTotals = () => {
     const netA = p1HoneyTotal - p2HoneyTotal;
     const netB = p2HoneyTotal - p1HoneyTotal;
     return {
-      a: p1Scorecard - (netA / 18),
-      b: p2Scorecard - (netB / 18),
+      a: p1Scorecard - (netA / honeyNormalizationDivisor),
+      b: p2Scorecard - (netB / honeyNormalizationDivisor),
     };
   };
   let totals = computeFinalsTotals();
@@ -7649,8 +7662,9 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('invariant.honeyDivisor', 1);
   cfgRow('invariant.carryOverEnabled', true);
   cfgRow('scoring.netHoneyNormalization', 'netHoney/18');
-  cfgRow('ai.honeyEVMultiplier', 2.8);
+  cfgRow('ai.honeyEVMultiplier', 3.0);
   cfgRow('scoring.honeyMagnitudeTamed', true);
+  cfgRow('scoring.honeyNormalizationDivisor', 36);
   cfgRow('ai.thresholdCoupling.bet', 0.8);
   cfgRow('ai.thresholdCoupling.fold', 1.2);
   cfgRow('ai.thresholdCoupling.raise', 0.6);
@@ -9422,12 +9436,14 @@ function init() {
     toast('Tour history restored from last session', 2000);
   }
   if (!restoredFromUnified) loadLabState();
-  // Force-pin the live honeyEVMultiplier to the production value 2.8 even when
+  // Force-pin the live honeyEVMultiplier to the production value 3.0 even when
   // an older save is restored from a build that wrote a different multiplier
-  // into LabState.config.ai.honeyEVMultiplier. This guarantees a fresh page
-  // load always runs with the calibrated value regardless of legacy state.
-  if (LabState.config?.ai?.honeyEVMultiplier !== 2.8) {
-    LabState.config = { ...LabState.config, ai: { ...(LabState.config?.ai || {}), honeyEVMultiplier: 2.8 } };
+  // into LabState.config.ai.honeyEVMultiplier. The 2.8 value tested previously
+  // collapsed the skill signal (skillR² = 0.004, eliteMajorDominance = 7%);
+  // 3.0 is the calibrated sweet spot — strong skill expression while keeping
+  // PGA-realistic champion totals.
+  if (LabState.config?.ai?.honeyEVMultiplier !== 3.0) {
+    LabState.config = { ...LabState.config, ai: { ...(LabState.config?.ai || {}), honeyEVMultiplier: 3.0 } };
   }
   // Ensure the unified bundle is in sync after any legacy-path restore so the
   // next save immediately writes the canonical key.
