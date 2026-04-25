@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v4";
+const APP_VERSION = "2026.04.25-v5";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2736,6 +2736,21 @@ function allocateMajorBucketCounts(fieldSize, cfg) {
   return { champs: counts[0], ranking: counts[1], season: counts[2], career: counts[3], open: counts[4] };
 }
 
+// Participation-cap multiplier — used by every score-based entry bucket so a
+// single elite isn't pulled into ~100% of a season's events. Returns 1.0 for
+// the player's first 25 events of the year, then decays linearly to 0.10 at
+// 40 events. With the default tour size (53 events/year) this naturally lands
+// elites at 25–35 events/year without hard exclusion. Combined with the
+// 0.015 × eventsThisYear ranking-bucket penalty, this is the primary lever
+// keeping elite participation realistic and ROI separation visible.
+function eventsCapMultiplier(p) {
+  const e = (p && p.eventsThisYear) || 0;
+  const capStart = 25, capEnd = 40;
+  if (e <= capStart) return 1.0;
+  if (e >= capEnd) return 0.10;
+  return 1.0 - 0.90 * ((e - capStart) / (capEnd - capStart));
+}
+
 function takeQualified(list, count, selected, out, source, sourceCounts) {
   for (const p of list) {
     if (out.length >= count) break;
@@ -2755,37 +2770,38 @@ function selectMajorField(pool, fieldSize, year, cfg) {
   const sourceCounts = { champ: 0, ranking: 0, season: 0, career: 0, open: 0, fallback: 0 };
   const exemptYears = cfg.exemptionYears != null ? cfg.exemptionYears : MAJOR_EXEMPTION;
 
+  // Champion exemption — earned-once binary entry, not score-based. No cap:
+  // a 5-time major winner inside their exemption window plays free.
   const champs = pool
     .filter(p => p.lastMajorWin != null && (year - p.lastMajorWin) < exemptYears)
     .sort((a, b) => (b.majorWins - a.majorWins) || (seasonMeritScore(b) - seasonMeritScore(a)) || (b.skill - a.skill));
   takeQualified(champs, counts.champs, selected, out, 'champ', sourceCounts);
 
-  // Ranking bucket: skill-descending with TWO suppression terms.
-  //   1. ±0.05 jitter on the sort key — randomizes ordering within ~0.10 skill
-  //      bands so the qualifying cutoff drifts event-to-event.
-  //   2. Per-year participation penalty: subtract 0.008 × eventsThisYear from
-  //      the player's effective skill. After 25 events this year a player drops
-  //      0.20 — a full skill-tier — out of the top-N, naturally capping elite
-  //      participation around 25–30 events/year (vs ~53/year deterministic).
-  // This is the primary fix for the elite-ROI inversion: it preserves "skill
-  // qualifies you for more events" while preventing "skill forces you into
-  // every event." Pairs with the regularEntryScore / openQualifierScore
-  // skill-weight reductions so all three buckets stop dragging top players in.
-  const rankPenalty = (p) => 0.008 * (p.eventsThisYear || 0);
+  // Ranking bucket: skill-desc with ±0.05 jitter and a 0.015 × eventsThisYear
+  // participation penalty. After ~13 events a top player drops 0.20 — a full
+  // skill-tier — out of the top-N. Pairs with the eventsCapMultiplier on the
+  // merit/season/career/open buckets so all entry paths share the same cap.
+  const rankPenalty = (p) => 0.015 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
     ((b.skill - rankPenalty(b)) - (a.skill - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
   takeQualified(ranking, out.length + counts.ranking, selected, out, 'ranking', sourceCounts);
 
-  const season = pool.slice().sort((a, b) => seasonMeritScore(b) - seasonMeritScore(a) || recentFormScore(b) - recentFormScore(a) || b.skill - a.skill);
+  const season = pool.slice().sort((a, b) =>
+    (seasonMeritScore(b) * eventsCapMultiplier(b)) - (seasonMeritScore(a) * eventsCapMultiplier(a))
+    || recentFormScore(b) - recentFormScore(a) || b.skill - a.skill);
   takeQualified(season, out.length + counts.season, selected, out, 'season', sourceCounts);
 
-  const career = pool.slice().sort((a, b) => careerMeritScore(b) - careerMeritScore(a) || seasonMeritScore(b) - seasonMeritScore(a) || recentFormScore(b) - recentFormScore(a) || b.skill - a.skill);
+  const career = pool.slice().sort((a, b) =>
+    (careerMeritScore(b) * eventsCapMultiplier(b)) - (careerMeritScore(a) * eventsCapMultiplier(a))
+    || seasonMeritScore(b) - seasonMeritScore(a) || recentFormScore(b) - recentFormScore(a) || b.skill - a.skill);
   takeQualified(career, out.length + counts.career, selected, out, 'career', sourceCounts);
 
   const open = pool
     .filter(p => majorQualifierEligible(p))
-    .sort((a, b) => (openQualifierScore(b) + Math.random() * 3) - (openQualifierScore(a) + Math.random() * 3));
+    .sort((a, b) =>
+      ((openQualifierScore(b) * eventsCapMultiplier(b)) + Math.random() * 3) -
+      ((openQualifierScore(a) * eventsCapMultiplier(a)) + Math.random() * 3));
   takeQualified(open, out.length + counts.open, selected, out, 'open', sourceCounts);
 
   if (out.length < fieldSize) {
@@ -2807,18 +2823,23 @@ function selectRegularField(pool, fieldSize, year) {
   const meritCount = Math.max(1, Math.round(fieldSize * 0.65));
   const rankingCount = Math.max(0, Math.round(fieldSize * 0.20));
   const openCount = Math.max(0, fieldSize - meritCount - rankingCount);
-  const merit = pool.slice().sort((a, b) => regularEntryScore(b) - regularEntryScore(a) || b.skill - a.skill);
+  // All score-based buckets multiply by eventsCapMultiplier so a player who's
+  // already entered ≥25 events this year drops down the list naturally.
+  const merit = pool.slice().sort((a, b) =>
+    (regularEntryScore(b) * eventsCapMultiplier(b)) - (regularEntryScore(a) * eventsCapMultiplier(a))
+    || b.skill - a.skill);
   takeQualified(merit, meritCount, selected, out);
-  // Ranking bucket: see selectMajorField above for the rationale. Same
-  // jitter + per-year participation penalty applied to regulars.
-  const rankPenalty = (p) => 0.008 * (p.eventsThisYear || 0);
+  // Ranking bucket: 0.015 × eventsThisYear participation penalty + ±0.05 jitter.
+  const rankPenalty = (p) => 0.015 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
     ((b.skill - rankPenalty(b)) - (a.skill - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
   takeQualified(ranking, meritCount + rankingCount, selected, out);
   const open = pool
     .filter(p => regularQualifierEligible(p))
-    .sort((a, b) => (regularEntryScore(b) + Math.random() * 2.5) - (regularEntryScore(a) + Math.random() * 2.5));
+    .sort((a, b) =>
+      ((regularEntryScore(b) * eventsCapMultiplier(b)) + Math.random() * 2.5) -
+      ((regularEntryScore(a) * eventsCapMultiplier(a)) + Math.random() * 2.5));
   takeQualified(open, meritCount + rankingCount + openCount, selected, out);
   if (out.length < fieldSize) {
     const fallback = pool.slice().sort((a, b) => (regularEntryScore(b) + b.skill * 1.5) - (regularEntryScore(a) + a.skill * 1.5));
@@ -7303,10 +7324,17 @@ function computeSpearman(pool) {
 // regular + major decisions only — far cleaner skill signal because the
 // 25k-field Main Event lottery is excluded.
 function computeVarianceDecomp_nonMain(pool) {
-  const n = pool.length;
+  // SIGN-BUG FIX: filter to players with ≥1 non-Main decision before computing
+  // the fit. Players who never entered a regular/major would otherwise sit at
+  // averageEVRealization_nonMain = 0 — the *upper* bound — and form a dense
+  // ceiling cluster that drags the slope toward zero or inverts its sign,
+  // because most no-data players happened to be mid/bottom-tier (the cap
+  // policy keeps elites entering more non-Main events than mids do).
+  const eligible = pool.filter(p => p && p.stats && (+p.stats.evDecisions_nonMain || 0) > 0);
+  const n = eligible.length;
   if (n < 2) return { skillR2: 0, luckR2: 1, meanWins: 0, stdWins: 0 };
-  const xs = pool.map(p => p.skill);
-  const ys = pool.map(p => averageEVRealization_nonMain(p));
+  const xs = eligible.map(p => p.skill);
+  const ys = eligible.map(p => averageEVRealization_nonMain(p));
   const mx = xs.reduce((a,b)=>a+b,0)/n, my = ys.reduce((a,b)=>a+b,0)/n;
   let num = 0, dxSq = 0, dySq = 0;
   for (let i = 0; i < n; i++) {
@@ -7343,10 +7371,14 @@ function computeEVSpearman(pool) {
 // Non-Main variant — Spearman of authoredSkill vs EV-realization restricted
 // to regulars + majors. Headline skill KPI for the dashboard.
 function computeEVSpearman_nonMain(pool) {
-  const n = pool.length;
+  // SIGN-BUG FIX: same eligibility filter as computeVarianceDecomp_nonMain —
+  // players with no non-Main decisions sit at the EV-realization ceiling (0)
+  // and would otherwise invert the sign of the rank correlation.
+  const eligible = pool.filter(p => p && p.stats && (+p.stats.evDecisions_nonMain || 0) > 0);
+  const n = eligible.length;
   if (n < 2) return 0;
-  const skills = pool.map(p => p.skill || 0);
-  const evReal = pool.map(p => averageEVRealization_nonMain(p));
+  const skills = eligible.map(p => p.skill || 0);
+  const evReal = eligible.map(p => averageEVRealization_nonMain(p));
   const rs = averageRanks(skills);
   const rev = averageRanks(evReal);
   const mx = rs.reduce((a, b) => a + b, 0) / n;
