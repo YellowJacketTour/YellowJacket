@@ -757,7 +757,7 @@
       <a href="#analytics" data-route="analytics"><span class="ico">📊</span> Analytics</a>
       <a href="#compare" data-route="compare"><span class="ico">🆚</span> Compare</a>
       <a href="#buzz" data-route="buzz"><span class="ico">🐝</span> Buzz's Corner</a>
-      <a href="#multiplayer" data-route="multiplayer"><span class="ico">🎮</span> Multiplayer</a>
+      <a href="#multiplayer" data-route="multiplayer"><span class="ico">🎮</span> Play</a>
       <a href="#rules" data-route="rules"><span class="ico">📘</span> Rulebook</a>
     </nav>
 
@@ -3442,7 +3442,7 @@ function renderCmdResults(query) {
     { cat: 'go', label: '📊 Analytics', action: () => { location.hash = '#analytics'; closeCmd(); } },
     { cat: 'go', label: '🆚 Compare', action: () => { location.hash = '#compare'; closeCmd(); } },
     { cat: 'go', label: '🐝 Buzz Corner', action: () => { location.hash = '#buzz'; closeCmd(); } },
-    { cat: 'go', label: '🎮 Multiplayer', action: () => { location.hash = '#multiplayer'; closeCmd(); } },
+    { cat: 'go', label: '🎮 Play (Solo / Hot-Seat / Share-Link)', action: () => { location.hash = '#multiplayer'; closeCmd(); } },
   ];
   const faqMatches = BuzzKnowledge.faqs.filter(f => !q || f.q.toLowerCase().includes(q) || f.a.toLowerCase().includes(q)).slice(0, 6);
   const playerMatches = q && TourState.pool ? TourState.pool.filter(p => p.name.toLowerCase().includes(q) || String(p.id).includes(q)).slice(0, 5) : [];
