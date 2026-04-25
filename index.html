@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v10";
+const APP_VERSION = "2026.04.25-v11";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -6618,6 +6618,11 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     if (p.itmCount == null) p.itmCount = 0;
     if (p.finalTableCount == null) p.finalTableCount = 0;
     if (p.careerScore == null) p.careerScore = 0;
+    // Defensive lazy-init for waiver-tracking fields. Older saves predate the
+    // lastMainWin / lastMajorWin tracking and can leave undefined values that
+    // would silently skip the snapshot's automatic-invite waiver path.
+    if (p.lastMajorWin === undefined) p.lastMajorWin = null;
+    if (p.lastMainWin  === undefined) p.lastMainWin  = null;
   }
   // === EXEMPTION SNAPSHOT — pre-event freeze ===
   // playerBuyIn() runs AFTER runFinals/runAggregate, by which time the new
@@ -7160,7 +7165,14 @@ function computeEconomicsMetrics(pool, events) {
   const purseByType = { major: 0, regular: 0, main: 0 };
   const winnerByType = { major: 0, regular: 0, main: 0 };
   const sponsorByType = { major: 0, regular: 0, main: 0 };
-  let totalExemptSeats = 0;
+  let totalExemptSeats = 0;       // majors only — preserved semantics so the
+                                  // existing dashboard "Exempt seats / major"
+                                  // ratio (line ~9470) keeps working.
+  let totalExemptSeats_main = 0;  // main waivers (satellite + champ exemption
+                                  // + major-direct-entry) — emitted separately
+                                  // in the CSV so the new Main-side waivers
+                                  // are visible without changing the existing
+                                  // major-only ratio.
   for (const e of events) {
     if (revByType[e.type] != null) {
       revByType[e.type] += (e.revenue || 0);
@@ -7170,6 +7182,7 @@ function computeEconomicsMetrics(pool, events) {
       sponsorByType[e.type] += (e.sponsorPurse || 0);
     }
     if (e.type === 'major') totalExemptSeats += (e.exemptSeats || 0);
+    if (e.type === 'main')  totalExemptSeats_main += (e.exemptSeats || 0);
   }
   // Satellite / Main-qualifier accounting — total free Main seats awarded over the run
   // and per-Main average. The waived buy-in value (qualifier seats × buyInMain) tells
@@ -7287,7 +7300,7 @@ function computeEconomicsMetrics(pool, events) {
     breakEvenCount, breakEvenRate, payoutRatio, avgEntriesPerPlayer, avgBuyInPerPlayer,
     yoyGrowth, biggestSinglePayout,
     // Benchmark vs real PGA/WSOP economics
-    avgPurseByType, avgWinnerByType, purseByType, winnerByType, sponsorByType, totalExemptSeats,
+    avgPurseByType, avgWinnerByType, purseByType, winnerByType, sponsorByType, totalExemptSeats, totalExemptSeats_main,
     // Satellite / Main-qualifier system
     totalMainQualifierSeats, avgMainQualifierSeats, mainEventCount,
   };
@@ -8267,6 +8280,7 @@ function _exportRunToCSVImpl(snap) {
     rows.push(['avgRegularWinnerPrize', fx(awn.regular, 2)]);
     rows.push(['avgMainWinnerPrize', fx(awn.main, 2)]);
     rows.push(['totalExemptSeats', e.totalExemptSeats || 0]);
+    rows.push(['totalExemptSeats_main', e.totalExemptSeats_main || 0]);
     rows.push(['sponsorPurseMajor', fx(sp.major, 2)]);
     rows.push(['sponsorPurseRegular', fx(sp.regular, 2)]);
     rows.push(['sponsorPurseMain', fx(sp.main, 2)]);
