@@ -7921,18 +7921,14 @@ function renderConfigPanel(panel, mode) {
     text: 'Bracket: single-elim, 9-hole rounds → 18-hole rounds → 72-hole heads-up final. Aggregate: every player plays 4 rounds × 18 holes with rotating partners; lowest 72-hole net total wins. The Main Event in aggregate mode uses bracket cuts down to a 16-player final, then those 16 play the 72-hole aggregate.'
   }));
 
-  // Honey-scale slider: retained for config/export continuity. Final scoring
-  // divides total net honey by 18, so manual dampening values like 0.12 are no
-  // longer needed to keep aggregate champion scores realistic.
-  appendSliderControl(evSec, {
-    key: 'aggregateHoneyScale',
-    label: 'Honey scale (agg)',
-    min: 0, max: 1, step: 0.05,
-  });
+  evSec.appendChild(el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px;' },
+    el('label', { text: 'Honey norm', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }),
+    el('div', { class: 'ui-sans', style: 'font-size: 12px; color: var(--text-primary); padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elevated);', text: 'net honey / 18' })
+  ));
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'Total net honey credits are now divided by 18 before being subtracted from the golf scorecard, normalizing honey to one full round of golf. This keeps PGA-style champion scores realistic while preserving poker skill expression; manual dampening values like 0.12 are no longer needed because the division handles scaling.'
+    text: 'Production scoring is fixed: total net honey credits are divided by 18 before being subtracted from the golf scorecard. The old aggregate honey scale slider is retired; manual dampening values like 0.12 or 0.25 are no longer used because the division handles scaling.'
   }));
 
   const simpleCfg = [
