@@ -1626,19 +1626,29 @@ function golfScoreFromHandValue(hv) {
   const cat = hv >>> 24;            // hand category 0..9
   const k1 = (hv >>> 20) & 0xF;     // primary kicker rank (2..14), used for fine buckets
 
-  // 2026-04 loosening: bumped birdie thresholds down by 1 rank for Flush, Straight,
-  // Two Pair, Pair, and High Card so the population's modal hole drifts toward birdie
-  // territory and below-par rate climbs into the 60%+ band (was 49% under prior thresholds).
-  if (cat >= 8) return -5;                    // Royal/Straight Flush
-  if (cat === 7) return -4;                   // Quads
-  if (cat === 6) return (k1 >= 11 ? -3 : -2); // Full House: J+ trips → premium boat
-  if (cat === 5) return (k1 >= 10 ? -2 : -1); // Flush: T-high or better → strong flush (loosened)
-  if (cat === 4) return (k1 >= 9  ? -2 : -1); // Straight: 9-high or better → strong (loosened)
-  if (cat === 3) return -1;                   // Three of a Kind — flat birdie
-  if (cat === 2) return (k1 >= 8  ? -1 : 0);  // Two Pair: top pair 8+ → birdie, else par (final loosening)
-  if (cat === 1) return (k1 >= 8  ? 0 : 1);   // Pair: 88+ holds par; under-eights bogey (final loosening)
+  // OFFICIAL HONEY-STROKE SYSTEM TABLE (Rules tab — single source of truth):
+  //   Royal / Straight Flush → -5
+  //   Four of a Kind         → -4
+  //   Full House             → -2 standard, -3 if J+ trips (premium kicker)
+  //   Flush                  → -1 standard, -2 if T-high+ (premium kicker)
+  //   Straight               → -1 standard, -2 if 9-high+ (premium kicker)
+  //   Three of a Kind        → -1
+  //   Two Pair               →  0 standard, -1 if J+ top pair (premium kicker)
+  //   Pair                   → +1 standard,  0 if TT+ (premium kicker)
+  //   High Card              → +2 standard, +1 if J-high+ (premium kicker)
+  // Honey is calculated separately as net wagered pot value, divided by the
+  // current honeyNormalizationDivisor at round end. This function is the golf
+  // scorecard layer ONLY — no honey accounting here.
+  if (cat >= 8) return -5;                    // Royal / Straight Flush
+  if (cat === 7) return -4;                   // Four of a Kind
+  if (cat === 6) return (k1 >= 11 ? -3 : -2); // Full House: J+ trips premium
+  if (cat === 5) return (k1 >= 10 ? -2 : -1); // Flush: T-high+ premium
+  if (cat === 4) return (k1 >= 9  ? -2 : -1); // Straight: 9-high+ premium
+  if (cat === 3) return -1;                   // Three of a Kind
+  if (cat === 2) return (k1 >= 11 ? -1 : 0);  // Two Pair: J+ top pair premium
+  if (cat === 1) return (k1 >= 10 ? 0 : 1);   // Pair: TT+ premium
   // High Card
-  return (k1 >= 9  ? 1 : 2);                  // 9-high or better → +1 bogey; rest → +2 double (final loosening)
+  return (k1 >= 11 ? 1 : 2);                  // High Card: J-high+ premium
 }
 
 const PREFLOP_EQUITY = {
