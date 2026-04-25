@@ -8083,7 +8083,6 @@ function _exportRunToCSVImpl(snap) {
   // the whole download silently.
   const fx = (v, d) => (typeof v === 'number' && Number.isFinite(v)) ? v.toFixed(d != null ? d : 4) : '';
   rows.push(['skillR2', fx(m.varianceDecomp && m.varianceDecomp.skillR2)]);
-  rows.push(['skillR2_nonMain', fx(m.varianceDecomp_nonMain && m.varianceDecomp_nonMain.skillR2)]);
   rows.push(['gini', fx(m.gini)]);
   rows.push(['belowParRate', fx(m.belowParRate)]);
   rows.push(['repeatMajorRate', fx(m.repeatMajorRate)]);
@@ -8141,10 +8140,9 @@ function _exportRunToCSVImpl(snap) {
   }
   rows.push(['skillSpearman', fx(m.skillSpearman)]);
   rows.push(['skillEVSpearman', fx(m.skillEVSpearman)]);
-  rows.push(['skillEVSpearman_nonMain', fx(m.skillEVSpearman_nonMain)]);
   rows.push(['authoredVsMeasuredSkill', fx(m.authoredVsMeasured)]);
   rows.push([]);
-  rows.push(['--- Non-Main Skill Signal (regulars + majors only) ---']);
+  rows.push(['--- Skill Signal (excl. Main) — regulars + majors only ---']);
   rows.push(['skillR2_nonMain', fx(m.varianceDecomp_nonMain && m.varianceDecomp_nonMain.skillR2)]);
   rows.push(['skillEVSpearman_nonMain', fx(m.skillEVSpearman_nonMain)]);
   rows.push(['eliteMajorDominance_nonMain', fx(m.eliteMajorDominance_nonMain)]);
