@@ -2345,8 +2345,9 @@ const BuzzKnowledge = {
     { cat: 'golf', q: 'Why 72 holes in the Grand Finals?', a: 'The Masters, US Open, Open Championship, and PGA all play 72 holes over 4 rounds. Yellow Jacket mirrors this: 4 days of 18 holes creates enough variance for skill to show AND preserves room for legendary individual rounds.' },
     { cat: 'golf', q: 'What is below par?', a: 'A total score less than 0. In real golf, top tournament winners shoot -10 to -20 over 72 holes. In Yellow Jacket, below-par is achievable for top 30-40% of champions but legendary below -15.' },
     { cat: 'tournament', q: 'What is the auto-invite exemption?', a: 'Any player who wins a major gets automatic entry to all majors for the next 3 seasons (configurable). This compounds career advantage — recent major winners never need to re-qualify during their exemption window.' },
-    { cat: 'tournament', q: 'How are Regulars different from Majors?', a: 'Regulars (field 128) select 65% by season merit + 20% by ranking + 15% open-qualifier. Majors (field 96) are tighter and prestige-weighted: 18% champion exemptions + 32% ranking + 22% season + 13% career + 15% open. Regulars are weekly grinds; majors are a different animal.' },
-    { cat: 'tournament', q: 'What is the Main Event?', a: 'Once per season, an open-field tournament (default 1,024 players) where seats are drawn via random shuffle from the full pool. The Main Event is luck-friendly — any mid-skill player has a real shot at the title. Modeled after the WSOP Main Event.' },
+    { cat: 'tournament', q: 'How are Regulars different from Majors?', a: 'Regulars (field 1,008) select 65% by season merit + 20% by ranking + 15% open-qualifier. Majors (field 256) are tighter and prestige-weighted: 18% champion exemptions + 32% ranking + 22% season + 13% career + 15% open. Regulars are the weekly grind; majors are the Big Four — and they double as Main Event satellites.' },
+    { cat: 'tournament', q: 'What is the Main Event?', a: 'The annual championship — a 30,000-seat open field, the largest event on the calendar. Anyone in the player pool can buy in, but every year up to 512 free seats are awarded via majors (the satellite path). Modeled after the WSOP Main Event: the cap is set by venue capacity, not selectivity.' },
+    { cat: 'tournament', q: 'What is a satellite seat?', a: 'A free Main Event entry earned by finishing high in a major. By default the top 128 finishers in each major qualify — that\'s up to 512 free Main seats per year. Sting your way deep in any major and you skip the $10,000 Main buy-in. This is the WSOP satellite economy in miniature: cheap effort to qualify, big prize attached.' },
     { cat: 'history', q: 'What scoring variants were tested?', a: 'Several experimental ladders (Model B, HC=Par variants, HC=Bogey, Stroke-Transfer) were prototyped before the Yellow Jacket Tour converged on Stroke-Honey as the production scoring law. The two-layer design — bounded scorecard plus honey pot — keeps individual hole scores realistic while preserving WSOP-style stack pressure across the round.' },
     { cat: 'history', q: 'Why is it called Yellow Jacket?', a: 'The game combines poker and golf scored like a tournament. The bumblebee mascot wears a tiny golden jacket - a nod to the Masters green jacket. Also, it stings when you lose.' },
     { cat: 'history', q: 'Who is Buzz?', a: 'I am Buzz, your AI coach. I know every rule, every hand, every notable moment from the Tour. Ask me anything about the game.' },
@@ -2985,7 +2986,10 @@ Views.rules = function() {
     'If round totals are tied after the full event length (9-hole knockouts, 18-hole later rounds, 72-hole finals), players continue one hole at a time. First player to end a hole ahead wins. Max 30 playoff holes before a fair-coin tiebreaker.'
   ));
   core.appendChild(rule('Field selection',
-    'Regulars (field 128): 65% merit + 20% ranking + 15% open-qualifier. Majors (field 96): 18% champion exemptions + 32% ranking + 22% season + 13% career + 15% open. Mains (field 256–1024): pure random shuffle from full pool — anyone can win. Past major winners enter majors free within ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years of their last win.'
+    'Regulars: 65% season merit + 20% ranking + 15% open qualifier (default field 1,008). Majors: 18% champion exemptions + 32% ranking + 22% season + 13% career + 15% open (default field 256). Mains: 30,000-seat open championship — satellite qualifiers seated first, remaining seats filled by random open buy-ins from the rest of the pool. Past major champions enter majors free within ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years of their last win.'
+  ));
+  core.appendChild(rule('Satellites — majors as qualifiers for the Main',
+    'Every major doubles as a Main Event satellite. The top ' + (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 128) + ' finishers in each major earn a free seat in this year\'s Main Event (no buy-in). Models the WSOP path where most Main entrants either pay direct or win their seat through a satellite tournament. With 4 majors per season, that\'s up to ' + (4 * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 128)) + ' free seats per Main — small percentage of the field, big economic prize for major-tier finishers.'
   ));
   core.appendChild(rule('Yellow Jacket Inc. economics',
     'grossPool = Σ buy-ins. revenue = grossPool × rakePercent (default ' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '%). prizePool = grossPool − revenue + sponsorPurse. Sponsor purse rides on top of player money (PGA Tour model) and is not raked. Payouts decay geometrically across ITM finishers (top 15%, capped 2..64).'
@@ -4973,14 +4977,24 @@ const DEFAULT_SIM_CONFIG = {
   foldCenter:  0.290,  foldSpread:  0.180,
   raiseCenter: 0.855,  raiseSpread: 0.150,
   // Event structure
-  poolSize: 2000, seasons: 3,
+  // poolSize 30,000: Yellow Jacket population is intentionally larger than the Main
+  // field so the Main is competitive selection (a real annual qualifier), not a
+  // pure "every player plays" lottery. Real WSOP Main fields ~10k entrants from a
+  // worldwide pool of millions — we model that ratio at simulator scale.
+  poolSize: 30000, seasons: 3,
   majors: 4, regulars: 8, mains: 1,
-  // Field sizes scaled up to Yellow Jacket Tour Standard:
-  //   Major: 256 — large invitational, most prestigious of the four-major calendar
-  //   Regular: 1008 — open-tour weekly grind, large field per Yellow Jacket lore
-  //   Main: 30,000 — WSOP-Main-equivalent open-pool lottery; the year's culminating event
+  // Field sizes (Yellow Jacket Tour Standard):
+  //   Major: 256 — prestige invitational; top finishers double as Main satellite winners
+  //   Regular: 1008 — open weekly grind
+  //   Main: 30,000 — annual championship; capacity caps at the pool size
   majorField: 256, regularField: 1008, mainField: 30000,
   exemptionYears: 3,
+  // SATELLITE / QUALIFIER MECHANIC: top-N finishers in every major earn a FREE Main
+  // Event seat (no buy-in). Default 128 = top half of a 256-player major. With 4
+  // majors per year that's up to 512 qualifier seats per Main — about 1.7% of a 30k
+  // Main field. Models WSOP satellite economics: cheap-effort path to the Main is
+  // "win deep in a major"; expensive path is paying buyInMain at the door.
+  mainQualifiersPerMajor: 128,
   // Match structure
   earlyRoundHoles: 9, lateRoundHoles: 18, finalsHoles: 72, strokeCap: 3,
   regularStrokeCap: 6,
@@ -5114,12 +5128,29 @@ function buildPoolFromConfig(cfg) {
 // --- Lab tournament runner — parallels runTourEvent but uses cfg + tracks bracket survival ---
 function selectFieldLab(eventType, pool, year, cfg) {
   if (eventType === 'main') {
-    const shuffled = pool.slice();
-    for (let i = shuffled.length - 1; i > 0; i--) {
+    // Main field = (1) all current-year satellite qualifiers (free seats from majors)
+    //            + (2) random open-buy-in entrants from the rest of the pool
+    // Capped at mainField. If pool < mainField, everyone available plays.
+    const cap = Math.min(cfg.mainField, pool.length);
+    const qualifiers = pool.filter(p => p.mainQualifierUntil === year);
+    const others = pool.filter(p => p.mainQualifierUntil !== year);
+    // Shuffle the open-entry pool — random draw decides who buys in.
+    for (let i = others.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      const t = shuffled[i]; shuffled[i] = shuffled[j]; shuffled[j] = t;
+      const t = others[i]; others[i] = others[j]; others[j] = t;
     }
-    return shuffled.slice(0, Math.min(cfg.mainField, pool.length));
+    // Qualifiers always seated first (their satellite win is a guaranteed seat).
+    // If qualifiers exceed cap (extreme config), keep highest-skill qualifiers.
+    const seated = qualifiers.length <= cap
+      ? qualifiers.concat(others.slice(0, cap - qualifiers.length))
+      : qualifiers.slice().sort((a, b) => (b.skill || 0) - (a.skill || 0)).slice(0, cap);
+    // Final shuffle so qualifiers aren't all seeded into the top of the bracket.
+    for (let i = seated.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = seated[i]; seated[i] = seated[j]; seated[j] = t;
+    }
+    seated.mainQualifierCount = Math.min(qualifiers.length, cap);
+    return seated;
   }
   if (eventType === 'regular') return selectRegularField(pool, Math.min(cfg.regularField, pool.length), year);
   return selectMajorField(pool, Math.min(cfg.majorField, pool.length), year, cfg);
@@ -5187,6 +5218,37 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   placements.push({ id: ru.id, rankFloor: 2, tierSize: 1 });
   placements.push({ id: champ.id, rankFloor: 1, tierSize: 1 });
   applyQualificationPoints(field, placements, eventType, year);
+
+  // SATELLITE QUALIFIERS — majors double as Main Event satellites. The top-N
+  // finishers of every major earn a free Main seat (no buy-in) for THIS year.
+  // Models the WSOP "win a satellite, skip the buy-in" path. The qualifier flag
+  // is year-scoped so it auto-expires when the next year starts.
+  if (eventType === 'major') {
+    const qualSeats = Math.max(0, +(cfg.mainQualifiersPerMajor) || 0);
+    if (qualSeats > 0) {
+      // Group placements by rankFloor — tied tiers (e.g. all eight R16 losers at
+      // rankFloor=9) share one bucket. Walk floors ascending; within a tier rank
+      // by skill so satellite seats feel earned, not randomly assigned.
+      const tierMap = {};
+      for (const plc of placements) {
+        if (!tierMap[plc.rankFloor]) tierMap[plc.rankFloor] = [];
+        tierMap[plc.rankFloor].push(plc.id);
+      }
+      const tierFloors = Object.keys(tierMap).map(Number).sort((a, b) => a - b);
+      let claimed = 0;
+      for (const rf of tierFloors) {
+        if (claimed >= qualSeats) break;
+        const ids = tierMap[rf];
+        const tierPlayers = field.filter(p => ids.indexOf(p.id) !== -1)
+          .sort((a, b) => (b.skill || 0) - (a.skill || 0));
+        const claim = Math.min(tierPlayers.length, qualSeats - claimed);
+        for (let i = 0; i < claim; i++) {
+          tierPlayers[i].mainQualifierUntil = year;
+        }
+        claimed += claim;
+      }
+    }
+  }
   // Read finals-only stroke total from runFinals's return, not from wrapper.stats.
   // The wrapper stats now include bracket-round strokes (we removed the reset that
   // used to erase them), so we must use p1Total/p2Total for champScore/ruScore.
@@ -5206,10 +5268,14 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
                : eventType === 'regular' ? (cfg.buyInRegular || 0)
                : (cfg.buyInMain || 0);
   const exemptionYearsCfg = cfg.exemptionYears != null ? cfg.exemptionYears : 3;
-  // Champion exemption: past major winners inside the exemption window enter majors for free.
-  // Matches real-world PGA major invitations (Masters Champions Dinner / lifetime exemption).
+  // Two free-entry paths:
+  //   (1) Major champion exemption — past major winners inside the exemption window
+  //       enter majors for no buy-in (PGA Masters Champions Dinner / lifetime exemption).
+  //   (2) Main-event satellite qualifiers — players flagged mainQualifierUntil === year
+  //       (top-N finishers in this year's majors) enter the Main free.
   function playerBuyIn(p) {
     if (eventType === 'major' && p.majorWins > 0 && p.lastMajorWin != null && (year - p.lastMajorWin) <= exemptionYearsCfg) return 0;
+    if (eventType === 'main' && p.mainQualifierUntil === year) return 0;
     return baseBuyIn;
   }
   const perPlayerBuyIns = field.map(playerBuyIn);
@@ -5279,6 +5345,7 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     // economics
     buyIn: baseBuyIn, grossPool, prizePool, revenue,
     sponsorPurse, exemptSeats,
+    mainQualifierSeats: eventType === 'main' ? (field.mainQualifierCount || 0) : 0,
     champPrize: playerPrize[champ.id] || 0,
     ruPrize: playerPrize[ru.id] || 0,
     itmCount, finalTableCount,
@@ -6266,6 +6333,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('majorField', snapCfg.majorField);
   cfgRow('regularField', snapCfg.regularField);
   cfgRow('mainField', snapCfg.mainField);
+  cfgRow('mainQualifiersPerMajor', snapCfg.mainQualifiersPerMajor);
   cfgRow('exemptionYears', snapCfg.exemptionYears);
   cfgRow('regularStrokeCap', snapCfg.regularStrokeCap);
   cfgRow('majorStrokeCap', snapCfg.majorStrokeCap);
@@ -7648,14 +7716,27 @@ function renderActiveRun(root, r) {
       drawRevenueByType(cv9, m.economics.revByType);
       const buckets = m.economics.profitBuckets;
       if (buckets.length > 0) {
-        // Use p99 clipping so a single mega-winner doesn't flatten the distribution.
+        // Asymmetric range — losses are bounded (you can't lose more than you paid in
+        // buy-ins, capped at ~$1.5M/player), but wins are unbounded (champion can clear
+        // $16M+ over a long career). Forcing the histogram to be symmetric around $0
+        // creates empty padding bins on whichever side has the smaller magnitude.
+        // Instead: clip outliers via p1/p99, snap bin edges so $0 lands on a boundary,
+        // and use ~20 bins for smooth resolution.
         const sorted = buckets.slice().sort((a, b) => a - b);
         const p1 = sorted[Math.floor(sorted.length * 0.01)];
         const p99 = sorted[Math.floor(sorted.length * 0.99)];
-        const extent = Math.max(Math.abs(p1), Math.abs(p99), 1);
-        // Symmetric range around zero so the positive/negative split reads cleanly.
-        const lo = -extent, hi = extent;
-        drawHistogram(cv10, buckets, lo, hi, 11, {
+        const targetBins = 20;
+        const rawBinW = Math.max(1, (p99 - p1) / targetBins);
+        // "Nice" bin width: round up to the next 1/2/5 × power-of-10 so labels read clean.
+        const mag = Math.pow(10, Math.floor(Math.log10(rawBinW)));
+        const ratio = rawBinW / mag;
+        const niceBinW = (ratio <= 1 ? 1 : ratio <= 2 ? 2 : ratio <= 5 ? 5 : 10) * mag;
+        // Snap lo/hi to integer multiples of niceBinW so $0 falls on a bin edge —
+        // that way the negative/positive bin coloring (red vs green) is exact at zero.
+        const lo = Math.floor(p1 / niceBinW) * niceBinW;
+        const hi = Math.ceil(p99 / niceBinW) * niceBinW;
+        const bins = Math.max(8, Math.round((hi - lo) / niceBinW));
+        drawHistogram(cv10, buckets, lo, hi, bins, {
           labelFormat: v => fmtMoney(v),
           xLabel: 'Career P&L',
           yLabel: 'Players',
