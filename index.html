@@ -1281,7 +1281,7 @@ function exportUnifiedSave() {
     const raw = getStorage().getItem(UNIFIED_SAVE_KEY) || JSON.stringify({
       version: APP_VERSION,
       savedAt: Date.now(),
-      tour: { pool: TourState.pool, seasons: TourState.seasons, currentSeason: TourState.currentSeason, preferences: TourState.preferences },
+      tour: { pool: slimPool(TourState.pool), seasons: TourState.seasons, currentSeason: TourState.currentSeason, preferences: TourState.preferences },
       lab: { config: LabState.config, runs: LabState.runs, activeRunId: LabState.activeRunId, panelWidth: LabState.panelWidth },
       moments: BuzzKnowledge.moments.slice(0, 50),
     });
@@ -2017,7 +2017,7 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // Authored skill (via skillFactor) gates the application — noisy bottom-tier
   // players see no threshold movement.
   const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 6.5;
-  const potValue = strokes + currentBet + matched + (carryPot || 0);
+  const potValue = Math.min(CurrentStrokeCap * 3.6, strokes + currentBet + matched + (carryPot || 0));
   // honeyEVMultiplier: 6.5 — final production tuning. Polarizes skilled-player
   // aggression so they push harder when ahead and fold faster when behind, letting
   // the bounded golf scorecard compound a stronger skill signal across rounds.
@@ -2212,13 +2212,10 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     if (strokes >= CurrentStrokeCap && s !== 'river') { while (community.length < 5) community.push(DECK[off++]); break; }
   }
   if (folded) {
-    // Honey-Stroke fold path: street-based concession scorecard. The wagered-strokes
-    // pot becomes a honey credit for the non-folder; the folder takes a small positive
-    // scorecard penalty scaled to how late the fold came:
-    //   Preflop:  bettor  0,  folder +2  (least pressure → smallest reward)
-    //   Flop:     bettor −1,  folder +1
-    //   Turn:     bettor −1,  folder +1
-    //   River:    bettor −2,  folder  0  (folder came close to par before laying it down)
+    // Honey-Stroke fold path: the wagered-strokes pot becomes a honey credit
+    // for the non-folder. The absolute golf scorecard penalties are now neutralized
+    // to 0 (Par) because /18 normalized honey ensures the pot itself is the perfect
+    // mathematical penalty for folding, preventing artificial Eagles/Double Bogeys.
     const streetIdx = (community.length < 3) ? 0 : (community.length === 3) ? 1 : (community.length === 4) ? 2 : 3;
     const folderScoreTable = [0, 0, 0, 0];
     const bettorScoreTable = [0, 0, 0, 0];
@@ -2311,7 +2308,7 @@ function playMatch(pA, pB, numHoles, opts) {
   const applyHole = (r) => {
     totalGolfA += r.aScore; totalGolfB += r.bScore;
     if (r.tie) {
-      carryPot += (r.strokes || 0);
+      carryPot = Math.min(18, carryPot + (r.strokes || 0));
     } else {
       const aSk = r.aHoneyCredit || 0;
       const bSk = r.bHoneyCredit || 0;
@@ -2504,7 +2501,7 @@ function runFinals(p1, p2) {
   const applyHole = (r) => {
     p1Scorecard += r.aScore; p2Scorecard += r.bScore;
     if (r.tie) {
-      carryPot += (r.strokes || 0);
+      carryPot = Math.min(18, carryPot + (r.strokes || 0));
     } else {
       const aSk = r.aHoneyCredit || 0;
       const bSk = r.bHoneyCredit || 0;
@@ -3325,8 +3322,8 @@ Views.codex = function() {
     ),
     h3('Layer 2: The Honey Pot'),
     p('Wagered strokes form the honey pot. The hole winner takes the entire pot as a honey credit. Tied holes carry the pot forward to sweeten the next decisive hole. Multiple consecutive ties pile up; whichever player wins the next clean hole sweeps the entire accumulated carry.'),
-    h3('Layer 3: Folds (street-based concession)'),
-    p('Folding is not flat. The folder takes a small positive scorecard penalty scaled by how late the fold came: Tea Box +2, Drive/Hazard +1, Putt 0. The bettor who forced the fold scores 0 to −2 AND takes the wagered-strokes pot. So forcing a late-street fold is doubly valuable: smaller scorecard hit on you, bigger pot in your basket.'),
+    h3('Layer 3: Folds'),
+    p('Folding neutralizes the absolute golf score to Par (0) for both players. The only penalty for folding is surrendering the wagered-strokes pot to the bettor as a honey credit. Because honey is normalized by 18, surrendering a 10-stroke pot costs you exactly 0.55 net golf strokes. Forcing a fold is purely about winning that mathematical equity without risking a showdown.'),
     h3('Per-Round Score'),
     p('finalRoundScore = totalGolfScorecard − (netHoney / 18). Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard. This normalizes honey to the natural unit of one 18-hole round, producing realistic and prestigious PGA-style champion scores while fully preserving poker skill expression. Lower wins.'),
     h3('Permanent Invariants'),
@@ -3963,7 +3960,7 @@ Views.rules = function() {
     'When both players reach showdown with the same hand value, both score 0 (par) and the wagered-strokes pot accumulates into the carry pot for the next decisive hole. Multiple consecutive ties pile up; whichever player wins the next decisive hole sweeps the entire accumulated carry as part of their honey take.'
   ));
   core.appendChild(rule('Folds — street-based concession',
-    'Folds aren\'t a flat penalty. The folder\'s scorecard score scales by how late the fold came — Tea Box +2, Drive/Hazard +1, Putt 0 (a Putt-street folder almost made par). The bettor scores 0 to −2 (Putt bettor earns the biggest reward) AND takes the wagered-strokes pot as a honey credit. So forcing a late-street fold is doubly valuable: smaller scorecard hit + bigger pot.'
+    'Folding neutralizes the absolute golf score to Par (0) for both players. The only penalty for folding is surrendering the wagered-strokes pot to the bettor as a honey credit. Because honey is normalized by 18, surrendering a 10-stroke pot costs you exactly 0.55 net golf strokes. Forcing a fold is purely about winning that mathematical equity without risking a showdown.'
   ));
   core.appendChild(rule('Progressive street caps',
     'The event\'s stroke-cap is partitioned across streets: 25% by end of Tea Box, 50% by Drive, 75% by Hazard, 100% by Putt. This forces pot escalation to feel like real NL Hold\'em rather than a single-cap free-for-all. Per-event caps: regular 6, major 10, main 6, main finals 10.'
@@ -7759,6 +7756,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('invariant.honeyDivisor', 1);
   cfgRow('invariant.carryOverEnabled', true);
   cfgRow('scoring.netHoneyNormalization', 'netHoney/18');
+  cfgRow('scoring.honeyMagnitudeTamed', true);
   cfgRow('ai.honeyEVMultiplier', 6.5);
   cfgRow('ai.thresholdCoupling.bet', 0.8);
   cfgRow('ai.thresholdCoupling.fold', 1.2);
