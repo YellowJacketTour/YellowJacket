@@ -1940,13 +1940,21 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   const oppCommitFrac = streetCap > 0 ? Math.min(1, oppCommitted / streetCap) : 0;
 
   let adj = estimateStrengthAware(cards, community, street, streetCap, skillFactor, oppCommitFrac, preComputedHand, preComputedTex);
-  // adjTrue = ground-truth equity estimate BEFORE per-decision noise. Used by
-  // evOf() so the EV-realization metric measures the actor's skill at picking
-  // the TRUE highest-EV action — not consistency with their own noisy view.
-  // Without this split, evChosen and evOptimal both use the same noisy adj,
-  // so a noisy player always "looks optimal to themselves" and the metric
-  // collapses to the action-amount discretization loss only (signal floor).
-  const adjTrue = adj;
+  // adjTrue = SKILL-INVARIANT ground-truth equity oracle — always computed with
+  // skillFactor = 1 so every player's chosen action is judged against the SAME
+  // board-aware oracle, not their own threat-blind view. The previous patch
+  // captured adj before noise, but estimateStrengthAware itself gates threat
+  // and draw adjustments by the actor's skillFactor — meaning a bottom-tier
+  // player's "oracle" was a noise-blind, threat-blind view that happened to
+  // agree with their bad calls. evChosen ≈ evOptimal collapsed to amount-
+  // discretization noise and skill correlation went to zero. With skillFactor=1
+  // the oracle sees full threat/draw awareness, so noisy / oblivious players
+  // accrue real EV loss for plays that look fine in fog but are losing against
+  // the true equity. The skipped recomputation when skillFactor already = 1
+  // avoids a redundant evaluate7 + texture pass for elite players.
+  const adjTrue = (skillFactor < 1)
+    ? estimateStrengthAware(cards, community, street, streetCap, 1, oppCommitFrac, preComputedHand, preComputedTex)
+    : adj;
   // Apply per-decision noise so the threshold-coupled honeyEV reads from the noisy
   // post-equity estimate (skilled players' lower noise still gives them sharper EV).
   adj = Math.max(0.01, Math.min(1.0, adj + (Math.random() - 0.5) * profile.noise));
@@ -2637,6 +2645,7 @@ function buildPool(size) {
 }
 
 function ensureQualifierState(p) {
+  if (p.eventsThisYear == null) p.eventsThisYear = 0;
   if (p.currentSeasonPoints == null) p.currentSeasonPoints = 0;
   if (p.lastSeasonPoints == null) p.lastSeasonPoints = 0;
   if (p.qualSeasonYear == null) p.qualSeasonYear = 0;
@@ -2654,6 +2663,7 @@ function syncQualificationSeason(pool, year) {
     if (p.qualSeasonYear < year) {
       p.lastSeasonPoints = (p.qualSeasonYear === year - 1) ? (p.currentSeasonPoints || 0) : 0;
       p.currentSeasonPoints = 0;
+      p.eventsThisYear = 0;
       p.qualSeasonYear = year;
     }
   }
@@ -2679,12 +2689,23 @@ function careerMeritScore(p) {
 
 function openQualifierScore(p) {
   ensureQualifierState(p);
-  return seasonMeritScore(p) * 1.15 + careerMeritScore(p) * 0.18 + recentFormScore(p) * 0.8 + (p.skill || 0) * 2.5;
+  // Skill-rating weight dropped from 2.5 → 0.5. The open bucket should be the
+  // wildcard path (random pick weighted by recent activity), not a third
+  // skill-leak that pulled top players into yet more events. Same rationale
+  // as regularEntryScore — see that comment.
+  return seasonMeritScore(p) * 1.15 + careerMeritScore(p) * 0.18 + recentFormScore(p) * 0.8 + (p.skill || 0) * 0.5;
 }
 
 function regularEntryScore(p) {
   ensureQualifierState(p);
-  return seasonMeritScore(p) * 1.0 + careerMeritScore(p) * 0.14 + recentFormScore(p) * 0.6 + (p.skill || 0) * 3.0;
+  // Skill-rating weight dropped from 3.0 → 0.5. The merit bucket is meant to
+  // reward season+career performance, but the raw `(skill * 3.0)` term made it
+  // a second skill-sorted bucket — top-skill players were pulled into ~100% of
+  // regulars via merit AND the explicit ranking bucket, bleeding their ROI
+  // through buy-in volume regardless of season state. With skill * 0.5 the
+  // bucket prioritizes who's actually performing this season, with skill as a
+  // mild tiebreaker only.
+  return seasonMeritScore(p) * 1.0 + careerMeritScore(p) * 0.14 + recentFormScore(p) * 0.6 + (p.skill || 0) * 0.5;
 }
 
 function regularQualifierEligible(p) {
@@ -2739,13 +2760,21 @@ function selectMajorField(pool, fieldSize, year, cfg) {
     .sort((a, b) => (b.majorWins - a.majorWins) || (seasonMeritScore(b) - seasonMeritScore(a)) || (b.skill - a.skill));
   takeQualified(champs, counts.champs, selected, out, 'champ', sourceCounts);
 
-  // Ranking bucket: skill-descending with a ±0.05 jitter on the sort key. Pure
-  // deterministic skill-sort pulled the same top-N skill players into EVERY
-  // major regardless of season state, forcing elite players into ~100% event
-  // participation and bleeding their ROI through buy-in volume. Jitter randomly
-  // re-orders players within ~0.10 skill bands so the qualifying cutoff drifts
-  // event-to-event without distorting tier separation (elite ≫ mid still holds).
-  const ranking = pool.slice().sort((a, b) => (b.skill - a.skill) + (Math.random() - 0.5) * 0.10);
+  // Ranking bucket: skill-descending with TWO suppression terms.
+  //   1. ±0.05 jitter on the sort key — randomizes ordering within ~0.10 skill
+  //      bands so the qualifying cutoff drifts event-to-event.
+  //   2. Per-year participation penalty: subtract 0.008 × eventsThisYear from
+  //      the player's effective skill. After 25 events this year a player drops
+  //      0.20 — a full skill-tier — out of the top-N, naturally capping elite
+  //      participation around 25–30 events/year (vs ~53/year deterministic).
+  // This is the primary fix for the elite-ROI inversion: it preserves "skill
+  // qualifies you for more events" while preventing "skill forces you into
+  // every event." Pairs with the regularEntryScore / openQualifierScore
+  // skill-weight reductions so all three buckets stop dragging top players in.
+  const rankPenalty = (p) => 0.008 * (p.eventsThisYear || 0);
+  const ranking = pool.slice().sort((a, b) =>
+    ((b.skill - rankPenalty(b)) - (a.skill - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
+  );
   takeQualified(ranking, out.length + counts.ranking, selected, out, 'ranking', sourceCounts);
 
   const season = pool.slice().sort((a, b) => seasonMeritScore(b) - seasonMeritScore(a) || recentFormScore(b) - recentFormScore(a) || b.skill - a.skill);
@@ -2780,9 +2809,12 @@ function selectRegularField(pool, fieldSize, year) {
   const openCount = Math.max(0, fieldSize - meritCount - rankingCount);
   const merit = pool.slice().sort((a, b) => regularEntryScore(b) - regularEntryScore(a) || b.skill - a.skill);
   takeQualified(merit, meritCount, selected, out);
-  // Ranking bucket: see selectMajorField above for the jitter rationale. Same
-  // ±0.10 skill-band randomization, applied to regulars as well.
-  const ranking = pool.slice().sort((a, b) => (b.skill - a.skill) + (Math.random() - 0.5) * 0.10);
+  // Ranking bucket: see selectMajorField above for the rationale. Same
+  // jitter + per-year participation penalty applied to regulars.
+  const rankPenalty = (p) => 0.008 * (p.eventsThisYear || 0);
+  const ranking = pool.slice().sort((a, b) =>
+    ((b.skill - rankPenalty(b)) - (a.skill - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
+  );
   takeQualified(ranking, meritCount + rankingCount, selected, out);
   const open = pool
     .filter(p => regularQualifierEligible(p))
@@ -6429,6 +6461,7 @@ function buildPoolFromConfig(cfg) {
       careerSpanStart: null, careerSpanEnd: null,
       bestFinalsScore: 999, recentForm: [],
       currentSeasonPoints: 0, lastSeasonPoints: 0, qualSeasonYear: 0,
+      eventsThisYear: 0,
       // lab: bracket survival
       reaches: { r1: 0, r4: 0, r2: 0, finals: 0, champ: 0 },
       // lab: economics
@@ -6783,6 +6816,7 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     const p = field[idx];
     p.buyInsPaid += perPlayerBuyIns[idx];
     p.eventsEntered++;
+    p.eventsThisYear = (p.eventsThisYear || 0) + 1;
     if (eventType === 'major') p.majorsEntered++;
     else if (eventType === 'regular') p.regularsEntered++;
     else p.mainsEntered++;
