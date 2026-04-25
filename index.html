@@ -1940,6 +1940,13 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   const oppCommitFrac = streetCap > 0 ? Math.min(1, oppCommitted / streetCap) : 0;
 
   let adj = estimateStrengthAware(cards, community, street, streetCap, skillFactor, oppCommitFrac, preComputedHand, preComputedTex);
+  // adjTrue = ground-truth equity estimate BEFORE per-decision noise. Used by
+  // evOf() so the EV-realization metric measures the actor's skill at picking
+  // the TRUE highest-EV action — not consistency with their own noisy view.
+  // Without this split, evChosen and evOptimal both use the same noisy adj,
+  // so a noisy player always "looks optimal to themselves" and the metric
+  // collapses to the action-amount discretization loss only (signal floor).
+  const adjTrue = adj;
   // Apply per-decision noise so the threshold-coupled honeyEV reads from the noisy
   // post-equity estimate (skilled players' lower noise still gives them sharper EV).
   adj = Math.max(0.01, Math.min(1.0, adj + (Math.random() - 0.5) * profile.noise));
@@ -1998,12 +2005,12 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   //   bet/raise → foldEq × pot + (1 − foldEq) × (adj × (pot + a) − (1−adj) × a)
   function evOf(actionName, amount) {
     if (actionName === 'fold') return 0;
-    if (actionName === 'check') return adj * pot;
-    if (actionName === 'call') return adj * (pot + toCall) - toCall;
+    if (actionName === 'check') return adjTrue * pot;
+    if (actionName === 'call') return adjTrue * (pot + toCall) - toCall;
     const a = Math.max(0, +amount || 0);
     const denom = Math.max(1, pot + a);
     const foldEq = Math.max(0, Math.min(0.5, a / denom));
-    const evCalled = adj * (pot + a) - (1 - adj) * a;
+    const evCalled = adjTrue * (pot + a) - (1 - adjTrue) * a;
     return foldEq * pot + (1 - foldEq) * evCalled;
   }
   const candidates = [];
@@ -2732,7 +2739,13 @@ function selectMajorField(pool, fieldSize, year, cfg) {
     .sort((a, b) => (b.majorWins - a.majorWins) || (seasonMeritScore(b) - seasonMeritScore(a)) || (b.skill - a.skill));
   takeQualified(champs, counts.champs, selected, out, 'champ', sourceCounts);
 
-  const ranking = pool.slice().sort((a, b) => b.skill - a.skill);
+  // Ranking bucket: skill-descending with a ±0.05 jitter on the sort key. Pure
+  // deterministic skill-sort pulled the same top-N skill players into EVERY
+  // major regardless of season state, forcing elite players into ~100% event
+  // participation and bleeding their ROI through buy-in volume. Jitter randomly
+  // re-orders players within ~0.10 skill bands so the qualifying cutoff drifts
+  // event-to-event without distorting tier separation (elite ≫ mid still holds).
+  const ranking = pool.slice().sort((a, b) => (b.skill - a.skill) + (Math.random() - 0.5) * 0.10);
   takeQualified(ranking, out.length + counts.ranking, selected, out, 'ranking', sourceCounts);
 
   const season = pool.slice().sort((a, b) => seasonMeritScore(b) - seasonMeritScore(a) || recentFormScore(b) - recentFormScore(a) || b.skill - a.skill);
@@ -2767,7 +2780,9 @@ function selectRegularField(pool, fieldSize, year) {
   const openCount = Math.max(0, fieldSize - meritCount - rankingCount);
   const merit = pool.slice().sort((a, b) => regularEntryScore(b) - regularEntryScore(a) || b.skill - a.skill);
   takeQualified(merit, meritCount, selected, out);
-  const ranking = pool.slice().sort((a, b) => b.skill - a.skill);
+  // Ranking bucket: see selectMajorField above for the jitter rationale. Same
+  // ±0.10 skill-band randomization, applied to regulars as well.
+  const ranking = pool.slice().sort((a, b) => (b.skill - a.skill) + (Math.random() - 0.5) * 0.10);
   takeQualified(ranking, meritCount + rankingCount, selected, out);
   const open = pool
     .filter(p => regularQualifierEligible(p))
@@ -6957,6 +6972,7 @@ function computeLabMetrics(pool, events, actionStats, cfg) {
   return {
     varianceDecomp: computeVarianceDecomp(pool),
     skillSpearman: computeSpearman(pool),
+    skillEVSpearman: computeEVSpearman(pool),
     measuredSkill,
     authoredVsMeasured: computeAuthoredMeasuredCorrelation(pool, measuredSkill),
     gini: computeGini(pool.map(p => p.totalWins)),
@@ -7055,7 +7071,9 @@ function computeEconomicsMetrics(pool, events) {
       avgPaid: group.length ? tPaid / group.length : 0,
       avgEarned: group.length ? tEarned / group.length : 0,
       avgProfit: group.length ? tProfit / group.length : 0,
+      avgEvents: group.length ? tEntered / group.length : 0,
       roi: tPaid > 0 ? tProfit / tPaid : 0,
+      roiPerEvent: tEntered > 0 ? tProfit / tEntered : 0,
       itmRate: tEntered > 0 ? tItm / tEntered : 0,
     });
     start = end;
@@ -7189,6 +7207,28 @@ function computeSpearman(pool) {
   let num = 0, dxSq = 0, dySq = 0;
   for (let i = 0; i < n; i++) {
     const dx = rs[i] - mx, dy = rw[i] - my;
+    num += dx * dy; dxSq += dx * dx; dySq += dy * dy;
+  }
+  return dxSq > 0 && dySq > 0 ? num / Math.sqrt(dxSq * dySq) : 0;
+}
+
+// Spearman rank correlation between authoredSkill and averageEVRealization.
+// Pure-poker skill signal that's robust to high-variance tournament outcomes
+// AND to the heteroscedastic noise floor that collapses Pearson skillR². With
+// thousands of EV samples per player career, monotone signal survives even
+// when linear-fit residuals dominate. Target: ≥ 0.40 with current AI.
+function computeEVSpearman(pool) {
+  const n = pool.length;
+  if (n < 2) return 0;
+  const skills = pool.map(p => p.skill || 0);
+  const evReal = pool.map(p => averageEVRealization(p));
+  const rs = averageRanks(skills);
+  const rev = averageRanks(evReal);
+  const mx = rs.reduce((a, b) => a + b, 0) / n;
+  const my = rev.reduce((a, b) => a + b, 0) / n;
+  let num = 0, dxSq = 0, dySq = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = rs[i] - mx, dy = rev[i] - my;
     num += dx * dy; dxSq += dx * dx; dySq += dy * dy;
   }
   return dxSq > 0 && dySq > 0 ? num / Math.sqrt(dxSq * dySq) : 0;
@@ -7964,6 +8004,7 @@ function _exportRunToCSVImpl(snap) {
     rows.push(['majorWinnerMedianPercentile', fx(w.medianPercentile)]);
   }
   rows.push(['skillSpearman', fx(m.skillSpearman)]);
+  rows.push(['skillEVSpearman', fx(m.skillEVSpearman)]);
   rows.push(['authoredVsMeasuredSkill', fx(m.authoredVsMeasured)]);
   // finalsSkillEdge is nested. Under CI aggregation its inner sub-objects can get
   // flattened to numbers, so we null-check every leaf access.
@@ -8025,7 +8066,9 @@ function _exportRunToCSVImpl(snap) {
       e.tiers.forEach((t, i) => {
         rows.push(['tier_' + i + '_label', t.label || '']);
         rows.push(['tier_' + i + '_roi', fx(t.roi)]);
+        rows.push(['tier_' + i + '_roiPerEvent', fx(t.roiPerEvent, 4)]);
         rows.push(['tier_' + i + '_avgProfit', fx(t.avgProfit, 2)]);
+        rows.push(['tier_' + i + '_avgEvents', fx(t.avgEvents, 2)]);
         rows.push(['tier_' + i + '_itmRate', fx(t.itmRate)]);
       });
     }
