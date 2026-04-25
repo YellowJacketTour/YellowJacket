@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v12";
+const APP_VERSION = "2026.04.25-v13";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2690,21 +2690,22 @@ function careerMeritScore(p) {
 
 function openQualifierScore(p) {
   ensureQualifierState(p);
-  // Skill-rating weight nudged 0.8 → 1.0 to match regularEntryScore and lift
-  // the non-Main skill-R² floor. Same volume guards apply (eventsCapMultiplier
-  // + 0.009 ranking penalty), so participation stays in the 24–30 events/year
-  // band even with the heavier skill prior.
-  return seasonMeritScore(p) * 1.15 + careerMeritScore(p) * 0.18 + recentFormScore(p) * 0.8 + (p.skill || 0) * 1.0;
+  // Skill-rating weight bumped 1.0 → 1.5 to match regularEntryScore — high-skill
+  // players dominate the score-driven half of the open bucket. The other half
+  // of open seats now flow through a uniform-random "mixed seeding" path
+  // (selectMajorField / selectRegularField), so free-invite elites still face
+  // a balanced field of opponents drawn from across all skill levels.
+  return seasonMeritScore(p) * 1.15 + careerMeritScore(p) * 0.18 + recentFormScore(p) * 0.8 + (p.skill || 0) * 1.5;
 }
 
 function regularEntryScore(p) {
   ensureQualifierState(p);
-  // Skill-rating weight nudged 0.8 → 1.0 to restore a strong non-Main skill-R²
-  // signal. Volume is still bounded by eventsCapMultiplier + the ranking-bucket
-  // penalty (now 0.009), so this skill-prior bump improves separation without
-  // re-opening the runaway-participation channel that the original 3.0 weight
-  // caused.
-  return seasonMeritScore(p) * 1.0 + careerMeritScore(p) * 0.14 + recentFormScore(p) * 0.6 + (p.skill || 0) * 1.0;
+  // Skill-rating weight bumped 1.0 → 1.5 so high-skill players rise faster and
+  // dominate the merit/season bucket. Volume stays bounded by
+  // eventsCapMultiplier + the 0.009 ranking penalty + 0.018 ranking jitter,
+  // so the elite participation cap (24–32 events/year) holds even with the
+  // heavier skill prior.
+  return seasonMeritScore(p) * 1.0 + careerMeritScore(p) * 0.14 + recentFormScore(p) * 0.6 + (p.skill || 0) * 1.5;
 }
 
 function regularQualifierEligible(p) {
@@ -2785,7 +2786,7 @@ function selectMajorField(pool, fieldSize, year, cfg) {
   // merit/season/career/open buckets so all entry paths share the same cap.
   const rankPenalty = (p) => 0.009 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
-    ((b.skill - rankPenalty(b)) - (a.skill - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
+    ((b.skill * 1.5 - rankPenalty(b)) - (a.skill * 1.5 - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
   takeQualified(ranking, out.length + counts.ranking, selected, out, 'ranking', sourceCounts);
 
@@ -2799,12 +2800,28 @@ function selectMajorField(pool, fieldSize, year, cfg) {
     || seasonMeritScore(b) - seasonMeritScore(a) || recentFormScore(b) - recentFormScore(a) || b.skill - a.skill);
   takeQualified(career, out.length + counts.career, selected, out, 'career', sourceCounts);
 
+  // OPEN bucket — split 50/50 between score-weighted (skill prior 1.5) and a
+  // dedicated MIXED SEEDING path that draws uniformly random from the entire
+  // unselected pool, including low-skill open/fallback players. Mixed seeding
+  // ensures free-invite elites (champ exemptions, multi-year exemptions, main
+  // qualifiers) face a balanced field of opponents at the same selection rate
+  // as the high-skill merit/ranking buckets — the WSOP/PGA hybrid composition.
   const open = pool
     .filter(p => majorQualifierEligible(p))
     .sort((a, b) =>
       ((openQualifierScore(b) * eventsCapMultiplier(b)) + Math.random() * 3) -
       ((openQualifierScore(a) * eventsCapMultiplier(a)) + Math.random() * 3));
-  takeQualified(open, out.length + counts.open, selected, out, 'open', sourceCounts);
+  const halfOpen = Math.floor(counts.open / 2);
+  takeQualified(open, out.length + halfOpen, selected, out, 'open', sourceCounts);
+  const mixedRemaining = counts.open - halfOpen;
+  if (mixedRemaining > 0) {
+    const mixed = pool.filter(p => !selected.has(p.id));
+    for (let i = mixed.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = mixed[i]; mixed[i] = mixed[j]; mixed[j] = t;
+    }
+    takeQualified(mixed, out.length + mixedRemaining, selected, out, 'mixed', sourceCounts);
+  }
 
   if (out.length < fieldSize) {
     const fallback = pool.slice().sort((a, b) =>
@@ -2834,15 +2851,28 @@ function selectRegularField(pool, fieldSize, year) {
   // Ranking bucket: 0.015 × eventsThisYear participation penalty + ±0.05 jitter.
   const rankPenalty = (p) => 0.009 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
-    ((b.skill - rankPenalty(b)) - (a.skill - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
+    ((b.skill * 1.5 - rankPenalty(b)) - (a.skill * 1.5 - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
   takeQualified(ranking, meritCount + rankingCount, selected, out);
+  // OPEN bucket — split 50/50 between score-weighted and uniform-random
+  // mixed seeding. See selectMajorField for the rationale; same WSOP/PGA
+  // hybrid composition applied to regulars.
   const open = pool
     .filter(p => regularQualifierEligible(p))
     .sort((a, b) =>
       ((regularEntryScore(b) * eventsCapMultiplier(b)) + Math.random() * 2.5) -
       ((regularEntryScore(a) * eventsCapMultiplier(a)) + Math.random() * 2.5));
-  takeQualified(open, meritCount + rankingCount + openCount, selected, out);
+  const halfOpen = Math.floor(openCount / 2);
+  takeQualified(open, meritCount + rankingCount + halfOpen, selected, out);
+  const mixedRemaining = openCount - halfOpen;
+  if (mixedRemaining > 0) {
+    const mixed = pool.filter(p => !selected.has(p.id));
+    for (let i = mixed.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = mixed[i]; mixed[i] = mixed[j]; mixed[j] = t;
+    }
+    takeQualified(mixed, meritCount + rankingCount + openCount, selected, out);
+  }
   if (out.length < fieldSize) {
     const fallback = pool.slice().sort((a, b) => (regularEntryScore(b) + b.skill * 1.5) - (regularEntryScore(a) + a.skill * 1.5));
     takeQualified(fallback, fieldSize, selected, out);
@@ -6131,8 +6161,11 @@ const DEFAULT_SIM_CONFIG = {
   // Field sizes (Yellow Jacket Tour Standard):
   //   Major: 1024 — prestige invitational; top finishers double as Main satellite winners
   //   Regular: 2048 — open weekly grind
-  //   Main: 25,000 — annual championship; capacity caps at the pool size
-  majorField: 1024, regularField: 2048, mainField: 25000,
+  //   Main: 128 — single $1M-purse championship (128 × $10k = $1.28M gross,
+  //                ~$1.24M prize pool after 3% rake). Players-Championship-style
+  //                invitational rather than WSOP mass field; satellite ladder
+  //                + direct-entry champ exemptions still apply.
+  majorField: 1024, regularField: 2048, mainField: 128,
   exemptionYears: 3,
   // SATELLITE / QUALIFIER MECHANIC: top-N finishers in every major earn a FREE Main
   // Event seat (no buy-in). Default 128 = top half of a 256-player major. With 4
@@ -6858,17 +6891,17 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   function playerBuyIn(p) {
     if (eventType === 'major') {
       const lastWin = preEventLastMajorWin.get(p.id);
-      // WAIVER ENFORCED — buyInsPaid forced to 0 for exempt seat (major champion exemption)
+      // WAIVER ENFORCED — buy-in forced to 0 (major champion exemption)
       if (lastWin != null && (year - lastWin) <= exemptionYearsCfg) return 0;
     }
     if (eventType === 'main') {
-      // WAIVER ENFORCED — buyInsPaid forced to 0 for exempt seat (main qualifier / satellite winner)
+      // WAIVER ENFORCED — buy-in forced to 0 (main qualifier / satellite winner)
       if (p.mainQualifierUntil === year) return 0;
       const lastMain = preEventLastMainWin.get(p.id);
-      // WAIVER ENFORCED — buyInsPaid forced to 0 for exempt seat (past Main champion within exemption window)
+      // WAIVER ENFORCED — buy-in forced to 0 (past Main champion within exemption window)
       if (lastMain != null && (year - lastMain) <= exemptionYearsCfg) return 0;
       const lastMaj = preEventLastMajorWin.get(p.id);
-      // WAIVER ENFORCED — buyInsPaid forced to 0 for exempt seat (major-champion direct-entry to Main)
+      // WAIVER ENFORCED — buy-in forced to 0 (major-champion direct-entry to Main)
       if (lastMaj != null && (year - lastMaj) <= exemptionYearsCfg) return 0;
     }
     return baseBuyIn;
@@ -6909,11 +6942,11 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     const seatCost = perPlayerBuyIns[idx];
     const isExempt = seatCost === 0;
     if (isExempt) {
-      // WAIVER ENFORCED — buyInsPaid forced to 0 for exempt seat
-      // (champion exemption / multi-year exemption / main qualifier seat /
-      // major-champion direct-entry seat). seatCost is already 0 from
-      // playerBuyIn(), but we make the no-op explicit at the accumulation
-      // site so the waiver is visible here, not only at the source.
+      // WAIVER ENFORCED — buy-in forced to 0
+      // (champion exemption / multi-year / main qualifier / satellite winner /
+      // major-champion direct-entry). seatCost is already 0 from playerBuyIn(),
+      // but we make the no-op explicit at the accumulation site so the waiver
+      // is visible here, not only at the source.
       p.buyInsPaid += 0;
     } else {
       p.buyInsPaid += seatCost;
@@ -6936,7 +6969,7 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     // get nothing, swamping ROI and EV signal).
     if (isNonMain) {
       if (isExempt) {
-        // WAIVER ENFORCED — buyInsPaid_nonMain forced to 0 for exempt seat
+        // WAIVER ENFORCED — buy-in forced to 0 (non-Main mirror)
         p.buyInsPaid_nonMain = (p.buyInsPaid_nonMain || 0) + 0;
       } else {
         p.buyInsPaid_nonMain = (p.buyInsPaid_nonMain || 0) + seatCost;
@@ -10042,7 +10075,7 @@ function init() {
     const productionDefaults = {
       poolSize: 25000, seasons: 3,
       majors: 12, regulars: 40, mains: 1,
-      majorField: 1024, regularField: 2048, mainField: 25000,
+      majorField: 1024, regularField: 2048, mainField: 128,
       mainQualifiersPerMajor: 512,
       payoutDecay: 0.74,
       buyInRegular: 100, buyInMajor: 1000, buyInMain: 10000,
