@@ -1953,12 +1953,9 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // that the AI's expectedHoneyEV behaves the same regardless of pot size,
   // which compresses champion-score outliers without flattening skill signal.
   const potValue = Math.min(CurrentStrokeCap * 2.0, strokes + currentBet + matched + (carryPot || 0));
-  // Honey is the smoothing drizzle only. expectedSkinEV is now measured directly
-  // from equity (adj) * skillFactor * 1.2. No arbitrary multiplier. Golf hand
-  // scores dominate; honey gently closes the wagering circuit. The 1.2 drizzle
-  // factor is the only constant — small enough that strong-equity hands push a
-  // little harder without polarizing the AI into saturation.
-  const expectedSkinEV = potValue * adj * skillFactor * 1.2;
+  // Honey is the smoothing drizzle only. expectedSkinEV = potValue * (adj - 0.5) * skillFactor.
+  // Pure equity advantage formula — no arbitrary static constant. Golf hand scores dominate.
+  const expectedSkinEV = potValue * (adj - 0.5) * skillFactor;
   const expectedHoneyEV = expectedSkinEV;
 
   // Local copies of the three decision thresholds — modifying these instead of
@@ -1976,13 +1973,84 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
     return Math.min(raw, remaining);
   }
 
+  // === EV TRACKING ===
+  // Compute the expected value of every action the actor could legally take at
+  // this decision point, then identify the optimal (highest-EV) candidate. The
+  // chosen-vs-optimal gap is the per-decision skill signal: a player who always
+  // selects the highest-EV option realizes 100% of available EV; a player who
+  // routinely picks the second- or third-best action loses EV proportional to
+  // their misjudgement. Aggregated across thousands of decisions per career,
+  // this produces a far purer skill metric than ROI/profit (which is
+  // contaminated by Main-event lottery variance).
+  //
+  // EV approximation (heuristic but principled):
+  //   fold      → 0  (forfeit pot, commit nothing more)
+  //   check     → adj × pot
+  //   call      → adj × (pot + toCall) − toCall
+  //   bet/raise → foldEq × pot + (1 − foldEq) × (adj × (pot + a) − (1−adj) × a)
+  function evOf(actionName, amount) {
+    if (actionName === 'fold') return 0;
+    if (actionName === 'check') return adj * pot;
+    if (actionName === 'call') return adj * (pot + toCall) - toCall;
+    const a = Math.max(0, +amount || 0);
+    const denom = Math.max(1, pot + a);
+    const foldEq = Math.max(0, Math.min(0.5, a / denom));
+    const evCalled = adj * (pot + a) - (1 - adj) * a;
+    return foldEq * pot + (1 - foldEq) * evCalled;
+  }
+  const candidates = [];
+  if (toCall === 0) {
+    candidates.push({ name: 'check', amount: 0, ev: evOf('check', 0) });
+    if (remaining > 0) {
+      [0.33, 0.67, 1.0].forEach(f => {
+        const amt = Math.min(remaining, Math.max(1, Math.round(pot * f)));
+        if (amt > 0) candidates.push({ name: 'bet', amount: amt, ev: evOf('bet', amt) });
+      });
+    }
+  } else {
+    candidates.push({ name: 'fold', amount: 0, ev: 0 });
+    candidates.push({ name: 'call', amount: 0, ev: evOf('call', 0) });
+    if (remaining > 0) {
+      [0.5, 1.0, 1.5].forEach(f => {
+        const amt = Math.min(remaining, Math.max(1, Math.round(pot * f)));
+        if (amt > 0) candidates.push({ name: 'raise', amount: amt, ev: evOf('raise', amt) });
+      });
+    }
+  }
+  let evOptimal = -Infinity;
+  for (const c of candidates) if (c.ev > evOptimal) evOptimal = c.ev;
+  if (!Number.isFinite(evOptimal)) evOptimal = 0;
+
+  // wrap(result) — augments the existing decision return value with evChosen
+  // and evOptimal so playBettingRound can record per-player EV stats.
+  function wrap(result) {
+    let evChosen = 0;
+    if (result.action === 'fold') evChosen = 0;
+    else if (result.action === 'check') {
+      const c = candidates.find(c => c.name === 'check');
+      evChosen = c ? c.ev : 0;
+    } else if (result.action === 'call') {
+      const c = candidates.find(c => c.name === 'call');
+      evChosen = c ? c.ev : 0;
+    } else if (result.action === 'bet' || result.action === 'raise') {
+      let best = null, bestDelta = Infinity;
+      for (const c of candidates) {
+        if (c.name !== result.action) continue;
+        const d = Math.abs(c.amount - (result.amount || 0));
+        if (d < bestDelta) { best = c; bestDelta = d; }
+      }
+      evChosen = best ? best.ev : evOf(result.action, result.amount);
+    }
+    return Object.assign({ evChosen, evOptimal }, result);
+  }
+
   if (toCall === 0) {
     // Option to check or bet
     if (adj > betThreshold && remaining > 0) {
       const sizeFactor = adj > 0.85 ? 1.0 : adj > 0.70 ? 0.67 : 0.33;
-      return { action: 'bet', amount: potSizedAmount(sizeFactor) };
+      return wrap({ action: 'bet', amount: potSizedAmount(sizeFactor) });
     }
-    return { action: 'check' };
+    return wrap({ action: 'check' });
   } else {
     // Fix #2: pot-odds-aware folding. Calibrated from season-sim A/B: `slack` of
     // 0.30 − foldThreshold (clamped ≥0) produced 41% preflop fold rate, 5% post-flop
@@ -1990,15 +2058,13 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
     // variants pushed preflop fold rate above 60% and scored champions above par.
     const reqEquity = toCall / (pot + toCall);
     const slack = Math.max(0, 0.30 - foldThreshold); // loose players get more overlay
-    if (adj < reqEquity - slack) return { action: 'fold' };
+    if (adj < reqEquity - slack) return wrap({ action: 'fold' });
     // Fix #5: pot-relative raise sizing when hand is premium.
-    // Uses the local raiseThreshold (modified by honeyEV above) — skilled players raise
-    // more readily when sitting on a fat pot with positive equity.
     if (adj > raiseThreshold && remaining > 0) {
       const sizeFactor = adj > 0.90 ? 1.5 : adj > 0.80 ? 1.0 : 0.5;
-      return { action: 'raise', amount: potSizedAmount(sizeFactor) };
+      return wrap({ action: 'raise', amount: potSizedAmount(sizeFactor) });
     }
-    return { action: 'call' };
+    return wrap({ action: 'call' });
   }
 }
 function makeRandomProfile() {
@@ -2067,9 +2133,19 @@ function estimateSkillRating(profile) {
 }
 
 function makeFreshStats() {
-  return { holesPlayed: 0, holesWon: 0, holesLost: 0, holesTied: 0, holesFolded: 0, handCounts: {}, totalScore: 0, matchesWon: 0, matchesLost: 0, strokesBetTotal: 0 };
+  // EV-tracking fields: per-decision performance against best-EV alternative.
+  //   evDecisions   — count of decisions made
+  //   evChosenSum   — Σ EV of the action actually taken
+  //   evOptimalSum  — Σ EV of the best available action at that decision
+  //   evLossSum     — Σ (evOptimal − evChosen), always ≥ 0 (perfect player → 0)
+  // averageEVRealization = −evLossSum / evDecisions  (closer to 0 = better poker)
+  return {
+    holesPlayed: 0, holesWon: 0, holesLost: 0, holesTied: 0, holesFolded: 0,
+    handCounts: {}, totalScore: 0, matchesWon: 0, matchesLost: 0, strokesBetTotal: 0,
+    evDecisions: 0, evChosenSum: 0, evOptimalSum: 0, evLossSum: 0,
+  };
 }
-function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, profileB, initialBet, firstToAct, carryPot = 0, gameContext = {}) {
+function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, profileB, initialBet, firstToAct, carryPot = 0, gameContext = {}, pA = null, pB = null) {
   let currentBet = initialBet || 0;
   const matched = {a: 0, b: 0};
   const acted = {a: false, b: false};
@@ -2082,13 +2158,22 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
   let folded = null;
   const street = community.length === 0 ? 'preflop' : community.length === 3 ? 'flop' : community.length === 4 ? 'turn' : 'river';
   const streetCap = streetCapFor(street, CurrentStrokeCap);
-  // Hot-loop optimization: evaluate hand + texture once per actor per street instead of
-  // inside every decideFor call. evaluate7 is the single most expensive function in the
-  // simulator (~50μs each); with up to 3 decisions per actor per street, this cuts
-  // hand evaluation work by 60–70% over the course of a full tour.
   const tex = community.length >= 3 ? boardTexture(community) : null;
   const aHand = community.length >= 3 ? evaluate7(aCards, community) : 0;
   const bHand = community.length >= 3 ? evaluate7(bCards, community) : 0;
+  // recordEV — credits per-decision EV stats to the right player, when player
+  // refs were threaded down. Pure no-op when pA / pB are absent (e.g. older
+  // call sites that haven't been updated yet), so this is fully backward-safe.
+  function recordEV(side, decision) {
+    const player = side === 'a' ? pA : pB;
+    if (!player || !player.stats) return;
+    const evC = +decision.evChosen || 0;
+    const evO = +decision.evOptimal || 0;
+    player.stats.evDecisions = (player.stats.evDecisions || 0) + 1;
+    player.stats.evChosenSum = (player.stats.evChosenSum || 0) + evC;
+    player.stats.evOptimalSum = (player.stats.evOptimalSum || 0) + evO;
+    player.stats.evLossSum = (player.stats.evLossSum || 0) + Math.max(0, evO - evC);
+  }
   for (let iter = 0; iter < 8; iter++) {
     const actor = toAct;
     const other = actor === 'a' ? 'b' : 'a';
@@ -2096,6 +2181,7 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     const profile = actor === 'a' ? profileA : profileB;
     const actorHand = actor === 'a' ? aHand : bHand;
     const d = decideFor(cards, community, currentBet, matched[actor], strokes, profile, matched[other], actorHand, tex, carryPot, gameContext);
+    recordEV(actor, d);
     if (typeof LabState !== 'undefined' && LabState.instrumentation && LabState.instrumentation.collector) {
       LabState.instrumentation.collector(street, d.action);
     }
@@ -2114,6 +2200,7 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
       if (strokes + currentBet >= streetCap) {
         const otherHand = other === 'a' ? aHand : bHand;
         const resp = decideFor(other === 'a' ? aCards : bCards, community, currentBet, matched[other], strokes, other === 'a' ? profileA : profileB, matched[actor], otherHand, tex, carryPot, gameContext);
+        recordEV(other, resp);
         if (resp.action === 'fold') { folded = other; break; }
         matched[other] = currentBet; acted[other] = true; break;
       }
@@ -2136,7 +2223,7 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     const initialBet = (s === 'preflop') ? 1 : 0;
     const firstToAct = startDealer === 'a' ? 'b' : 'a';
     const brT = SimPerf.enabled ? performance.now() : 0;
-    const br = playBettingRound(aCards, bCards, community, startDealer, strokes, pA.profile, pB.profile, initialBet, firstToAct, carryPot, gameContext);
+    const br = playBettingRound(aCards, bCards, community, startDealer, strokes, pA.profile, pB.profile, initialBet, firstToAct, carryPot, gameContext, pA, pB);
     SimPerf.add('bettingRound', brT);
     strokes = br.strokes;
     if (br.folded) { folded = br.folded; break; }
@@ -7030,12 +7117,30 @@ function computeEconomicsMetrics(pool, events) {
   };
 }
 
-// R² of linear fit wins ~ skill. Skill-explained fraction of variance in wins.
+// averageEVRealization — pure poker-skill metric. Mean per-decision EV gap
+// between the action a player TOOK and the highest-EV action they COULD have
+// taken at that decision point. Returned as the negative average loss so that
+// 0 = perfect play and more-negative = worse play (linearly increasing with
+// authored skill when the AI is calibrated correctly).
+//
+// Skill is no longer measured by ROI / total wins — those are contaminated by
+// Main Event lottery variance. EV realization is sampled at every betting
+// decision (thousands per career), making it a far purer signal.
+function averageEVRealization(p) {
+  if (!p || !p.stats) return 0;
+  const decisions = +p.stats.evDecisions || 0;
+  if (decisions <= 0) return 0;
+  const lossSum = +p.stats.evLossSum || 0;
+  return -(lossSum / decisions);
+}
+
+// R² of linear fit averageEVRealization ~ authoredSkill. Skill-explained
+// fraction of variance in per-decision EV performance.
 function computeVarianceDecomp(pool) {
   const n = pool.length;
   if (n < 2) return { skillR2: 0, luckR2: 1, meanWins: 0, stdWins: 0 };
   const xs = pool.map(p => p.skill);
-  const ys = pool.map(p => p.totalWins);
+  const ys = pool.map(p => averageEVRealization(p));
   const mx = xs.reduce((a,b)=>a+b,0)/n, my = ys.reduce((a,b)=>a+b,0)/n;
   let num = 0, dxSq = 0, dySq = 0;
   for (let i = 0; i < n; i++) {
@@ -7748,6 +7853,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('invariant.carryOverEnabled', true);
   cfgRow('scoring.honeyMagnitudeTamed', true);
   cfgRow('scoring.honeyNormalizationDivisor', 36);
+  cfgRow('skillMetricDefinition', 'average EV realization per decision (pure poker skill, not ROI)');
   cfgRow('ui.largeSimMode', LabState.config.largeSimMode ? 'enabled' : 'disabled');
   cfgRow('ai.thresholdCoupling.bet', 0.8);
   cfgRow('ai.thresholdCoupling.fold', 1.2);
