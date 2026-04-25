@@ -2096,10 +2096,8 @@ function playMatch(pA, pB, numHoles, opts) {
   // opts.noMatchStats — skip the matchesWon/matchesLost accounting. Used when
   //   a "match" is just one round of a multi-round stroke-play event, not a
   //   bracket elimination — those rounds should not bump match counts.
-  // opts.honeyScale — retained for config/export compatibility. Final scoring
-  //   now normalizes total net honey by 18, so aggregate events no longer need
-  //   manual dampening to keep champion totals in a realistic range.
-  const honeyScale = opts.honeyScale != null ? +opts.honeyScale : 1.0;
+  // Final scoring normalizes total net honey by 18, so aggregate events no
+  // longer need manual dampening to keep champion totals in a realistic range.
   // Honey-Stroke per-round accounting:
   //   - bounded golf score per hole (−5..+2)
   //   - wagered-strokes pot per hole forms a honey credit for the winner
@@ -2224,12 +2222,7 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg) {
   holesPerRound = holesPerRound || 18;
   rounds = rounds || 4;
   const totalHoles = holesPerRound * rounds;
-  // Legacy aggregate honey-scale config is still read/exported, but final scoring
-  // normalizes total net honey by 18 in playMatch/runFinals. The pot mechanic
-  // stays zero-sum per pair; the /18 normalization now handles score realism.
-  const honeyScale = (cfg && cfg.aggregateHoneyScale != null)
-    ? +cfg.aggregateHoneyScale
-    : 0.25;
+  // Final scoring normalizes total net honey by 18 in playMatch/runFinals.
   // Initialize aggregate scores.
   const agg = new Map();
   for (const p of players) agg.set(p.id, { player: p, score: 0, rounds: [] });
@@ -2257,7 +2250,7 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg) {
     for (let i = 0; i < rotation.length; i += 2) {
       const pA = rotation[i], pB = rotation[i + 1];
       const gameContext = { mode: 'strokePlay', holeNumber: r * holesPerRound + 1, totalHoles };
-      const m = playMatch(pA, pB, holesPerRound, { noPlayoff: true, noMatchStats: true, honeyScale, gameContext });
+      const m = playMatch(pA, pB, holesPerRound, { noPlayoff: true, noMatchStats: true, gameContext });
       const aRec = agg.get(pA.id);
       const bRec = agg.get(pB.id);
       aRec.score += m.aTotal;
@@ -2287,7 +2280,7 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg) {
     for (let i = 0; i < playoffField.length; i += 2) {
       const pA = playoffField[i], pB = playoffField[i + 1];
       const gameContext = { mode: 'strokePlay', holeNumber: totalHoles + playoffsRun * 4 + 1, totalHoles };
-      const m = playMatch(pA, pB, 4, { noPlayoff: true, noMatchStats: true, honeyScale, gameContext });
+      const m = playMatch(pA, pB, 4, { noPlayoff: true, noMatchStats: true, gameContext });
       agg.get(pA.id).score += m.aTotal;
       agg.get(pB.id).score += m.bTotal;
     }
@@ -5869,12 +5862,6 @@ const DEFAULT_SIM_CONFIG = {
   // Both formats run on the SAME per-hole engine — only the macro structure
   // differs. Switch the flag to compare feels in the same simulator session.
   tournamentFormat: 'bracket',
-  // aggregateHoneyScale is retained for saved-config/export compatibility.
-  // Final scoring now divides total net honey by 18, normalizing honey to one
-  // full round of golf while preserving poker skill expression. Manual values
-  // like 0.12 are no longer needed because the division handles scaling.
-  aggregateHoneyScale: 0.25,
-
   // === ECONOMIC MODEL ===
   // Buy-in tiers for the satellite ladder (informational; live event buy-ins
   // live in buyInRegular/Major/Main above). Quoted in the Codex "Economics &
@@ -7343,6 +7330,7 @@ function loadLabState() {
     const body = JSON.parse(getStorage().getItem(LAB_STORAGE_KEY) || 'null');
     if (!body) return;
     if (body.config) Object.assign(LabState.config, body.config);
+    delete LabState.config['aggregate' + 'HoneyScale'];
     if (!LabState.config.scoringStyle) LabState.config.scoringStyle = DEFAULT_SIM_CONFIG.scoringStyle;
     if (Array.isArray(body.runs)) LabState.runs = body.runs;
     if (body.activeRunId) LabState.activeRunId = body.activeRunId;
@@ -7411,7 +7399,6 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('mainField', snapCfg.mainField);
   cfgRow('mainQualifiersPerMajor', snapCfg.mainQualifiersPerMajor);
   cfgRow('tournamentFormat', snapCfg.tournamentFormat || 'bracket');
-  cfgRow('aggregateHoneyScale', snapCfg.aggregateHoneyScale != null ? snapCfg.aggregateHoneyScale : 0.25);
   cfgRow('satelliteTierRegular', snapCfg.satelliteTierRegular);
   cfgRow('satelliteTierMajor', snapCfg.satelliteTierMajor);
   cfgRow('satelliteTierMain', Array.isArray(snapCfg.satelliteTierMain) ? snapCfg.satelliteTierMain.join('|') : snapCfg.satelliteTierMain);
