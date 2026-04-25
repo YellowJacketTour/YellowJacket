@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v11";
+const APP_VERSION = "2026.04.25-v12";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -6858,13 +6858,17 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   function playerBuyIn(p) {
     if (eventType === 'major') {
       const lastWin = preEventLastMajorWin.get(p.id);
+      // WAIVER ENFORCED — buyInsPaid forced to 0 for exempt seat (major champion exemption)
       if (lastWin != null && (year - lastWin) <= exemptionYearsCfg) return 0;
     }
     if (eventType === 'main') {
+      // WAIVER ENFORCED — buyInsPaid forced to 0 for exempt seat (main qualifier / satellite winner)
       if (p.mainQualifierUntil === year) return 0;
       const lastMain = preEventLastMainWin.get(p.id);
+      // WAIVER ENFORCED — buyInsPaid forced to 0 for exempt seat (past Main champion within exemption window)
       if (lastMain != null && (year - lastMain) <= exemptionYearsCfg) return 0;
       const lastMaj = preEventLastMajorWin.get(p.id);
+      // WAIVER ENFORCED — buyInsPaid forced to 0 for exempt seat (major-champion direct-entry to Main)
       if (lastMaj != null && (year - lastMaj) <= exemptionYearsCfg) return 0;
     }
     return baseBuyIn;
@@ -6902,7 +6906,18 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   const isNonMain = eventType !== 'main';
   for (let idx = 0; idx < field.length; idx++) {
     const p = field[idx];
-    p.buyInsPaid += perPlayerBuyIns[idx];
+    const seatCost = perPlayerBuyIns[idx];
+    const isExempt = seatCost === 0;
+    if (isExempt) {
+      // WAIVER ENFORCED — buyInsPaid forced to 0 for exempt seat
+      // (champion exemption / multi-year exemption / main qualifier seat /
+      // major-champion direct-entry seat). seatCost is already 0 from
+      // playerBuyIn(), but we make the no-op explicit at the accumulation
+      // site so the waiver is visible here, not only at the source.
+      p.buyInsPaid += 0;
+    } else {
+      p.buyInsPaid += seatCost;
+    }
     p.eventsEntered++;
     p.eventsThisYear = (p.eventsThisYear || 0) + 1;
     if (eventType === 'major') p.majorsEntered++;
@@ -6920,7 +6935,12 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     // the 25k-field Main lottery (top-64 ITM cap means 99.7% of Main entrants
     // get nothing, swamping ROI and EV signal).
     if (isNonMain) {
-      p.buyInsPaid_nonMain = (p.buyInsPaid_nonMain || 0) + perPlayerBuyIns[idx];
+      if (isExempt) {
+        // WAIVER ENFORCED — buyInsPaid_nonMain forced to 0 for exempt seat
+        p.buyInsPaid_nonMain = (p.buyInsPaid_nonMain || 0) + 0;
+      } else {
+        p.buyInsPaid_nonMain = (p.buyInsPaid_nonMain || 0) + seatCost;
+      }
       p.eventsEntered_nonMain = (p.eventsEntered_nonMain || 0) + 1;
       if (prize > 0) p.prizeEarned_nonMain = (p.prizeEarned_nonMain || 0) + prize;
     }
