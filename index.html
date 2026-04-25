@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- HONEY-STROKE AGGREGATE + FORMAT-SPECIFIC HONEY DAMPENING IS NOW FINAL AND SHIP-READY -->
+<!-- HONEY-STROKE AGGREGATE + NET HONEY NORMALIZED BY 18 IS NOW FINAL AND SHIP-READY -->
 <!-- ECONOMIC & ANTI-SYBIL MODEL IS NOW FINAL AND SHIP-READY -->
 <!-- SMART REFRESH + PERSISTENT PROGRESS IS NOW FINAL AND SHIP-READY -->
 <html lang="en">
@@ -1165,7 +1165,7 @@ const SCORING_STYLES = {
     key: 'honey-stroke',
     name: 'Honey-Stroke',
     shortName: 'Honey-Stroke',
-    desc: 'Hand category sets a bounded golf score per hole (−5..+2). Wagered strokes form a honey pot taken by the hole winner; tied holes carry the pot to the next decisive hole. Net honey credits subtract from round total — winning pots improves your golf score.',
+    desc: 'Hand category sets a bounded golf score per hole (−5..+2). Wagered strokes form a honey pot taken by the hole winner; tied holes carry the pot to the next decisive hole. Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard.',
     useHoneyStroke: true,
     carryOverEnabled: true,
     honeyDivisor: 1,
@@ -2096,13 +2096,9 @@ function playMatch(pA, pB, numHoles, opts) {
   // opts.noMatchStats — skip the matchesWon/matchesLost accounting. Used when
   //   a "match" is just one round of a multi-round stroke-play event, not a
   //   bracket elimination — those rounds should not bump match counts.
-  // opts.honeyScale — scales the net-honey contribution to the round score.
-  //   Default 1.0 (full strength, used by bracket events). Aggregate events pass
-  //   cfg.aggregateHoneyScale (default 0.25) here to dampen the cumulative
-  //   honey-credit bias that arises when a champion plays multiple rotating
-  //   partners across 4 rounds. The per-hole honey-pot mechanic itself is
-  //   unchanged (pot still resolves zero-sum within each pair); only the
-  //   ROUND-SCORE EFFECT of the imbalance is scaled.
+  // opts.honeyScale — retained for config/export compatibility. Final scoring
+  //   now normalizes total net honey by 18, so aggregate events no longer need
+  //   manual dampening to keep champion totals in a realistic range.
   const honeyScale = opts.honeyScale != null ? +opts.honeyScale : 1.0;
   // Honey-Stroke per-round accounting:
   //   - bounded golf score per hole (−5..+2)
@@ -2110,8 +2106,8 @@ function playMatch(pA, pB, numHoles, opts) {
   //   - tied holes accumulate the pot into carryPot; next decisive hole's winner sweeps it
   //   - net honey credit = totalHoneyA − totalHoneyB (zero-sum: only imbalance moves the score)
   //
-  // Round total: roundA = totalGolfA − netHoneyA − carryLeftover
-  //              roundB = totalGolfB − netHoneyB − carryLeftover
+  // Round total: roundA = totalGolfA − (netHoneyA / 18)
+  //              roundB = totalGolfB − (netHoneyB / 18)
   // Winning more pots IMPROVES (reduces) your round score. Leftover end-of-round carry
   // applies equally to both players, shifting the floor but preserving order.
   let totalGolfA = 0, totalGolfB = 0;
@@ -2151,11 +2147,11 @@ function playMatch(pA, pB, numHoles, opts) {
     dealer = dealer === 'a' ? 'b' : 'a';
   }
   const computeTotals = () => {
-    const netHoneyA = (totalHoneyA - totalHoneyB) * honeyScale;
-    const netHoneyB = (totalHoneyB - totalHoneyA) * honeyScale;
+    const netHoneyA = totalHoneyA - totalHoneyB;
+    const netHoneyB = totalHoneyB - totalHoneyA;
     return {
-      a: totalGolfA - netHoneyA - carryPot,
-      b: totalGolfB - netHoneyB - carryPot,
+      a: totalGolfA - (netHoneyA / 18),
+      b: totalGolfB - (netHoneyB / 18),
     };
   };
   let totals = computeTotals();
@@ -2228,10 +2224,9 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg) {
   holesPerRound = holesPerRound || 18;
   rounds = rounds || 4;
   const totalHoles = holesPerRound * rounds;
-  // Honey dampening factor for aggregate events. Caller should pass the cfg in;
-  // we read aggregateHoneyScale (default 0.25) and forward it to playMatch on
-  // every round of every pairing. The pot mechanic stays zero-sum per pair —
-  // only the round-score impact of net imbalance is scaled.
+  // Legacy aggregate honey-scale config is still read/exported, but final scoring
+  // normalizes total net honey by 18 in playMatch/runFinals. The pot mechanic
+  // stays zero-sum per pair; the /18 normalization now handles score realism.
   const honeyScale = (cfg && cfg.aggregateHoneyScale != null)
     ? +cfg.aggregateHoneyScale
     : 0.25;
@@ -2359,8 +2354,8 @@ function runFinals(p1, p2) {
     const netA = p1HoneyTotal - p2HoneyTotal;
     const netB = p2HoneyTotal - p1HoneyTotal;
     return {
-      a: p1Scorecard - netA - carryPot,
-      b: p2Scorecard - netB - carryPot,
+      a: p1Scorecard - (netA / 18),
+      b: p2Scorecard - (netB / 18),
     };
   };
   let totals = computeFinalsTotals();
@@ -2686,8 +2681,8 @@ function composite(p) { return p.majorWins * 10 + p.mainWins * 5 + p.regularWins
 // Buzz knowledge base
 const BuzzKnowledge = {
   faqs: [
-    { cat: 'rules', q: 'What is the scoring system?', a: 'Honey-Stroke. Two layers: (1) the scorecard — your hand category sets a bounded golf score for the hole (Royal Flush −5 down to High Card +2). (2) the honey pot — wagered strokes form a pot that the hole winner takes as a honey credit. Round score = totalGolfScore − netHoneyCredits − carryLeftover. Lower wins.' },
-    { cat: 'rules', q: 'What does the honey credit do?', a: 'It SUBTRACTS from your round score. Winning more honey pots than your opponent improves your golf number 1:1. Net honey credits are zero-sum across both players, so balanced betting cancels out — only the imbalance moves the score.' },
+    { cat: 'rules', q: 'What is the scoring system?', a: 'Honey-Stroke. Two layers: (1) the scorecard — your hand category sets a bounded golf score for the hole (Royal Flush −5 down to High Card +2). (2) the honey pot — wagered strokes form a pot that the hole winner takes as a honey credit. Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard. Lower wins.' },
+    { cat: 'rules', q: 'What does the honey credit do?', a: 'It SUBTRACTS from your round score after normalization. Winning more honey pots than your opponent improves your golf number, but total net honey credits are divided by 18 first so scores stay realistic while poker skill remains decisive.' },
     { cat: 'rules', q: 'What happens on a tied hole?', a: 'Both players score 0 (par) and the wagered-strokes pot accumulates into a carry pot for the next decisive hole. Multiple consecutive ties stack; the winner of the next decisive hole sweeps the entire accumulated carry.' },
     { cat: 'rules', q: 'What happens on a fold?', a: 'The folder takes a small positive scorecard penalty scaled by street: Tea Box +2, Drive/Hazard +1, Putt 0. The bettor scores 0 to −2 AND takes the wagered-strokes pot as a honey credit — forcing a late-street fold is doubly valuable.' },
     { cat: 'rules', q: 'How many strokes can be bet per hole?', a: 'The event\'s stroke-cap controls the maximum total strokes per hole, partitioned across streets (25% by Tea Box, 50% by Drive, 75% by Hazard, 100% by Putt). Per-event caps: regular 6, major 10, main 6, main finals 10.' },
@@ -2844,8 +2839,8 @@ Views.dashboard = function() {
         ' ',
         el('span', { class: 'ui-sans', style: 'color: var(--green); font-size: 15px;' },
           el('b', null, champ.name), ' · ',
-          el('span', { class: 'mono', title: 'Final scores are 72-hole aggregate totals. Every pot transfers zero-sum honey credits that permanently adjust each player\'s scorecard. In aggregate events the net honey impact is scaled by cfg.aggregateHoneyScale (default 0.25) to keep champion totals in PGA-realistic range; bracket events run honey at full strength.', text: formatScore(lastMajor.champScore) }),
-          el('span', { class: 'score-info-icon', title: 'Final scores are 72-hole aggregate totals. Every pot transfers zero-sum honey credits that permanently adjust each player\'s scorecard. In aggregate events the net honey impact is scaled by cfg.aggregateHoneyScale (default 0.25) to keep champion totals in PGA-realistic range; bracket events run honey at full strength.', style: 'margin-left: 6px; font-size: 11px; color: var(--gold); cursor: help; user-select: none;', text: ' ⓘ' })
+          el('span', { class: 'mono', title: 'Final scores are 72-hole aggregate totals. Every pot transfers zero-sum honey credits. Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard, preserving poker skill while keeping champion totals PGA-realistic.', text: formatScore(lastMajor.champScore) }),
+          el('span', { class: 'score-info-icon', title: 'Final scores are 72-hole aggregate totals. Every pot transfers zero-sum honey credits. Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard, preserving poker skill while keeping champion totals PGA-realistic.', style: 'margin-left: 6px; font-size: 11px; color: var(--gold); cursor: help; user-select: none;', text: ' ⓘ' })
         )
       ));
       leftCard.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 12px; color: var(--fairway); margin-bottom: 8px;' },
@@ -3150,11 +3145,11 @@ Views.codex = function() {
       ]
     ),
     h3('Layer 2: The Honey Pot'),
-    p('Wagered strokes form the honey pot. The hole winner takes the entire pot as a honey credit that subtracts from their final score. Tied holes carry the pot forward to sweeten the next decisive hole. Multiple consecutive ties pile up; whichever player wins the next clean hole sweeps the entire accumulated carry.'),
+    p('Wagered strokes form the honey pot. The hole winner takes the entire pot as a honey credit. Tied holes carry the pot forward to sweeten the next decisive hole. Multiple consecutive ties pile up; whichever player wins the next clean hole sweeps the entire accumulated carry.'),
     h3('Layer 3: Folds (street-based concession)'),
     p('Folding is not flat. The folder takes a small positive scorecard penalty scaled by how late the fold came: Tea Box +2, Drive/Hazard +1, Putt 0. The bettor who forced the fold scores 0 to −2 AND takes the wagered-strokes pot. So forcing a late-street fold is doubly valuable: smaller scorecard hit on you, bigger pot in your basket.'),
     h3('Per-Round Score'),
-    p('roundScore = totalGolfScore − netHoneyCredits − carryLeftover. Net honey credits are zero-sum across both players in a hand, so balanced betting cancels and only imbalance moves the score. Lower wins.'),
+    p('finalRoundScore = totalGolfScorecard − (netHoney / 18). Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard. This normalizes honey to the natural unit of one 18-hole round, producing realistic and prestigious PGA-style champion scores while fully preserving poker skill expression. Lower wins.'),
     h3('Permanent Invariants'),
     ul([
       'honeyDivisor = 1 — net honey imbalance feeds the round total at full strength.',
@@ -3171,7 +3166,7 @@ Views.codex = function() {
     p('Default. Single-elimination bracket. Each round is a heads-up match: 9-hole rounds while the field is larger than 16, then 18-hole rounds until only 2 finalists remain. Those two play a 72-hole heads-up final (4 days × 18 holes). Champion is the last player standing.'),
     p('Drama-forward: every match has elimination pressure. One cooler can end your event. Rewards short-burst dominance.'),
     h3('Aggregate Stroke Play (PGA Masters feel)'),
-    p('Optional, configurable. Every player in the field plays 4 rounds × 18 holes = 72 holes. Each round you are paired with a fresh opponent (rotating-partner stroke play). Per-hole zero-sum honey credits still apply within each pairing. After 72 holes, the player with the lowest total net score is crowned. Cuts at 36 and 54 holes optionally trim the field.'),
+    p('Optional, configurable. Every player in the field plays 4 rounds × 18 holes = 72 holes. Each round you are paired with a fresh opponent (rotating-partner stroke play). Per-hole zero-sum honey credits still apply within each pairing, then total net honey is divided by 18 before scoring. After 72 holes, the player with the lowest total net score is crowned. Cuts at 36 and 54 holes optionally trim the field.'),
     p('Authentic golf-major feel. Champions earn it across 72 holes, not by surviving one bracket. Lower per-event variance, stronger long-run skill signal.'),
     h3('The Main Event (always hybrid in aggregate mode)'),
     p('When the engine runs aggregate format, the Main Event still uses bracket cuts to trim its 30,000-seat field down to 9–18 finalists, who then play a 72-hole aggregate stroke-play final among themselves. WSOP cuts → PGA-Masters final.'),
@@ -3737,12 +3732,12 @@ Views.rules = function() {
   const core = el('div', { class: 'card green', style: 'margin-top: 16px;' });
   core.appendChild(el('h2', { text: 'The Honey-Stroke System' }));
   core.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 13px; color: var(--text-primary); line-height: 1.55; margin-bottom: 12px;',
-    text: 'Heads-up Texas Hold\'em on a golf scorecard. Hand strength sets your per-hole golf score; bet sizing forms a side pot of strokes — the honey pot. Net honey wins subtract from your round total, so claiming the bigger pots improves your golf number.'
+    text: 'Heads-up Texas Hold\'em on a golf scorecard. Hand strength sets your per-hole golf score; bet sizing forms a side pot of strokes — the honey pot. Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard, so claiming bigger pots improves your golf number without runaway scores.'
   }));
 
   // Per-hole golf scorecard table
   core.appendChild(el('h3', { text: 'Per-hole scorecard (by hand category)', style: 'margin-top: 6px;' }));
-  core.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;', text: 'The winner of a decisive showdown scores the golf value of their own hand. The loser ALSO scores the golf value of their own hand — strong losing hands still post a respectable number. The wagered-strokes pot becomes a honey credit for the winner that subtracts from their round total.' }));
+  core.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;', text: 'The winner of a decisive showdown scores the golf value of their own hand. The loser ALSO scores the golf value of their own hand — strong losing hands still post a respectable number. The wagered-strokes pot becomes a honey credit for the winner; total net honey is divided by 18 before scoring.' }));
   const scoreTable = el('table');
   scoreTable.appendChild(el('thead', null, el('tr', null,
     el('th', { text: 'Hand category' }),
@@ -3783,7 +3778,7 @@ Views.rules = function() {
     'Every wager pours a drop of honey into the pot. Win the hand and the honey is yours; tie and it carries forward, sweetening the next pot. A bluff is a sting: a yellow jacket\'s feint that dares the opponent to stay. A successful sting takes the honey untouched. A called sting draws blood from your own stack. Bumble bees gather quietly; yellow jackets sting to claim the hive.'
   ));
   core.appendChild(rule('Per-round score',
-    'roundScore = totalGolfScore − netHoneyCredits − carryLeftover. Net honey credits are zero-sum across both players, so balanced betting cancels and only imbalance moves the score. Carry leftover (tied last hole(s) with no decisive break) applies equally to both players, shifting the floor without affecting who wins. Lower total wins the round.'
+    'finalRoundScore = totalGolfScorecard − (netHoney / 18). Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard. This normalizes honey to the natural unit of one 18-hole round, producing realistic and prestigious PGA-style champion scores while fully preserving poker skill expression. Lower total wins the round.'
   ));
   core.appendChild(rule('Tied holes carry',
     'When both players reach showdown with the same hand value, both score 0 (par) and the wagered-strokes pot accumulates into the carry pot for the next decisive hole. Multiple consecutive ties pile up; whichever player wins the next decisive hole sweeps the entire accumulated carry as part of their honey take.'
@@ -3804,7 +3799,7 @@ Views.rules = function() {
   // section becomes the live description; until then it describes the planned
   // structure. Wording locked exactly per design spec — do not paraphrase. ===
   core.appendChild(rule('Scoring the Honey-Stroke Final',
-    'Regulars and Majors are decided by a full 72-hole aggregate score — four complete rounds of 18 holes. The Main Event follows a WSOP-style mass field with cuts, leading to a final 72-hole aggregate among the surviving qualifiers. Every hole still transfers zero-sum honey credits. Your pot control directly adjusts your final scorecard. The player with the lowest total net score after 72 holes is crowned champion.'
+    'Regulars and Majors are decided by a full 72-hole aggregate score — four complete rounds of 18 holes. The Main Event follows a WSOP-style mass field with cuts, leading to a final 72-hole aggregate among the surviving qualifiers. Every hole still transfers zero-sum honey credits, and total net honey is divided by 18 before being subtracted from the golf scorecard. The player with the lowest total net score after 72 holes is crowned champion.'
   ));
   core.appendChild(rule('Legendary Under-Par Doubles',
     'It is both mathematically possible and exceptionally rare for multiple players to finish a 72-hole final under par. When this happens, the match enters Yellow Jacket lore. It is the ultimate sign of true masters pushing each other to greatness — the highest possible honor short of wearing the Yellow Jacket itself.'
@@ -5874,15 +5869,10 @@ const DEFAULT_SIM_CONFIG = {
   // Both formats run on the SAME per-hole engine — only the macro structure
   // differs. Switch the flag to compare feels in the same simulator session.
   tournamentFormat: 'bracket',
-  // aggregateHoneyScale damps honey accumulation in 72-hole aggregate events only.
-  // In aggregate format the champion plays 4 rotating-partner rounds, accumulating
-  // net honey credits against weaker partners — without dampening, this drives
-  // champions to ~−77 strokes (catastrophically deep under par). Scaling the net
-  // honey contribution by 0.25 keeps honey strategically meaningful (still zero-
-  // sum per pair, still influences round outcomes) while bringing aggregate
-  // champion totals into the PGA-realistic −15 to −25 band. Bracket events run
-  // at full 1.0 strength because their 72-hole heads-up final is skill-matched
-  // and honey is naturally near zero-sum. Tune via the simulator slider.
+  // aggregateHoneyScale is retained for saved-config/export compatibility.
+  // Final scoring now divides total net honey by 18, normalizing honey to one
+  // full round of golf while preserving poker skill expression. Manual values
+  // like 0.12 are no longer needed because the division handles scaling.
   aggregateHoneyScale: 0.25,
 
   // === ECONOMIC MODEL ===
@@ -7931,12 +7921,9 @@ function renderConfigPanel(panel, mode) {
     text: 'Bracket: single-elim, 9-hole rounds → 18-hole rounds → 72-hole heads-up final. Aggregate: every player plays 4 rounds × 18 holes with rotating partners; lowest 72-hole net total wins. The Main Event in aggregate mode uses bracket cuts down to a 16-player final, then those 16 play the 72-hole aggregate.'
   }));
 
-  // Honey-scale slider: only meaningful when format = aggregate. We render it
-  // unconditionally because (a) it's a permanent config that gets exported to
-  // CSV, and (b) users switch format frequently — hiding the slider would
-  // produce a confused experience when they flip back. Range 0..1 in 0.05 steps;
-  // bracket events ignore it (always run at 1.0). Default 0.25 yields PGA-
-  // realistic aggregate champion scores (~−15 to −25).
+  // Honey-scale slider: retained for config/export continuity. Final scoring
+  // divides total net honey by 18, so manual dampening values like 0.12 are no
+  // longer needed to keep aggregate champion scores realistic.
   appendSliderControl(evSec, {
     key: 'aggregateHoneyScale',
     label: 'Honey scale (agg)',
@@ -7945,7 +7932,7 @@ function renderConfigPanel(panel, mode) {
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'Aggregate-only honey dampening. 1.0 = full strength (champions land deep under par from honey accumulation across rotating partners). 0.25 = PGA-realistic (~−15 to −25 in majors). 0.0 = honey ignored entirely; aggregate scores reflect only the per-hole golf scorecard. Bracket events ignore this slider.'
+    text: 'Total net honey credits are now divided by 18 before being subtracted from the golf scorecard, normalizing honey to one full round of golf. This keeps PGA-style champion scores realistic while preserving poker skill expression; manual dampening values like 0.12 are no longer needed because the division handles scaling.'
   }));
 
   const simpleCfg = [
@@ -8029,7 +8016,7 @@ function renderConfigPanel(panel, mode) {
   scoreSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); line-height: 1.5;',
-    text: 'Hand category sets a bounded per-hole golf score (−5..+2). Wagered strokes form a honey pot; the hole winner takes the pot, ties carry it forward. Net honey credit subtracts from round total — winning pots improves your score. Honey divisor and carry-over are permanent invariants.'
+    text: 'Hand category sets a bounded per-hole golf score (−5..+2). Wagered strokes form a honey pot; the hole winner takes the pot, ties carry it forward. Total net honey credits are divided by 18 before scoring. Honey divisor and carry-over are permanent invariants.'
   }));
 
   // Quick-load audit configuration: Yellow Jacket Tour Standard at clean-research
