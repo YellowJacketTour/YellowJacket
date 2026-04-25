@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v2";
+const APP_VERSION = "2026.04.25-v3";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -9692,6 +9692,27 @@ function init() {
   // to read it again.
   if (LabState.config && LabState.config.ai && 'honeyEVMultiplier' in LabState.config.ai) {
     delete LabState.config.ai.honeyEVMultiplier;
+  }
+  // One-time production-defaults migration — runs when APP_VERSION changes so
+  // saved configs from older builds pick up the latest production values for
+  // keys we explicitly want everyone on. Custom user values for OTHER keys are
+  // preserved (only the listed keys are force-overwritten). The version flip
+  // also fires the smart-refresh banner below.
+  if (savedVersion && savedVersion !== APP_VERSION && LabState.config) {
+    const productionDefaults = {
+      poolSize: 25000, seasons: 3,
+      majors: 12, regulars: 40, mains: 1,
+      majorField: 1024, regularField: 2048, mainField: 25000,
+      mainQualifiersPerMajor: 512,
+      payoutDecay: 0.74,
+      buyInRegular: 100, buyInMajor: 1000, buyInMain: 10000,
+      rakePercent: 0.03,
+      satelliteTierRegular: 15,
+      satelliteTierMajor: 150,
+      satelliteTierMain: [500, 1500, 4000, 5000],
+    };
+    Object.assign(LabState.config, productionDefaults);
+    toast('Production defaults updated for new build', 3500);
   }
   // Ensure the unified bundle is in sync after any legacy-path restore so the
   // next save immediately writes the canonical key.
