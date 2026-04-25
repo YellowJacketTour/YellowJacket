@@ -1706,10 +1706,10 @@ function golfScoreFromHandValue(hv) {
   if (cat === 5) return (k1 >= 10 ? -2 : -1); // Flush: T-high or better → strong flush (loosened)
   if (cat === 4) return (k1 >= 9  ? -2 : -1); // Straight: 9-high or better → strong (loosened)
   if (cat === 3) return -1;                   // Three of a Kind — flat birdie
-  if (cat === 2) return (k1 >= 11 ? -1 : 0);  // Two Pair: top pair J+ → birdie, else par (loosened)
-  if (cat === 1) return (k1 >= 10 ? 0 : 1);   // Pair: TT+ holds par; under-tens bogey (loosened)
+  if (cat === 2) return (k1 >= 9 ? -1 : 0);   // Two Pair: top pair 9+ → birdie, else par (loosened)
+  if (cat === 1) return (k1 >= 9 ? 0 : 1);    // Pair: 99+ holds par; under-nines bogey (loosened)
   // High Card
-  return (k1 >= 11 ? 1 : 2);                  // J-high or better → +1 bogey; rest → +2 double (loosened)
+  return (k1 >= 10 ? 1 : 2);                  // T-high or better → +1 bogey; rest → +2 double (loosened)
 }
 
 const PREFLOP_EQUITY = {
@@ -2016,9 +2016,9 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // have positive equity in a meaningful pot, and the opposite when they're behind.
   // Authored skill (via skillFactor) gates the application — noisy bottom-tier
   // players see no threshold movement.
-  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 6.5;
-  const potValue = Math.min(CurrentStrokeCap * 3.6, strokes + currentBet + matched + (carryPot || 0));
-  // honeyEVMultiplier: 6.5 — final production tuning. Polarizes skilled-player
+  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 3.2;
+  const potValue = Math.min(CurrentStrokeCap * 2.5, strokes + currentBet + matched + (carryPot || 0));
+  // honeyEVMultiplier: 3.2 — final production tuning. Polarizes skilled-player
   // aggression so they push harder when ahead and fold faster when behind, letting
   // the bounded golf scorecard compound a stronger skill signal across rounds.
   // This strengthens the skill signal above the prior 4.2 setting; values <3.0
@@ -7757,7 +7757,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('invariant.carryOverEnabled', true);
   cfgRow('scoring.netHoneyNormalization', 'netHoney/18');
   cfgRow('scoring.honeyMagnitudeTamed', true);
-  cfgRow('ai.honeyEVMultiplier', 6.5);
+  cfgRow('ai.honeyEVMultiplier', 3.2);
   cfgRow('ai.thresholdCoupling.bet', 0.8);
   cfgRow('ai.thresholdCoupling.fold', 1.2);
   cfgRow('ai.thresholdCoupling.raise', 0.6);
