@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none';">
 <meta name="referrer" content="no-referrer">
-<title>Yellow Jacket Tour · Model B</title>
+<title>Yellow Jacket Tour · Stroke-Honey Edition</title>
 <style>
   :root {
     /* --- raw palette (never changes between themes) --- */
@@ -744,7 +744,7 @@
       </svg>
       <div>
         <div class="brand-name">Yellow Jacket</div>
-        <div class="brand-sub">TOUR · MODEL B</div>
+        <div class="brand-sub">TOUR · STROKE-HONEY</div>
       </div>
     </div>
 
@@ -913,10 +913,10 @@ const SUITS = ['S','H','D','C'];
 const SUIT_GLYPH = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const RANK_NAMES = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
 const CATEGORY_NAMES = ['High Card','One Pair','Two Pair','Three of a Kind','Straight','Flush','Full House','Four of a Kind','Straight Flush','Royal Flush'];
-// Model B variants: same poker engine, different golf-conversion ladders.
-// golfNameForScore maps a STROKE SCORE to its golf term — it is NOT indexed by hand category.
-// This is because different scoring styles map the same hand to different scores (e.g. HC wins
-// -1 in Model B but 0 in HC=Par), so the golf label has to come from the score value, not the hand.
+// golfNameForScore maps a STROKE SCORE to its golf term — it is NOT indexed by hand category,
+// because the same hand can post different scores depending on kicker rank (e.g. a Pair with
+// JJ posts 0/par but with 33 posts +1/bogey under the Stroke-Honey scorecard mapping). The
+// golf label always derives from the resolved per-hole score.
 //   0 = Par · -1 = Birdie · -2 = Eagle · -3 = Albatross · -4 = Condor · -5 = Ostrich
 //   -6 = Phoenix · -7 = Dragon · -8 = Paragon · -9 = Zenith · -10 or deeper = Hole-in-One
 //   +1 = Bogey · +2 = Double Bogey · +3 = Triple Bogey · +4+ = Snowman
@@ -1273,7 +1273,7 @@ function handK1(hv) { return (hv >>> 20) & 0xF; }
 // now lives in playHole's stroke-honey path (see below).
 
 // =====================================================================================
-// STROKE-SKINS scoring: hand-category → bounded golf-style hole score.
+// STROKE-HONEY scoring: hand-category → bounded golf-style hole score.
 // =====================================================================================
 //
 // Maps a packed handValue (from evaluate7) to a per-hole golf score in the range
@@ -1296,8 +1296,8 @@ function handK1(hv) { return (hv >>> 20) & 0xF; }
 // Calibrated against expected hand-category frequencies for 7-card hold'em:
 // approximately 17% HC, 44% Pair, 23% TwoPair, 5% Trips, 4.5% Straight, 3% Flush,
 // 2.5% FullHouse, ~0.2% Quads+. The premium kicker buckets shift the mode of the
-// scorecard distribution to "near par" rather than "always slightly negative" as
-// in Model B, while still rewarding genuine strength.
+// scorecard distribution to "near par" rather than uniformly below par, while still
+// rewarding genuine strength with eagle/albatross territory.
 function golfScoreFromHandValue(hv) {
   const cat = hv >>> 24;            // hand category 0..9
   const k1 = (hv >>> 20) & 0xF;     // primary kicker rank (2..14), used for fine buckets
@@ -1610,7 +1610,7 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // post-equity estimate (skilled players' lower noise still gives them sharper EV).
   adj = Math.max(0.01, Math.min(1.0, adj + (Math.random() - 0.5) * profile.noise));
 
-  // === ELEGANT STROKE-SKINS AI UPGRADE ===
+  // === STROKE-HONEY AI: THRESHOLD-COUPLED HONEY EV ===
   // Couple expectedHoneyEV directly to the CORE decision thresholds (bet / fold / raise)
   // rather than mutating adj downstream. The previous adj-only patches failed because
   // by the time adj was being adjusted, the threshold checks below had already been
@@ -1623,7 +1623,13 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // players see no threshold movement.
   const carry = 0; // carryPot not threaded through to decideFor; defaults to 0 (minor under-count when ties have stacked)
   const potValue = strokes + currentBet + matched + (carry || 0);
-  const expectedHoneyEV = potValue * (adj - 0.5) * skillFactor * 3.0;
+  // honeyEVMultiplier: 3.8 — bumped from 3.0 to strengthen the skill signal at high
+  // pool sizes, where the larger Main field washes out individual-match variance.
+  // Higher multiplier polarizes skilled-player aggression more sharply: they push
+  // harder when ahead, fold faster when behind, leaving room for the bounded golf
+  // scorecard to compound across rounds. Tuning this knob trades skill-expression
+  // (skillR²) against per-hand variance — keep within [2.5, 4.5].
+  const expectedHoneyEV = potValue * (adj - 0.5) * skillFactor * 3.8;
 
   // Local copies of the three decision thresholds — modifying these instead of
   // profile.* keeps the player object immutable across decisions in the same hand.
@@ -5555,6 +5561,18 @@ function computeEconomicsMetrics(pool, events) {
     }
     if (e.type === 'major') totalExemptSeats += (e.exemptSeats || 0);
   }
+  // Satellite / Main-qualifier accounting — total free Main seats awarded over the run
+  // and per-Main average. The waived buy-in value (qualifier seats × buyInMain) tells
+  // you how much economic value flowed through the satellite system.
+  let totalMainQualifierSeats = 0;
+  let mainEventCount = 0;
+  for (const e of events) {
+    if (e.type === 'main') {
+      mainEventCount++;
+      totalMainQualifierSeats += (e.mainQualifierSeats || 0);
+    }
+  }
+  const avgMainQualifierSeats = mainEventCount > 0 ? totalMainQualifierSeats / mainEventCount : 0;
   const avgPurseByType = {
     major: countByType.major ? purseByType.major / countByType.major : 0,
     regular: countByType.regular ? purseByType.regular / countByType.regular : 0,
@@ -5648,6 +5666,8 @@ function computeEconomicsMetrics(pool, events) {
     yoyGrowth, biggestSinglePayout,
     // Benchmark vs real PGA/WSOP economics
     avgPurseByType, avgWinnerByType, purseByType, winnerByType, sponsorByType, totalExemptSeats,
+    // Satellite / Main-qualifier system
+    totalMainQualifierSeats, avgMainQualifierSeats, mainEventCount,
   };
 }
 
@@ -6319,7 +6339,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('scoringStyle', 'stroke-honey');
   cfgRow('invariant.honeyDivisor', 1);
   cfgRow('invariant.carryOverEnabled', true);
-  cfgRow('ai.honeyEVMultiplier', 3.0);
+  cfgRow('ai.honeyEVMultiplier', 3.8);
   cfgRow('ai.thresholdCoupling.bet', 0.8);
   cfgRow('ai.thresholdCoupling.fold', 1.2);
   cfgRow('ai.thresholdCoupling.raise', 0.6);
@@ -6450,6 +6470,11 @@ function _exportRunToCSVImpl(snap) {
     rows.push(['sponsorPurseMajor', fx(sp.major, 2)]);
     rows.push(['sponsorPurseRegular', fx(sp.regular, 2)]);
     rows.push(['sponsorPurseMain', fx(sp.main, 2)]);
+    // Satellite system — free-Main-seat awards via the major-as-satellite mechanic
+    rows.push(['totalMainQualifierSeats', e.totalMainQualifierSeats || 0]);
+    rows.push(['avgMainQualifierSeatsPerMain', fx(e.avgMainQualifierSeats, 2)]);
+    const buyInMain = (snapCfg.buyInMain != null ? snapCfg.buyInMain : 0);
+    rows.push(['totalSatelliteValueWaived', fx((e.totalMainQualifierSeats || 0) * buyInMain, 2)]);
   }
   if (m.ciData) {
     rows.push([]);
@@ -6806,14 +6831,15 @@ function renderConfigPanel(panel, mode) {
     ['seasons', 'Seasons to run', 1, 100, 1],
   ];
   const advancedCfg = [
-    ['poolSize', 'Pool size', 200, 50000, 50],
+    ['poolSize', 'Pool size', 200, 100000, 100],
     ['seasons', 'Seasons', 1, 100, 1],
     ['majors', 'Majors/yr', 0, 24, 1],
     ['regulars', 'Regulars/yr', 0, 365, 1],
     ['mains', 'Main/yr', 0, 24, 1],
     ['majorField', 'Major field', 32, 2048, 32],
     ['regularField', 'Reg field', 16, 2048, 16],
-    ['mainField', 'Main field', 128, 32768, 128],
+    ['mainField', 'Main field', 128, 100000, 128],
+    ['mainQualifiersPerMajor', 'Main satellites/major', 0, 256, 4],
     ['exemptionYears', 'Exempt yrs', 0, 20, 1],
     ['regularStrokeCap', 'Reg cap', 1, 10, 1],
     ['majorStrokeCap', 'Major cap', 1, 10, 1],
@@ -6822,14 +6848,36 @@ function renderConfigPanel(panel, mode) {
     ['repeatRuns', 'CI repeats', 1, 20, 1],
   ];
   const intCfg = mode === 'advanced' ? advancedCfg : simpleCfg;
+  // Pool-status indicator inserted directly below the poolSize slider so users see
+  // when their config doesn't match the existing pool. Updated each time the slider
+  // moves via the onChange callback below.
+  let poolStatus = null;
+  const updatePoolStatus = () => {
+    if (!poolStatus) return;
+    const cfgPool = (LabState.config.poolSize || 0);
+    const livePool = (TourState.pool && TourState.pool.length) || 0;
+    if (cfgPool === livePool) {
+      poolStatus.style.color = 'var(--text-secondary)';
+      poolStatus.textContent = '✓ Current pool: ' + livePool.toLocaleString() + ' players (matches config)';
+    } else {
+      poolStatus.style.color = 'var(--gold)';
+      poolStatus.textContent = '⚠ Pool will rebuild on next Run · current: ' + livePool.toLocaleString() + ' → cfg: ' + cfgPool.toLocaleString() + ' · WIPES career history';
+    }
+  };
   for (const [key, label, min, max, step] of intCfg) {
     appendSliderControl(evSec, {
       key, label, min, max, step,
       onChange: (v) => {
         updateRuntimeEstimate();
         if (key === 'regularStrokeCap') setStrokeCap(v);
+        if (key === 'poolSize') updatePoolStatus();
       }
     });
+    if (key === 'poolSize' && mode === 'advanced') {
+      poolStatus = el('div', { class: 'ui-sans', style: 'font-size: 10px; margin: -4px 0 8px 90px; font-style: italic;' });
+      evSec.appendChild(poolStatus);
+      updatePoolStatus();
+    }
   }
   if (mode === 'advanced') {
     evSec.appendChild(el('div', {
@@ -7118,6 +7166,35 @@ async function simulatorRunClicked() {
   try {
     const cfg = JSON.parse(JSON.stringify(LabState.config));
     const repeats = Math.max(1, Math.min(20, cfg.repeatRuns || 1));
+
+    // Pool / cfg mismatch guard. The single-run path uses TourState.pool which is
+    // built once at startup (or via "Rebuild pool"). If the user adjusted the
+    // poolSize slider since then, the pool is still the OLD size and the sim
+    // would silently run on a smaller field than the cfg claims. Detect and
+    // confirm before silently dropping the user's intent. CI mode (repeats > 1)
+    // is exempt because runLabSession builds its own fresh pool per repeat.
+    if (repeats === 1 && TourState.pool && TourState.pool.length !== cfg.poolSize) {
+      const have = TourState.pool.length.toLocaleString();
+      const want = (cfg.poolSize || 0).toLocaleString();
+      const msg = 'Pool size mismatch.\n\n'
+        + 'Your config wants ' + want + ' players, but the existing pool has ' + have + '.\n\n'
+        + 'Rebuild the pool to ' + want + ' players now? This wipes ALL career history '
+        + '(seasons, events, player stats, legendary moments, saved runs) and starts fresh.\n\n'
+        + 'Click Cancel to abort the run instead so you can keep your career.';
+      if (!confirm(msg)) {
+        toast('Run cancelled — pool size unchanged at ' + have);
+        return;
+      }
+      TourState.pool = buildPoolFromConfig(cfg);
+      TourState.seasons = [];
+      TourState.currentSeason = 0;
+      BuzzKnowledge.moments = [];
+      LabState.runs = [];
+      LabState.activeRunId = null;
+      saveState(); saveLabState();
+      toast('Pool rebuilt · ' + TourState.pool.length.toLocaleString() + ' players ready');
+    }
+
     if (repeats === 1) {
       // Normal single-run path: appends to TourState, builds career.
       const progress = (info) => {
