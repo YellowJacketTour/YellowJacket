@@ -6056,20 +6056,20 @@ const DEFAULT_SIM_CONFIG = {
   // field so the Main is competitive selection (a real annual qualifier), not a
   // pure "every player plays" lottery. Real WSOP Main fields ~10k entrants from a
   // worldwide pool of millions — we model that ratio at simulator scale.
-  poolSize: 30000, seasons: 3,
-  majors: 4, regulars: 8, mains: 1,
+  poolSize: 25000, seasons: 3,
+  majors: 12, regulars: 40, mains: 1,
   // Field sizes (Yellow Jacket Tour Standard):
-  //   Major: 992 — prestige invitational; top finishers double as Main satellite winners
+  //   Major: 1024 — prestige invitational; top finishers double as Main satellite winners
   //   Regular: 2048 — open weekly grind
-  //   Main: 30,000 — annual championship; capacity caps at the pool size
-  majorField: 992, regularField: 2048, mainField: 30000,
+  //   Main: 25,000 — annual championship; capacity caps at the pool size
+  majorField: 1024, regularField: 2048, mainField: 25000,
   exemptionYears: 3,
   // SATELLITE / QUALIFIER MECHANIC: top-N finishers in every major earn a FREE Main
   // Event seat (no buy-in). Default 128 = top half of a 256-player major. With 4
   // majors per year that's up to 512 qualifier seats per Main — about 1.7% of a 30k
   // Main field. Models WSOP satellite economics: cheap-effort path to the Main is
   // "win deep in a major"; expensive path is paying buyInMain at the door.
-  mainQualifiersPerMajor: 128,
+  mainQualifiersPerMajor: 512,
   // TOURNAMENT FORMAT — switches between two structurally different event types:
   //   'bracket' (default, WSOP feel): single-elim bracket. 9-hole rounds while
   //     field > 16, then 18-hole rounds until 2 remain, then 72-hole heads-up
@@ -6095,7 +6095,7 @@ const DEFAULT_SIM_CONFIG = {
   // Qualification" subsection so players see the ladder structure.
   satelliteTierRegular: 15,           // Tier 1: $15 entry, awards regular cash
   satelliteTierMajor:   150,          // Tier 2: $150 entry, awards major cash
-  satelliteTierMain:    [500, 1500, 4000], // Tier 3 ladder: $500 → $1,500 → $4,000 → Main seat
+  satelliteTierMain:    [500, 1500, 4000, 5000], // Tier 3 ladder: $500 → $1,500 → $4,000 → $5,000 → Main seat
   // Progressive requirement: a player must have cashed in a lower-tier event to
   // unlock the next tier. Implemented in this offline sim by re-using existing
   // event types as progression proxies — cashing in regulars counts as Tier-1
@@ -6147,7 +6147,7 @@ const DEFAULT_SIM_CONFIG = {
   // Main rake is ~6%, real PGA tour is effectively 0% (sponsor-funded). 3% is the
   // calibrated midpoint that makes skill expression visible at typical run lengths.
   rakePercent: 0.03,
-  payoutDecay: 0.70,       // geometric decay per ITM position (lower = flatter curve)
+  payoutDecay: 0.74,       // geometric decay per ITM position (lower = flatter curve)
   // Run
   seed: 0, // 0 means unseeded
   label: '',
