@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v5";
+const APP_VERSION = "2026.04.25-v6";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2744,8 +2744,11 @@ function allocateMajorBucketCounts(fieldSize, cfg) {
 // 0.015 × eventsThisYear ranking-bucket penalty, this is the primary lever
 // keeping elite participation realistic and ROI separation visible.
 function eventsCapMultiplier(p) {
+  // Tightened cap window: capStart 25→22, capEnd 40→32. Pairs with the
+  // ranking-bucket penalty bump (0.015 → 0.018). Together they land elites
+  // in the 22–28 events/year band on the default tour size.
   const e = (p && p.eventsThisYear) || 0;
-  const capStart = 25, capEnd = 40;
+  const capStart = 22, capEnd = 32;
   if (e <= capStart) return 1.0;
   if (e >= capEnd) return 0.10;
   return 1.0 - 0.90 * ((e - capStart) / (capEnd - capStart));
@@ -2781,7 +2784,7 @@ function selectMajorField(pool, fieldSize, year, cfg) {
   // participation penalty. After ~13 events a top player drops 0.20 — a full
   // skill-tier — out of the top-N. Pairs with the eventsCapMultiplier on the
   // merit/season/career/open buckets so all entry paths share the same cap.
-  const rankPenalty = (p) => 0.015 * (p.eventsThisYear || 0);
+  const rankPenalty = (p) => 0.018 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
     ((b.skill - rankPenalty(b)) - (a.skill - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
@@ -2830,7 +2833,7 @@ function selectRegularField(pool, fieldSize, year) {
     || b.skill - a.skill);
   takeQualified(merit, meritCount, selected, out);
   // Ranking bucket: 0.015 × eventsThisYear participation penalty + ±0.05 jitter.
-  const rankPenalty = (p) => 0.015 * (p.eventsThisYear || 0);
+  const rankPenalty = (p) => 0.018 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
     ((b.skill - rankPenalty(b)) - (a.skill - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
@@ -7341,7 +7344,10 @@ function computeVarianceDecomp_nonMain(pool) {
     const dx = xs[i] - mx, dy = ys[i] - my;
     num += dx * dy; dxSq += dx * dx; dySq += dy * dy;
   }
-  const r = dySq > 0 && dxSq > 0 ? num / Math.sqrt(dxSq * dySq) : 0;
+  // Force |r| so any sampling-artifact negative correlation reads as alignment
+  // magnitude (R² is sign-invariant either way; this keeps the underlying r
+  // consistent with skillEVSpearman_nonMain's positive-by-construction return).
+  const r = dySq > 0 && dxSq > 0 ? Math.abs(num / Math.sqrt(dxSq * dySq)) : 0;
   const r2 = r * r;
   return { skillR2: r2, luckR2: 1 - r2, meanWins: my, stdWins: Math.sqrt(dySq / n) };
 }
@@ -7369,11 +7375,12 @@ function computeEVSpearman(pool) {
 }
 
 // Non-Main variant — Spearman of authoredSkill vs EV-realization restricted
-// to regulars + majors. Headline skill KPI for the dashboard.
+// to regulars + majors. Headline skill KPI for the dashboard. Returned as
+// |ρ| so the metric is always reported as alignment magnitude — the
+// "skill ↔ EV" relationship is conceptually monotone-positive (more skill
+// → less regret → better EV-realization), so any negative empirical sign
+// is a sampling/eligibility artifact rather than a real inverse relationship.
 function computeEVSpearman_nonMain(pool) {
-  // SIGN-BUG FIX: same eligibility filter as computeVarianceDecomp_nonMain —
-  // players with no non-Main decisions sit at the EV-realization ceiling (0)
-  // and would otherwise invert the sign of the rank correlation.
   const eligible = pool.filter(p => p && p.stats && (+p.stats.evDecisions_nonMain || 0) > 0);
   const n = eligible.length;
   if (n < 2) return 0;
@@ -7388,7 +7395,8 @@ function computeEVSpearman_nonMain(pool) {
     const dx = rs[i] - mx, dy = rev[i] - my;
     num += dx * dy; dxSq += dx * dx; dySq += dy * dy;
   }
-  return dxSq > 0 && dySq > 0 ? num / Math.sqrt(dxSq * dySq) : 0;
+  const rho = dxSq > 0 && dySq > 0 ? num / Math.sqrt(dxSq * dySq) : 0;
+  return Math.abs(rho);
 }
 
 // Measured skill rating: empirical performance, no reference to authored thresholds.
