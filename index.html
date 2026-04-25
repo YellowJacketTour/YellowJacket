@@ -2016,9 +2016,9 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // have positive equity in a meaningful pot, and the opposite when they're behind.
   // Authored skill (via skillFactor) gates the application — noisy bottom-tier
   // players see no threshold movement.
-  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 3.2;
+  const honeyEVMultiplier = (gameContext && Number.isFinite(+gameContext.honeyEVMultiplier)) ? +gameContext.honeyEVMultiplier : 2.8;
   const potValue = Math.min(CurrentStrokeCap * 2.5, strokes + currentBet + matched + (carryPot || 0));
-  // honeyEVMultiplier: 3.2 — final production tuning. Polarizes skilled-player
+  // honeyEVMultiplier: 2.8 — final production tuning. Polarizes skilled-player
   // aggression so they push harder when ahead and fold faster when behind, letting
   // the bounded golf scorecard compound a stronger skill signal across rounds.
   // This strengthens the skill signal above the prior 4.2 setting; values <3.0
@@ -5460,9 +5460,10 @@ function drawHistogram(canvas, data, min, max, bins, opts) {
   }
   const labelFmt = opts.labelFormat || (v => v.toFixed(0));
   // Axis ticks should reflect the plot space. For log mode, show the raw count at the top.
-  const axisMax = useLog ? maxCount : maxCount;
-  const yMin = Math.max(-25, 0);
-  const yMax = Math.min(5, axisMax);
+  let calculatedYMin = 0;
+  let calculatedYMax = useLog ? maxCount : maxCount;
+  let yMin = Math.max(-25, calculatedYMin || -25);
+  let yMax = Math.min(5, calculatedYMax || 5);
   chartAxes(ctx, w, h, pad, yMin, yMax, counts.map((_, i) => labelFmt(min + i * binW + binW / 2)), v => Math.round(v));
   const plotW = w - 2 * pad, plotH = h - 2 * pad;
   counts.forEach((c, i) => {
@@ -7456,8 +7457,10 @@ function drawCurve(canvas, points, xKey, yKey, opts) {
   const yDataMin = Math.min.apply(null, ys);
   const yDataMax = Math.max.apply(null, ys);
   const yPad = Math.max(0.1, (yDataMax - yDataMin) * 0.1);
-  let yMin = Math.max(-25, okNum(opts.yMin) ? opts.yMin : (yDataMin < 0 ? yDataMin - yPad : 0));
-  let yMax = Math.min(5, okNum(opts.yMax) ? opts.yMax : (yDataMax > 0 ? yDataMax + yPad : yPad));
+  let calculatedYMin = okNum(opts.yMin) ? opts.yMin : (yDataMin < 0 ? yDataMin - yPad : 0);
+  let calculatedYMax = okNum(opts.yMax) ? opts.yMax : (yDataMax > 0 ? yDataMax + yPad : yPad);
+  let yMin = Math.max(-25, calculatedYMin || -25);
+  let yMax = Math.min(5, calculatedYMax || 5);
   // Degenerate: all y values equal (1-point data, or flat line). Open the range so the line is visible.
   if (yMax - yMin < 0.5) {
     const center = (yMax + yMin) / 2;
@@ -7503,6 +7506,9 @@ function drawCurve(canvas, points, xKey, yKey, opts) {
 }
 
 function drawHeatmap(canvas, matrix, labelsX, labelsY, opts) {
+  let calculatedYMin = 0; let calculatedYMax = 1;
+  let yMin = Math.max(-25, calculatedYMin || -25);
+  let yMax = Math.min(5, calculatedYMax || 5);
   opts = opts || {};
   const w = canvas.width, h = canvas.height, padL = 78, padT = 46, padR = 20, padB = 24;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
@@ -7542,6 +7548,9 @@ function chartIsDark() { return document.documentElement.getAttribute('data-them
 // Shows how often each skill tier actually survives each bracket stage. Elite's bars stay tall;
 // Bottom's drop off a cliff. If all four tiers look the same, skill isn't converting at the bracket.
 function drawTierConversions(canvas, tiers) {
+  let calculatedYMin = 0; let calculatedYMax = 100;
+  let yMin = Math.max(-25, calculatedYMin || -25);
+  let yMax = Math.min(5, calculatedYMax || 5);
   const w = canvas.width, h = canvas.height;
   const padL = 44, padR = 12, padT = 36, padB = 38;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
@@ -7622,9 +7631,10 @@ function drawStackedArea(canvas, data, keys, legend, opts) {
   if (data.length === 0) return;
   const palette = [C.primary, C.accent, C.tertiary, '#7AB39F', '#D59F60'];
   // totals by row for normalization (always 0..1 stacked)
-  const totals = data.map(d => keys.reduce((a, k) => a + (d[k] || 0), 0));
-  const yMin = Math.max(-25, 0);
-  const yMax = Math.min(5, 1);
+  let calculatedYMin = 0;
+  let calculatedYMax = 1;
+  let yMin = Math.max(-25, calculatedYMin || -25);
+  let yMax = Math.min(5, calculatedYMax || 5);
   chartAxes(ctx, w, h, pad, yMin, yMax, data.map(d => d.label || ''), v => (v * 100).toFixed(0) + '%');
   const plotW = w - 2 * pad, plotH = h - 2 * pad;
   const step = plotW / data.length;
@@ -7761,7 +7771,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('invariant.carryOverEnabled', true);
   cfgRow('scoring.netHoneyNormalization', 'netHoney/18');
   cfgRow('scoring.honeyMagnitudeTamed', true);
-  cfgRow('ai.honeyEVMultiplier', 3.2);
+  cfgRow('ai.honeyEVMultiplier', 2.8);
   cfgRow('ai.thresholdCoupling.bet', 0.8);
   cfgRow('ai.thresholdCoupling.fold', 1.2);
   cfgRow('ai.thresholdCoupling.raise', 0.6);
@@ -9362,10 +9372,10 @@ function drawROITiers(canvas, tiers) {
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
   const C = chartColors();
   const rois = tiers.map(t => t.roi);
-  let yMax = Math.max(0.1, Math.max.apply(null, rois.map(v => Math.max(v, 0))) * 1.15);
-  let yMin = Math.min(0, Math.min.apply(null, rois) * 1.15);
-  yMin = Math.max(-25, yMin);
-  yMax = Math.min(5, yMax);
+  let calculatedYMax = Math.max(0.1, Math.max.apply(null, rois.map(v => Math.max(v, 0))) * 1.15);
+  let calculatedYMin = Math.min(0, Math.min.apply(null, rois) * 1.15);
+  let yMin = Math.max(-25, calculatedYMin || -25);
+  let yMax = Math.min(5, calculatedYMax || 5);
   chartAxes(ctx, w, h, pad, yMin, yMax, tiers.map(t => t.label.split(' ')[0]), v => (v * 100).toFixed(0) + '%');
   const plotW = w - 2 * pad, plotH = h - 2 * pad;
   const colW = plotW / tiers.length;
@@ -9391,6 +9401,9 @@ function drawROITiers(canvas, tiers) {
 }
 
 function drawFoundationRevenue(canvas, series) {
+  let calculatedYMin = 0; let calculatedYMax = 1000000;
+  let yMin = Math.max(-25, calculatedYMin || -25);
+  let yMax = Math.min(5, calculatedYMax || 5);
   const w = canvas.width, h = canvas.height;
   const padL = 66, padR = 66, padT = 32, padB = 32;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
@@ -9485,6 +9498,9 @@ function drawFoundationRevenue(canvas, series) {
 }
 
 function drawRevenueByType(canvas, revByType) {
+  let calculatedYMin = 0; let calculatedYMax = 1000000;
+  let yMin = Math.max(-25, calculatedYMin || -25);
+  let yMax = Math.min(5, calculatedYMax || 5);
   const w = canvas.width, h = canvas.height, pad = 48;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
   const C = chartColors();
@@ -9538,6 +9554,10 @@ function init() {
     toast('Tour history restored from last session', 2000);
   }
   if (!restoredFromUnified) loadLabState();
+  // 2026-04 production override: ensure multiplier is 2.8 regardless of old saves
+  if (LabState.config?.ai?.honeyEVMultiplier !== 2.8) {
+    LabState.config = { ...LabState.config, ai: { ...(LabState.config?.ai || {}), honeyEVMultiplier: 2.8 } };
+  }
   // Ensure the unified bundle is in sync after any legacy-path restore so the
   // next save immediately writes the canonical key.
   unifiedSave();
