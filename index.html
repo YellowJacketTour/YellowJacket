@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v20";
+const APP_VERSION = "2026.04.25-v22";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1925,8 +1925,15 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   const streetCap = streetCapFor(street, CurrentStrokeCap);
   const remaining = Math.max(0, streetCap - strokes - currentBet);
   const toCall = currentBet - matched;
-  // Pot = everything committed so far in this hand, from the actor's perspective.
-  const pot = strokes + currentBet + matched;
+  // Pot = the AGREED stroke level for this hand under Yellow Jacket rules.
+  // YJ semantics: a "bet" is a proposed new total stroke level for the hole,
+  // not an additive contribution that doubles when matched. 1 blind + 1 call =
+  // 1 stroke total (winner takes 1 honey credit), NOT 2. The previous classic-
+  // poker formulation `strokes + currentBet + matched` over-counted the
+  // actor's prior commitment any time matched[actor] > 0 (blind poster facing
+  // a raise, every multi-raise sequence) — inflating expectedHoneyEV and
+  // distorting the threshold-coupled fold/bet decisions in those scenarios.
+  const pot = strokes + currentBet;
 
   // Board-texture-aware strength. `estimateStrengthAware` returns hero's category-based
   // raw strength on the shown board, then adjusts for:
@@ -1975,7 +1982,8 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // lands at 12 strokes; with cap = 10 (majors / finals) it lands at 20. Beyond
   // that the AI's expectedHoneyEV behaves the same regardless of pot size,
   // which compresses champion-score outliers without flattening skill signal.
-  const potValue = Math.min(CurrentStrokeCap * 2.0, strokes + currentBet + matched + (carryPot || 0));
+  // YJ-correct potValue (no matched[actor] over-count) — see pot comment above.
+  const potValue = Math.min(CurrentStrokeCap * 2.0, strokes + currentBet + (carryPot || 0));
   // Honey is the smoothing drizzle only. expectedSkinEV = potValue * (adj - 0.5) * skillFactor.
   // Pure equity advantage formula — no arbitrary static constant. Golf hand scores dominate.
   const expectedSkinEV = potValue * (adj - 0.5) * skillFactor;
@@ -2010,23 +2018,47 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // actually competing under. Without this, the metric rates classic-poker
   // play as optimal even though it's catastrophic in YJ aggregate stroke play.
   //
-  // EV approximation:
-  //   fold      → −foldScorecardPenalty[street] × 72   (scorecard cost)
-  //   check     → adj × pot
-  //   call      → adj × (pot + toCall) − toCall
-  //   bet/raise → foldEq × pot + (1 − foldEq) × (adj × (pot + a) − (1−adj) × a)
+  // YJ EV approximation, Nash-complete (v22):
+  //   fold      → −foldScorecardPenalty[street] × 72   (scorecard penalty only)
+  //   check/call → adj × pot − showdownGolfHoney(adj)  (honey gain MINUS expected
+  //                                                     showdown scorecard cost)
+  //   bet/raise → foldEq × (newLevel − bettorGolfHoney)
+  //               + (1 − foldEq) × (adj × newLevel − showdownGolfHoney(adj))
+  // Classic poker uses `adj × (pot + toCall) − toCall` because matching a bet
+  // genuinely costs you `toCall` if you lose. YJ has no such cost: the loser
+  // doesn't forfeit strokes to the winner — they just don't collect the honey.
+  // BUT both players DO take a golf-scorecard score at showdown
+  // (golfScoreFromHandValue, range −5..+2), which v21 missed. Without that
+  // term in the EV, the AI says "always call pre-river" — wrong. The
+  // showdownGolfHoney(adj) approximation closes the Nash equilibrium so flop/
+  // turn folds happen on truly weak hands (~adj < 0.16) while river folds
+  // happen at the classic ~0.33 threshold.
   const ykFoldStrokePenalty = street === 'preflop' ? 2
                             : street === 'river'   ? 0 : 1;
   const ykFoldEV = -ykFoldStrokePenalty * honeyNormalizationDivisor;
+  // Approximates E[golfScoreFromHandValue(theirHand) | adj] in honey-equivalent
+  // units. Linear fit: adj=0 → +2 strokes (high-card weak), adj=0.33 → 0 (mid),
+  // adj=0.83 → −3 (strong). Multiplied by honeyNormalizationDivisor (72) so
+  // the cost is comparable to honey-pot magnitudes used elsewhere in evOf.
+  function showdownGolfHoney(adjVal) {
+    return (2 - 6 * adjVal) * honeyNormalizationDivisor;
+  }
   function evOf(actionName, amount) {
     if (actionName === 'fold') return ykFoldEV;
-    if (actionName === 'check') return adjTrue * pot;
-    if (actionName === 'call') return adjTrue * (pot + toCall) - toCall;
+    if (actionName === 'check') return adjTrue * pot - showdownGolfHoney(adjTrue);
+    if (actionName === 'call')  return adjTrue * pot - showdownGolfHoney(adjTrue);
     const a = Math.max(0, +amount || 0);
-    const denom = Math.max(1, pot + a);
+    const newLevel = pot + a;
+    const denom = Math.max(1, newLevel);
     const foldEq = Math.max(0, Math.min(0.5, a / denom));
-    const evCalled = adjTrue * (pot + a) - (1 - adjTrue) * a;
-    return foldEq * pot + (1 - foldEq) * evCalled;
+    // bettorScoreTable from playHole = [0, -1, -1, -2] — actor's golf benefit
+    // when opp folds. Negative stroke = better golf, so subtract from honey EV.
+    const bettorGolfStroke = street === 'preflop' ? 0
+                           : street === 'river'   ? -2 : -1;
+    const bettorGolfHoney  = bettorGolfStroke * honeyNormalizationDivisor;
+    const evOpponentFolds  = newLevel - bettorGolfHoney;
+    const evOpponentCalls  = adjTrue * newLevel - showdownGolfHoney(adjTrue);
+    return foldEq * evOpponentFolds + (1 - foldEq) * evOpponentCalls;
   }
   const candidates = [];
   if (toCall === 0) {
@@ -2082,13 +2114,18 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
     }
     return wrap({ action: 'check' });
   } else {
-    // Fix #2: pot-odds-aware folding. Calibrated from season-sim A/B: `slack` of
-    // 0.30 − foldThreshold (clamped ≥0) produced 41% preflop fold rate, 5% post-flop
-    // fold rate, and champion-finals mean of −10.5 (Masters territory). Tighter
-    // variants pushed preflop fold rate above 60% and scored champions above par.
-    const reqEquity = toCall / (pot + toCall);
-    const slack = Math.max(0, 0.30 - foldThreshold); // loose players get more overlay
-    if (adj < reqEquity - slack) return wrap({ action: 'fold' });
+    // Nash-correct YJ fold rule. Fold iff the EV of calling (honey gain MINUS
+    // expected showdown golf cost) is worse than the EV of folding (just the
+    // scorecard penalty). Uses noisy `adj` so disciplined elites accurately
+    // identify weak hands while noisy players misjudge — skill differentiation
+    // emerges on every street, not just the river. Per-street indifference
+    // points (with showdown golf cost factored in):
+    //   Preflop (foldPenalty=2): never fold — pot too small to overcome
+    //     2-stroke fold cost vs the call-then-showdown alternative.
+    //   Flop/turn (foldPenalty=1): fold at adj ≲ 0.16 (very weak hands).
+    //   River (foldPenalty=0): fold at adj ≲ 0.33 (classic pot-odds analog).
+    const evCallNoisy = adj * pot - showdownGolfHoney(adj);
+    if (evCallNoisy < ykFoldEV) return wrap({ action: 'fold' });
     // Fix #5: pot-relative raise sizing when hand is premium.
     if (adj > raiseThreshold && remaining > 0) {
       const sizeFactor = adj > 0.90 ? 1.5 : adj > 0.80 ? 1.0 : 0.5;
