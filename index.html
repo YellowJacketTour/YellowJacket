@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v18";
+const APP_VERSION = "2026.04.25-v20";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1996,23 +1996,30 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
     return Math.min(raw, remaining);
   }
 
-  // === EV TRACKING ===
+  // === EV TRACKING — Yellow Jacket game theory ===
   // Compute the expected value of every action the actor could legally take at
-  // this decision point, then identify the optimal (highest-EV) candidate. The
-  // chosen-vs-optimal gap is the per-decision skill signal: a player who always
-  // selects the highest-EV option realizes 100% of available EV; a player who
-  // routinely picks the second- or third-best action loses EV proportional to
-  // their misjudgement. Aggregated across thousands of decisions per career,
-  // this produces a far purer skill metric than ROI/profit (which is
-  // contaminated by Main-event lottery variance).
+  // this decision point, then identify the optimal (highest-EV) candidate.
   //
-  // EV approximation (heuristic but principled):
-  //   fold      → 0  (forfeit pot, commit nothing more)
+  // YELLOW JACKET FOLD COST: classic poker treats fold as EV=0 (forfeit pot,
+  // commit nothing more), but in YJ folding incurs a golf-scorecard penalty
+  // per playHole's resolution table — preflop +2 strokes, flop/turn +1,
+  // river 0. The round-total formula is `totalGolf − netHoney / 72`, so 1
+  // golf stroke = 72 honey-pot units in round-score impact. We charge fold
+  // EV the honey-equivalent of its scorecard penalty so the EV oracle (and
+  // therefore the EV-realization skill metric) reflects the rules elites are
+  // actually competing under. Without this, the metric rates classic-poker
+  // play as optimal even though it's catastrophic in YJ aggregate stroke play.
+  //
+  // EV approximation:
+  //   fold      → −foldScorecardPenalty[street] × 72   (scorecard cost)
   //   check     → adj × pot
   //   call      → adj × (pot + toCall) − toCall
   //   bet/raise → foldEq × pot + (1 − foldEq) × (adj × (pot + a) − (1−adj) × a)
+  const ykFoldStrokePenalty = street === 'preflop' ? 2
+                            : street === 'river'   ? 0 : 1;
+  const ykFoldEV = -ykFoldStrokePenalty * honeyNormalizationDivisor;
   function evOf(actionName, amount) {
-    if (actionName === 'fold') return 0;
+    if (actionName === 'fold') return ykFoldEV;
     if (actionName === 'check') return adjTrue * pot;
     if (actionName === 'call') return adjTrue * (pot + toCall) - toCall;
     const a = Math.max(0, +amount || 0);
@@ -2031,7 +2038,7 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
       });
     }
   } else {
-    candidates.push({ name: 'fold', amount: 0, ev: 0 });
+    candidates.push({ name: 'fold', amount: 0, ev: ykFoldEV });
     candidates.push({ name: 'call', amount: 0, ev: evOf('call', 0) });
     if (remaining > 0) {
       [0.5, 1.0, 1.5].forEach(f => {
@@ -2048,7 +2055,7 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // and evOptimal so playBettingRound can record per-player EV stats.
   function wrap(result) {
     let evChosen = 0;
-    if (result.action === 'fold') evChosen = 0;
+    if (result.action === 'fold') evChosen = ykFoldEV;
     else if (result.action === 'check') {
       const c = candidates.find(c => c.name === 'check');
       evChosen = c ? c.ev : 0;
@@ -2112,19 +2119,34 @@ function sampleTargetSkill(cfg) {
 
 // Generate a profile that will read as `targetSkill` under estimateSkillRating.
 //
-// CRITICAL DESIGN FIX (Nov 2026): the TRUE OPTIMA are always 0.63 / 0.25 / 0.82 / 0 noise
-// because that is where estimateSkillRating peaks AND where current mechanic math
-// (pot-odds-aware folding with cap-gated betting) actually plays best. cfg.betCenter,
-// cfg.foldCenter, cfg.raiseCenter, cfg.noiseCenter are population-CENTER sliders that
-// only apply in the legacy random-profile path (cfg.legacyRandomProfiles = true).
-// In the skill-coupled path they DO NOT move the optimum — moving the optimum would
-// mean "Elite players are locked into a user-specified suboptimal strategy", which is
-// exactly the inversion bug that produced Elite ROI = -18%, Bottom ROI = +16% in the
-// CI×5 run of 2026-04.
+// YELLOW JACKET GAME-THEORY OPTIMA (replaces classic-poker optima v18→v19):
+// Yellow Jacket is poker × golf, not classic poker. Folding preflop costs the
+// folder +2 strokes on the golf scorecard (+1 on flop/turn, 0 on river) per
+// playHole's resolution table — over a 72-hole stroke-play round, a player
+// who folds preflop 40% of the time accumulates ~+58 strokes from folds
+// alone. A "calling station" who plays every hand to showdown gets bounded
+// golf scores from showdown and wins career events through tail variance.
+// The Run_1_Y1_Y15 (22).csv audit confirmed this: under classic-poker optima
+// (foldOpt 0.25, betOpt 0.63, raiseOpt 0.82), eliteMajorDominance collapsed
+// to ZERO and authored skill correlated INVERSELY with career wins.
 //
-// cfg.*Spread sliders now control within-tier jitter. At spread = 0.6 (the prior UI
-// default), same-tier players differ by up to ±0.15 on each threshold — enough to see
-// distinct playing styles. At spread = 0 (clamped), same-tier players are identical.
+// Pro Yellow Jacket optima:
+//   foldOpt 0.25 → 0.05 — almost never fold (slack = 0.30 − 0.05 = 0.25,
+//                          fold only when adj < reqEquity − 0.25, i.e., very
+//                          deeply behind pot odds). Pre-flop folds are
+//                          off-limits except in extreme deficit; later-street
+//                          folds happen when pot odds and equity diverge
+//                          enough to overcome the smaller late-street penalty.
+//   betOpt   0.63 → 0.55 — bet more often to build pots (winning a pot
+//                          translates to honey credit; building pots compounds).
+//   raiseOpt 0.82 → 0.75 — raise more aggressively on equity advantage
+//                          (combined with the 0.55 bet threshold this lets
+//                          elites pressure mediocre hands into folds, where
+//                          THEIR opponents pay the +2 stroke penalty).
+//   noiseOpt 0    → 0    — unchanged; precision still dominant.
+//
+// cfg.*Spread sliders still control within-tier jitter (±0.15 on bet/fold,
+// ±0.10 on raise) — distinct playing styles within the same skill tier.
 function makeProfileForSkill(targetSkill, cfg) {
   const t = Math.max(0, Math.min(1, targetSkill));
   const jitterScaleN = (cfg && Number.isFinite(cfg.noiseSpread)) ? cfg.noiseSpread * 0.050 : 0.025;
@@ -2133,11 +2155,11 @@ function makeProfileForSkill(targetSkill, cfg) {
   const jitterScaleR = (cfg && Number.isFinite(cfg.raiseSpread)) ? cfg.raiseSpread * 0.025 : 0.012;
   const jitter = (scale) => (Math.random() - 0.5) * scale;
   const dir = () => Math.random() < 0.5 ? -1 : 1;
-  // TRUE OPTIMA — always hardcoded, never overridden by cfg in the skill-coupled path.
+  // YELLOW JACKET OPTIMA — hardcoded; reflect the poker × golf hybrid rules.
   const noiseOpt = 0;
-  const betOpt = 0.63;
-  const foldOpt = 0.25;
-  const raiseOpt = 0.82;
+  const betOpt = 0.55;
+  const foldOpt = 0.05;
+  const raiseOpt = 0.75;
   return {
     noise: Math.max(0.005, noiseOpt + (1 - t) * 0.30 + jitter(jitterScaleN)),
     betThreshold: betOpt + dir() * (1 - t) * 0.15 + jitter(jitterScaleB),
@@ -2148,10 +2170,12 @@ function makeProfileForSkill(targetSkill, cfg) {
 }
 
 function estimateSkillRating(profile) {
+  // Skill rating measures distance from Yellow Jacket optima (not classic
+  // poker optima). Updated 2026-04 alongside makeProfileForSkill.
   const nT = 1 - profile.noise / 0.30;
-  const bT = 1 - Math.abs(profile.betThreshold - 0.63) / 0.15;
-  const fT = 1 - Math.abs(profile.foldThreshold - 0.25) / 0.15;
-  const rT = 1 - Math.abs(profile.raiseThreshold - 0.82) / 0.10;
+  const bT = 1 - Math.abs(profile.betThreshold - 0.55) / 0.15;
+  const fT = 1 - Math.abs(profile.foldThreshold - 0.05) / 0.15;
+  const rT = 1 - Math.abs(profile.raiseThreshold - 0.75) / 0.10;
   return (nT + bT + fT + rT) / 4;
 }
 
