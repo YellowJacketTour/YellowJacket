@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.26-v27";
+const APP_VERSION = "2026.04.26-v28";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2839,15 +2839,16 @@ function allocateMajorBucketCounts(fieldSize, cfg) {
 
 // Participation-cap multiplier — used by every score-based entry bucket so a
 // single elite isn't pulled into ~100% of a season's events. Returns 1.0 for
-// the player's first 25 events of the year, then decays linearly to 0.10 at
-// 40 events. With the default tour size (53 events/year) this naturally lands
-// elites at 25–35 events/year without hard exclusion. Combined with the
-// 0.015 × eventsThisYear ranking-bucket penalty, this is the primary lever
-// keeping elite participation realistic and ROI separation visible.
+// the player's first 22 events of the year, then decays linearly to 0.10 at
+// 32 events. With the default tour size (53 events/year) this naturally lands
+// elites at 22–28 events/year without hard exclusion. Combined with the
+// 0.009 × eventsThisYear ranking-bucket penalty (see rankPenalty in
+// selectMajorField / selectRegularField), this is the primary lever keeping
+// elite participation realistic and ROI separation visible.
 function eventsCapMultiplier(p) {
-  // Tightened cap window: capStart 25→22, capEnd 40→32. Pairs with the
-  // ranking-bucket penalty bump (0.015 → 0.018). Together they land elites
-  // in the 22–28 events/year band on the default tour size.
+  // Cap window: capStart 22, capEnd 32 — together with the 0.009 × events
+  // ranking penalty these land elites in the 22–28 events/year band on the
+  // default tour size.
   const e = (p && p.eventsThisYear) || 0;
   const capStart = 22, capEnd = 32;
   if (e <= capStart) return 1.0;
@@ -2881,8 +2882,8 @@ function selectMajorField(pool, fieldSize, year, cfg) {
     .sort((a, b) => (b.majorWins - a.majorWins) || (seasonMeritScore(b) - seasonMeritScore(a)) || (b.skill - a.skill));
   takeQualified(champs, counts.champs, selected, out, 'champ', sourceCounts);
 
-  // Ranking bucket: skill-desc with ±0.05 jitter and a 0.015 × eventsThisYear
-  // participation penalty. After ~13 events a top player drops 0.20 — a full
+  // Ranking bucket: skill-desc with ±0.05 jitter and a 0.009 × eventsThisYear
+  // participation penalty. After ~22 events a top player drops 0.20 — a full
   // skill-tier — out of the top-N. Pairs with the eventsCapMultiplier on the
   // merit/season/career/open buckets so all entry paths share the same cap.
   const rankPenalty = (p) => 0.009 * (p.eventsThisYear || 0);
@@ -2949,7 +2950,7 @@ function selectRegularField(pool, fieldSize, year) {
     (regularEntryScore(b) * eventsCapMultiplier(b)) - (regularEntryScore(a) * eventsCapMultiplier(a))
     || b.skill - a.skill);
   takeQualified(merit, meritCount, selected, out);
-  // Ranking bucket: 0.015 × eventsThisYear participation penalty + ±0.05 jitter.
+  // Ranking bucket: 0.009 × eventsThisYear participation penalty + ±0.05 jitter.
   const rankPenalty = (p) => 0.009 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
     ((b.skill * 3.5 - rankPenalty(b)) - (a.skill * 3.5 - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
@@ -8672,9 +8673,18 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('scoring.honeyNormalizationDivisor', 72);
   cfgRow('skillMetricDefinition', 'average EV realization per decision (pure poker skill, not ROI)');
   cfgRow('ui.largeSimMode', LabState.config.largeSimMode ? 'enabled' : 'disabled');
-  cfgRow('ai.thresholdCoupling.bet', 0.8);
-  cfgRow('ai.thresholdCoupling.fold', 1.2);
-  cfgRow('ai.thresholdCoupling.raise', 0.6);
+  // YJ profile optima — these are the values actually driving decideFor's per-
+  // player profile generation in makeProfileForSkill (see ~line 2169). Earlier
+  // builds wrote `ai.thresholdCoupling.{bet,fold,raise} = 0.8/1.2/0.6` here,
+  // but those were vestigial labels from a v18-era threshold-coupling system
+  // that was retired in the v23 YJ rewrite — they were not connected to any
+  // live decision logic, and audits read them as if they were live config knobs.
+  // Reporting the real betOpt / foldOpt / raiseOpt instead so a CSV audit
+  // matches the actual AI behavior.
+  cfgRow('ai.profileOpt.bet', 0.55);
+  cfgRow('ai.profileOpt.fold', 0.05);
+  cfgRow('ai.profileOpt.raise', 0.75);
+  cfgRow('ai.profileOpt.noise', 0);
   cfgRow('rakePercent', snapCfg.rakePercent != null ? snapCfg.rakePercent : 0.03);
   cfgRow('payoutDecay', snapCfg.payoutDecay);
   cfgRow('poolSize', snapCfg.poolSize);
