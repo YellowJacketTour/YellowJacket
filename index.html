@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v17";
+const APP_VERSION = "2026.04.25-v18";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2690,25 +2690,25 @@ function careerMeritScore(p) {
 
 function openQualifierScore(p) {
   ensureQualifierState(p);
-  // Skill-rating weight bumped 2.0 → 3.0 to match regularEntryScore. The other
+  // Skill-rating weight bumped 3.0 → 3.5 to match regularEntryScore. The other
   // half of open seats flow through a uniform-random "mixed seeding" path
   // (selectMajorField / selectRegularField), so free-invite elites still face
   // a balanced field of opponents drawn from across all skill levels even
   // though the score-driven half of the open bucket is now strongly elite-led.
-  return seasonMeritScore(p) * 1.15 + careerMeritScore(p) * 0.18 + recentFormScore(p) * 0.8 + (p.skill || 0) * 3.0;
+  return seasonMeritScore(p) * 1.15 + careerMeritScore(p) * 0.18 + recentFormScore(p) * 0.8 + (p.skill || 0) * 3.5;
 }
 
 function regularEntryScore(p) {
   ensureQualifierState(p);
-  // Skill-rating weight bumped 2.0 → 3.0 to overpower the seasonMeritScore
-  // floor (which can grow to 50–100+ for active mid-tier players and was
-  // crowding elites out of the merit bucket). Wider skill gap (3.0 between
-  // top and bottom) restores elite-led finals composition and pulls champ
-  // scores back into the −8 to −14 band. Volume still bounded by
-  // eventsCapMultiplier + the 0.009 ranking penalty, so the 24–32 events/yr
-  // cap holds. Pairs with the 50/50 mixed-seeding split on the open bucket
-  // to keep eliteMajorDominance_nonMain in the 40–60% band.
-  return seasonMeritScore(p) * 1.0 + careerMeritScore(p) * 0.14 + recentFormScore(p) * 0.6 + (p.skill || 0) * 3.0;
+  // Skill-rating weight bumped 3.0 → 3.5 to fully eliminate residual low-skill
+  // win bias. seasonMeritScore for an active mid-tier player can reach 50–100+,
+  // so a 3.0 prior still left room for the merit bucket to occasionally seat
+  // mids over elites. 3.5 widens the elite-vs-mid skill gap to 1.75 and tips
+  // the merit-bucket sort decisively skill-first. Volume still bounded by
+  // eventsCapMultiplier + the 0.009 ranking penalty (24–32 events/yr cap).
+  // Pairs with the 50/50 mixed-seeding split on the open bucket to keep
+  // eliteMajorDominance_nonMain in the 40–60% band.
+  return seasonMeritScore(p) * 1.0 + careerMeritScore(p) * 0.14 + recentFormScore(p) * 0.6 + (p.skill || 0) * 3.5;
 }
 
 function regularQualifierEligible(p) {
@@ -2789,7 +2789,7 @@ function selectMajorField(pool, fieldSize, year, cfg) {
   // merit/season/career/open buckets so all entry paths share the same cap.
   const rankPenalty = (p) => 0.009 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
-    ((b.skill * 3.0 - rankPenalty(b)) - (a.skill * 3.0 - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
+    ((b.skill * 3.5 - rankPenalty(b)) - (a.skill * 3.5 - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
   takeQualified(ranking, out.length + counts.ranking, selected, out, 'ranking', sourceCounts);
 
@@ -2854,7 +2854,7 @@ function selectRegularField(pool, fieldSize, year) {
   // Ranking bucket: 0.015 × eventsThisYear participation penalty + ±0.05 jitter.
   const rankPenalty = (p) => 0.009 * (p.eventsThisYear || 0);
   const ranking = pool.slice().sort((a, b) =>
-    ((b.skill * 3.0 - rankPenalty(b)) - (a.skill * 3.0 - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
+    ((b.skill * 3.5 - rankPenalty(b)) - (a.skill * 3.5 - rankPenalty(a))) + (Math.random() - 0.5) * 0.10
   );
   takeQualified(ranking, meritCount + rankingCount, selected, out);
   // OPEN bucket — split 50/50 between score-weighted and uniform-random
