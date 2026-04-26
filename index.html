@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.26-v33";
+const APP_VERSION = "2026.04.26-v34";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -972,6 +972,11 @@ function toast(msg, duration) {
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity 200ms'; setTimeout(() => t.remove(), 240); }, duration || 2600);
 }
 
+// Banner is built ONCE and updated in place on subsequent renders. Earlier
+// versions rebuilt the entire banner DOM (clear() + appendChild) every
+// chunk, which dropped pause/cancel clicks that landed in the ~50ms window
+// where buttons were being replaced. Now the buttons persist for the life
+// of the simulation, so clicks always reach the live handlers.
 function renderBackgroundSimBanner() {
   let banner = $('#background-sim-banner');
   if (!BackgroundSim.isRunning) {
@@ -981,34 +986,82 @@ function renderBackgroundSimBanner() {
   if (!banner) {
     banner = el('div', { id: 'background-sim-banner', class: 'background-sim-banner' });
     document.body.appendChild(banner);
+    // Build the structural skeleton once. All subsequent renders only mutate
+    // text content / widths / disabled states — the button elements themselves
+    // are stable references with persistent click handlers.
+    const top = el('div', { class: 'background-sim-top' });
+    const titleBlock = el('div', null,
+      el('div', { id: 'bgsim-title', class: 'background-sim-title' }),
+      el('div', { id: 'bgsim-progress', class: 'background-sim-sub' })
+    );
+    const eventTag = el('div', { id: 'bgsim-eventtag', class: 'mono', style: 'font-size: 12px; color: var(--gold);' });
+    top.appendChild(titleBlock);
+    top.appendChild(eventTag);
+    banner.appendChild(top);
+    const bar = el('div', { class: 'background-sim-bar' });
+    bar.appendChild(el('div', { id: 'bgsim-fill', class: 'background-sim-fill', style: 'width: 0%;' }));
+    banner.appendChild(bar);
+    banner.appendChild(el('div', { class: 'background-sim-sub', text: 'You can keep playing, browsing results, or reading the Rulebook. Progress auto-saves every few seconds.' }));
+    const actions = el('div', { class: 'background-sim-actions' });
+    const pauseBtn = el('button', { id: 'bgsim-pause-btn' });
+    // Pause/Resume click — sets a "transitioning" flag so the banner shows
+    // "Pausing... (finishing current event)" between the click and the
+    // actual pause taking effect. Without this, clicks during a long event
+    // appeared to do nothing for several seconds.
+    pauseBtn.onclick = () => {
+      if (!BackgroundSim.isRunning) return;
+      if (BackgroundSim.isPaused) {
+        BackgroundSim.resume();
+      } else {
+        // Optimistic UI: show "Pausing..." immediately. The actual pause
+        // takes effect when the current event finishes.
+        BackgroundSim._pendingPause = true;
+        renderBackgroundSimBanner();
+        BackgroundSim.pause();
+      }
+    };
+    actions.appendChild(pauseBtn);
+    const cancelBtn = el('button', { id: 'bgsim-cancel-btn', text: 'Cancel' });
+    cancelBtn.onclick = () => {
+      if (!BackgroundSim.isRunning) return;
+      if (!confirm('Cancel the background simulation? Completed events stay saved.')) return;
+      // Optimistic UI: show "Canceling..." immediately so the user knows
+      // their click registered. cancel() itself runs to completion fast
+      // (no further events will fire) but the persist + cleanup take a
+      // moment to settle.
+      BackgroundSim._pendingCancel = true;
+      renderBackgroundSimBanner();
+      BackgroundSim.cancel();
+    };
+    actions.appendChild(cancelBtn);
+    banner.appendChild(actions);
   }
   banner.classList.remove('hidden');
-  clear(banner);
+  // Update dynamic content only — buttons are stable, never re-created.
   const p = BackgroundSim.progress();
-  const top = el('div', { class: 'background-sim-top' });
-  top.appendChild(el('div', null,
-    el('div', { class: 'background-sim-title', text: BackgroundSim.isPaused ? 'Simulation Paused' : 'Simulation Running' }),
-    el('div', { class: 'background-sim-sub', text: 'Year ' + p.year + ' / ' + p.endYear + ' · ' + p.completed + ' of ' + p.total + ' events · ' + p.percent.toFixed(1) + '%' })
-  ));
-  top.appendChild(el('div', { class: 'mono', style: 'font-size: 12px; color: var(--gold);', text: p.type ? p.type.toUpperCase() : 'RUN' }));
-  banner.appendChild(top);
-  const bar = el('div', { class: 'background-sim-bar' });
-  bar.appendChild(el('div', { class: 'background-sim-fill', style: 'width: ' + p.percent + '%;' }));
-  banner.appendChild(bar);
-  banner.appendChild(el('div', { class: 'background-sim-sub', text: 'You can keep playing, browsing results, or reading the Rulebook. Progress auto-saves every few seconds.' }));
-  const actions = el('div', { class: 'background-sim-actions' });
-  actions.appendChild(el('button', {
-    class: BackgroundSim.isPaused ? 'primary' : '',
-    text: BackgroundSim.isPaused ? 'Resume' : 'Pause',
-    onclick: () => BackgroundSim.isPaused ? BackgroundSim.resume() : BackgroundSim.pause()
-  }));
-  actions.appendChild(el('button', {
-    text: 'Cancel',
-    onclick: () => {
-      if (confirm('Cancel the background simulation? Completed events stay saved.')) BackgroundSim.cancel();
-    }
-  }));
-  banner.appendChild(actions);
+  const titleEl   = banner.querySelector('#bgsim-title');
+  const progressEl = banner.querySelector('#bgsim-progress');
+  const eventTagEl = banner.querySelector('#bgsim-eventtag');
+  const fillEl    = banner.querySelector('#bgsim-fill');
+  const pauseBtn  = banner.querySelector('#bgsim-pause-btn');
+  const cancelBtn = banner.querySelector('#bgsim-cancel-btn');
+  // Title reflects the four states: pending-cancel > pending-pause > paused > running.
+  let title = 'Simulation Running';
+  if (BackgroundSim._pendingCancel)      title = 'Canceling… (finishing current event)';
+  else if (BackgroundSim._pendingPause)  title = 'Pausing… (finishing current event)';
+  else if (BackgroundSim.isPaused)       title = 'Simulation Paused';
+  if (titleEl)    titleEl.textContent = title;
+  if (progressEl) progressEl.textContent = 'Year ' + p.year + ' / ' + p.endYear + ' · ' + p.completed + ' of ' + p.total + ' events · ' + p.percent.toFixed(1) + '%';
+  if (eventTagEl) eventTagEl.textContent = p.type ? p.type.toUpperCase() : 'RUN';
+  if (fillEl)     fillEl.style.width = p.percent + '%';
+  if (pauseBtn) {
+    pauseBtn.textContent = BackgroundSim.isPaused ? 'Resume' : 'Pause';
+    pauseBtn.className = (BackgroundSim.isPaused ? 'primary' : '');
+    pauseBtn.disabled = !!(BackgroundSim._pendingCancel || BackgroundSim._pendingPause);
+  }
+  if (cancelBtn) {
+    cancelBtn.disabled = !!BackgroundSim._pendingCancel;
+  }
 }
 
 function openModal(contentBuilder, opts) {
@@ -6709,6 +6762,12 @@ const BackgroundSim = {
   progressCallback: null,
   chunkSize: 1,
   cancelRequested: false,
+  // Optimistic-UI flags (v34): set on click, cleared when the actual state
+  // transition fires. Lets the banner show "Pausing…" / "Canceling…" between
+  // the click and the next runChunk gate, so users don't think their click
+  // was lost during a multi-second event resolution.
+  _pendingPause: false,
+  _pendingCancel: false,
   state: null,
   timer: null,
   lastAutoSaveAt: 0,
@@ -6749,12 +6808,14 @@ const BackgroundSim = {
   pause() {
     if (!this.isRunning) return;
     this.isPaused = true;
+    this._pendingPause = false;   // clear the optimistic-UI flag now that we're actually paused
     this.persistPartial(true);
     renderBackgroundSimBanner();
   },
   resume() {
     if (!this.isRunning) return;
     this.isPaused = false;
+    this._pendingPause = false;   // safety belt
     renderBackgroundSimBanner();
     this.schedule();
   },
@@ -6882,6 +6943,8 @@ const BackgroundSim = {
     this.isRunning = false;
     this.isPaused = false;
     this.cancelRequested = false;
+    this._pendingPause = false;
+    this._pendingCancel = false;
     this.currentCfg = null;
     this.state = null;
     LabState.busy = false;
