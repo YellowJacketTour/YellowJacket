@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.26-v34";
+const APP_VERSION = "2026.04.26-v35";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -9202,30 +9202,75 @@ function renderConfigPanel(panel, mode) {
   panel.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; letter-spacing: 0.3px;',
     text: mode === 'simple' ? 'Simple · runs append to your Tour.' : 'Advanced · every slider exposed. Profile changes need a pool rebuild.' }));
 
+  // Slider registry: lets one slider re-clamp dependents when its value
+  // changes (v34 — prevents fields exceeding pool, satellites exceeding
+  // majorField, etc.). Cleared each time renderConfigPanel runs since the
+  // DOM elements get rebuilt then.
+  const _sliderRegistry = {};
   function appendSliderControl(parent, opts) {
     const key = opts.key;
-    const min = +opts.min, max = +opts.max, step = +opts.step;
+    const min = +opts.min, baseMax = +opts.max, step = +opts.step;
+    // Effective max can be a static number or a function of cfg (allows
+    // cross-slider constraints like majorField <= poolSize). When dynamic,
+    // the slider's range/number-input max attributes are kept in sync via
+    // applyMax(), and the value is clamped down whenever the constraint
+    // tightens.
+    const computeMax = () => {
+      if (typeof opts.maxFromCfg === 'function') {
+        const dyn = +opts.maxFromCfg(LabState.config);
+        if (Number.isFinite(dyn)) return Math.min(baseMax, dyn);
+      }
+      return baseMax;
+    };
     const row = el('div', { class: 'slider-row' });
     row.appendChild(el('label', { text: opts.label }));
-    const range = el('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(LabState.config[key]) });
-    const val = el('input', { type: 'number', class: 'slider-val', min: String(min), max: String(max), step: String(step), value: String(LabState.config[key]) });
+    const initialMax = computeMax();
+    const range = el('input', { type: 'range', min: String(min), max: String(initialMax), step: String(step), value: String(LabState.config[key]) });
+    const val = el('input', { type: 'number', class: 'slider-val', min: String(min), max: String(initialMax), step: String(step), value: String(LabState.config[key]) });
     const sync = (raw) => {
       let v = Number(raw);
       if (!Number.isFinite(v)) return;
       if (step > 0) v = Math.round(v / step) * step;
-      v = Math.max(min, Math.min(max, v));
+      const effMax = computeMax();
+      v = Math.max(min, Math.min(effMax, v));
       if (Math.abs(step - Math.round(step)) > 1e-9) v = +v.toFixed(4);
       LabState.config[key] = v;
       range.value = String(v);
       val.value = String(v);
       saveLabState();
       if (opts.onChange) opts.onChange(v);
+      // Tell dependent sliders their max may have shifted. Each dependent
+      // re-derives its own effective max and clamps its current value if
+      // it now exceeds the new ceiling.
+      if (Array.isArray(opts.affects)) {
+        for (const depKey of opts.affects) {
+          const dep = _sliderRegistry[depKey];
+          if (dep) dep.applyMax();
+        }
+      }
+    };
+    // Apply current effective max to the slider's max attributes and
+    // clamp the live value down if the constraint just tightened.
+    const applyMax = () => {
+      const effMax = computeMax();
+      range.max = String(effMax);
+      val.max = String(effMax);
+      const cur = +LabState.config[key];
+      if (Number.isFinite(cur) && cur > effMax) {
+        // Re-sync triggers dependents-of-dependents naturally.
+        sync(effMax);
+      }
     };
     range.oninput = () => sync(range.value);
     val.onchange = () => sync(val.value);
     row.appendChild(range);
     row.appendChild(val);
     parent.appendChild(row);
+    _sliderRegistry[key] = { range, val, applyMax, sync };
+    // One-time initial clamp in case the saved cfg value already exceeds
+    // a dynamic constraint (e.g. legacy save with regularField=1008 against
+    // a poolSize=1000 — clamp to 1000 on first render).
+    applyMax();
   }
 
   // Log-scale slider for very wide-range monetary inputs ($0 – $100B per event).
@@ -9450,16 +9495,30 @@ function renderConfigPanel(panel, mode) {
   const simpleCfg = [
     ['seasons', 'Seasons to run', 1, 100, 1],
   ];
+  // Cross-slider constraints (v34): field sliders can't exceed pool size,
+  // and satellite-qualifier-per-major can't exceed major field. When pool
+  // shrinks, all field sliders re-clamp. When majorField changes, the
+  // satellites slider re-clamps. baseMax stays as the absolute slider
+  // ceiling; the effective max is min(baseMax, dependentValue).
   const advancedCfg = [
-    ['poolSize', 'Pool size', 200, 100000, 100],
+    ['poolSize', 'Pool size', 200, 100000, 100, { affects: ['majorField', 'regularField', 'mainField'] }],
     ['seasons', 'Seasons', 1, 100, 1],
     ['majors', 'Majors/yr', 0, 24, 1],
     ['regulars', 'Regulars/yr', 0, 365, 1],
     ['mains', 'Main/yr', 0, 24, 1],
-    ['majorField', 'Major field', 32, 2048, 32],
-    ['regularField', 'Reg field', 16, 2048, 16],
-    ['mainField', 'Main field', 128, 100000, 128],
-    ['mainQualifiersPerMajor', 'Main satellites/major', 0, 256, 4],
+    ['majorField', 'Major field', 32, 100000, 32, {
+      maxFromCfg: c => c.poolSize || 100000,
+      affects: ['mainQualifiersPerMajor']
+    }],
+    ['regularField', 'Reg field', 16, 100000, 16, {
+      maxFromCfg: c => c.poolSize || 100000
+    }],
+    ['mainField', 'Main field', 128, 100000, 128, {
+      maxFromCfg: c => c.poolSize || 100000
+    }],
+    ['mainQualifiersPerMajor', 'Main satellites/major', 0, 100000, 4, {
+      maxFromCfg: c => c.majorField || 100000
+    }],
     ['exemptionYears', 'Exempt yrs', 0, 20, 1],
     ['regularStrokeCap', 'Reg cap', 1, 10, 1],
     ['majorStrokeCap', 'Major cap', 1, 10, 1],
@@ -9484,9 +9543,13 @@ function renderConfigPanel(panel, mode) {
       poolStatus.textContent = '⚠ Pool will rebuild on next Run · current: ' + livePool.toLocaleString() + ' → cfg: ' + cfgPool.toLocaleString() + ' · WIPES career history';
     }
   };
-  for (const [key, label, min, max, step] of intCfg) {
+  for (const entry of intCfg) {
+    const [key, label, min, max, step, extra] = entry;
+    const constraints = extra && typeof extra === 'object' ? extra : {};
     appendSliderControl(evSec, {
       key, label, min, max, step,
+      maxFromCfg: constraints.maxFromCfg,
+      affects: constraints.affects,
       onChange: (v) => {
         updateRuntimeEstimate();
         if (key === 'regularStrokeCap') setStrokeCap(v);
