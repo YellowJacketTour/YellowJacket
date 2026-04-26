@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.26-v32";
+const APP_VERSION = "2026.04.26-v33";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5992,13 +5992,21 @@ function drawHistogram(canvas, data, min, max, bins, opts) {
     ctx.fillText(lbl, lx, h - padB + 14);
   }
   // Bars
+  // Default polarity treats NEGATIVE bins as "good" (golf-score semantics —
+  // below par is green, above par is red). For money charts where negative
+  // means LOSSES, set opts.negativeIsBad: true to invert the bar palette so
+  // losses render in the warning palette and winnings render in the
+  // green/positive palette. The neutral "straddles zero" bin keeps the
+  // gold accent in either polarity.
+  const negFill = opts.negativeIsBad ? C.pos : C.neg;
+  const posFill = opts.negativeIsBad ? C.neg : C.pos;
   counts.forEach((c, i) => {
     const x = padL + (i / bins) * plotW;
     const bw = Math.max(1, plotW / bins - 2);
     const val = useLog ? Math.log(1 + c) : c;
     const bh = (val / plotMax) * plotH;
     const binStart = min + i * binW;
-    ctx.fillStyle = binStart < 0 ? C.neg : binStart < binW ? C.accent : C.pos;
+    ctx.fillStyle = binStart < 0 ? negFill : binStart < binW ? C.accent : posFill;
     ctx.fillRect(x + 1, h - padB - bh, bw, bh);
   });
   // Top-row badges (log indicator, clipped indicator) — stacked rows so they
@@ -10563,6 +10571,9 @@ function renderActiveRun(root, r) {
           // small-loss bin, a handful of dynasties sit at +$15M+. Auto-log so the
           // tail is visible without flattening the central pile to one tall bar.
           logScale: 'auto',
+          // Money chart, NOT golf — losses (negative) should render in the
+          // warning palette, winnings (positive) in the green palette.
+          negativeIsBad: true,
         }));
       } else { noDataPlaceholder(cv10, 'No profit-bucket data'); }
     } else {
