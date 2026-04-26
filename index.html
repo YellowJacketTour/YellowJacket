@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.26-v29";
+const APP_VERSION = "2026.04.26-v30";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -6478,9 +6478,12 @@ function showBuzzLiveTip(text, actor) {
 // =============================================================================
 
 const DEFAULT_SIM_CONFIG = {
-  // Profile distribution (center ± spread). Current makeRandomProfile uses
-  //   noise: [0.10, 0.30], bet: [0.55, 0.75], fold: [0.20, 0.38], raise: [0.78, 0.93].
-  noiseCenter: 0.200,  noiseSpread: 0.200,
+  // Profile distribution (center ± spread). Tightened in v30 to sharpen
+  // per-event skill differentiation: noiseSpread 0.20 → 0.10 narrows the
+  // per-decision randomness so Elite plays closer to optimal and Bottom
+  // mistakes are more consistent. The bet/fold/raise spreads are unchanged
+  // (they control playing-style variance within a tier, not skill noise).
+  noiseCenter: 0.200,  noiseSpread: 0.100,
   betCenter:   0.650,  betSpread:   0.200,
   foldCenter:  0.290,  foldSpread:  0.180,
   raiseCenter: 0.855,  raiseSpread: 0.150,
@@ -6552,9 +6555,13 @@ const DEFAULT_SIM_CONFIG = {
   // Honey-Stroke is the sole scoring law. carryOverEnabled (true) and honeyDivisor (1)
   // are permanent invariants on SCORING_STYLES['honey-stroke'] — not user-tunable.
   scoringStyle: 'honey-stroke',
-  // σ of the truncated-Normal used to sample authored skills. Default 0.18 gives most
-  // players in [0.14, 0.86]. Narrow (0.10) = homogeneous pool; wide (0.28) = dramatic tails.
-  skillSpread: 0.18,
+  // σ of the truncated-Normal used to sample authored skills. Bumped in v30
+  // from 0.18 → 0.24 to widen the skill distribution so per-event skill→
+  // finish-position curves separate more cleanly across tiers. With σ=0.24,
+  // most players land in [0.02, 0.98] vs the prior [0.14, 0.86]. Pairs with
+  // the v30 noiseSpread reduction so the wider authored-skill range expresses
+  // through a sharper per-decision kernel.
+  skillSpread: 0.24,
   majorChampShare: 0.14,
   majorRankingShare: 0.24,
   majorSeasonShare: 0.26,
