@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.26-v23";
+const APP_VERSION = "2026.04.26-v26";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2016,11 +2016,18 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
 
   // Build candidate set with adjTrue (oracle) for the metric.
   const candidates = [];
-  // Proposal sizes are NEW agreed totals (YJ semantics). Capped by streetCap.
+  // Proposal sizes are NEW agreed totals (YJ semantics). v24: ADDITIVE room-
+  // based sizing, not multiplicative on base. Multiplicative bet sizing was
+  // saturating pots to streetCap on the first strong-hand bet, blowing up
+  // honey variance and pulling champ scores 5–7× too deep. Additive scaling
+  // (small/medium/large fraction of remaining headroom) keeps pot growth
+  // gradual and proportional to AI conviction.
   function proposalLevels(base) {
     const levels = [];
-    [1.5, 2.0, 3.0].forEach(mult => {
-      const L = Math.min(streetCap, Math.max(base + 1, Math.round(base * mult)));
+    const room = Math.max(0, streetCap - base);
+    if (room <= 0) return levels;
+    [0.25, 0.5, 1.0].forEach(f => {
+      const L = Math.min(streetCap, base + Math.max(1, Math.round(room * f)));
       if (L > base) levels.push(L);
     });
     return levels;
@@ -2073,8 +2080,11 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   // decision path (kept for skill-rating distance only).
   if (!isPending) {
     if (adj > profile.betThreshold && remaining > 0) {
-      const sizeFactor = adj > 0.85 ? 3.0 : adj > 0.70 ? 2.0 : 1.5;
-      const newLevel = Math.min(streetCap, Math.max(agreedTotal + 1, Math.round(agreedTotal * sizeFactor)));
+      // v24: additive room-based sizing — the bet adds a small/medium/large
+      // FRACTION of remaining cap headroom, never multiplies agreedTotal.
+      const room = Math.max(0, streetCap - agreedTotal);
+      const sizeFactor = adj > 0.85 ? 1.0 : adj > 0.70 ? 0.5 : 0.25;
+      const newLevel = Math.min(streetCap, agreedTotal + Math.max(1, Math.round(room * sizeFactor)));
       if (newLevel > agreedTotal) {
         return wrap({ action: 'bet', amount: newLevel });
       }
@@ -2086,8 +2096,10 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   const evFoldNoisy = -divisor - agreedTotal;
   if (evCallNoisy < evFoldNoisy) return wrap({ action: 'fold' });
   if (adj > profile.raiseThreshold && remaining > 0) {
-    const sizeFactor = adj > 0.90 ? 2.5 : adj > 0.80 ? 2.0 : 1.5;
-    const newLevel = Math.min(streetCap, Math.max(currentProposal + 1, Math.round(currentProposal * sizeFactor)));
+    // v24: additive room-based raise sizing.
+    const room = Math.max(0, streetCap - currentProposal);
+    const sizeFactor = adj > 0.90 ? 1.0 : adj > 0.80 ? 0.5 : 0.25;
+    const newLevel = Math.min(streetCap, currentProposal + Math.max(1, Math.round(room * sizeFactor)));
     if (newLevel > currentProposal) {
       return wrap({ action: 'raise', amount: newLevel });
     }
@@ -2408,10 +2420,17 @@ function playMatch(pA, pB, numHoles, opts) {
   let carryPot = 0;
   let dealer = Math.random() < 0.5 ? 'a' : 'b';
   const baseGameContext = opts.gameContext || null;
-  // === YJ DYNAMIC DIVISOR (v23) ===
-  // Match-length-aware honey normalization. 72 for 72-hole finals, 18 for an
-  // 18-hole round, 9 for a 9-hole bracket round, 1 for a single-hole match.
-  const divisor = honeyDivisorFor(numHoles);
+  // === YJ DYNAMIC DIVISOR (v23 + v24 fix) ===
+  // Honey is normalized at the EVENT level, not the per-call-to-playMatch
+  // level. In aggregate format, each player plays 4 × 18-hole matches that
+  // sum into a single 72-hole event total. If we divide each match's honey
+  // by 18, the 4-match sum has 4× the intended honey magnitude. Reading
+  // gameContext.totalHoles (set by runStrokePlayEvent / runFinals to the
+  // event's full length) lets us normalize ONCE at the right event-level
+  // divisor — 72 for aggregate regulars/majors, 18 for a standalone round,
+  // 9 for a 9-hole bracket match.
+  const eventHoles = +(baseGameContext && baseGameContext.totalHoles) || numHoles;
+  const divisor = honeyDivisorFor(eventHoles);
   // Carry-over only enabled in finals contexts (gameContext.isFinals = true).
   // Outside of finals, ties don't carry — the pot is simply discarded.
   const carryEnabled = !!(baseGameContext && baseGameContext.isFinals);
@@ -5665,7 +5684,7 @@ function chartAxes(ctx, w, h, pad, yMin, yMax, xLabels, yFmt) {
 
 function drawHistogram(canvas, data, min, max, bins, opts) {
   opts = opts || {};
-  const w = canvas.width, h = canvas.height, pad = 40;
+  const w = canvas.width, h = canvas.height;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
   const C = chartColors();
   const binW = (max - min) / bins;
@@ -5682,42 +5701,85 @@ function drawHistogram(canvas, data, min, max, bins, opts) {
   let maxCount = Math.max.apply(null, counts) || 1;
   const autoLog = opts.logScale === 'auto' && maxCount >= 10 * (counts.slice().sort((a,b) => b - a)[1] || 1);
   const useLog = opts.logScale === true || autoLog;
-  let plotMax;
-  if (useLog) {
-    plotMax = Math.log(1 + maxCount);
-  } else {
-    plotMax = maxCount;
-  }
+  const plotMax = useLog ? Math.log(1 + maxCount) : maxCount;
   const labelFmt = opts.labelFormat || (v => v.toFixed(0));
-  // Axis ticks should reflect the plot space. For log mode, show the raw count at the top.
-  const axisMax = useLog ? maxCount : maxCount;
-  chartAxes(ctx, w, h, pad, 0, axisMax, counts.map((_, i) => labelFmt(min + i * binW + binW / 2)), v => Math.round(v));
-  const plotW = w - 2 * pad, plotH = h - 2 * pad;
+  // Adaptive padding driven by widest tick label (matches drawCurve approach).
+  // Y ticks are integer counts; estimate via maxCount label width.
+  const titleSlot = opts.xLabel ? 16 : 0;
+  const yLabelSlot = opts.yLabel ? 16 : 0;
+  const padT = 22 + (useLog ? 12 : 0) + (clipped > 0 ? 12 : 0);
+  const padB = 22 + titleSlot;
+  ctx.font = '10px -apple-system, sans-serif';
+  // Y tick label widths — pick the widest from a reasonable tick set.
+  const yTicks = 5;
+  let widestY = 0;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = (maxCount * i) / yTicks;
+    widestY = Math.max(widestY, ctx.measureText(Math.round(v).toString()).width);
+  }
+  const padL = yLabelSlot + Math.max(28, Math.ceil(widestY) + 8);
+  const padR = 14;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  // Axes
+  ctx.strokeStyle = C.axis; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, h - padB); ctx.lineTo(w - padR, h - padB); ctx.stroke();
+  // Y ticks (count axis) — right-aligned to axis line.
+  ctx.fillStyle = C.text;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = (maxCount * i) / yTicks;
+    const lbl = Math.round(v).toString();
+    const y = h - padB - (i / yTicks) * plotH;
+    const tw = ctx.measureText(lbl).width;
+    ctx.fillText(lbl, padL - 4 - tw, y + 3);
+    if (i > 0) { ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke(); }
+  }
+  // X ticks — bin centers, strided so labels don't overlap. Width-adaptive.
+  const xLabels = counts.map((_, i) => labelFmt(min + i * binW + binW / 2));
+  let widestX = 0;
+  for (const l of xLabels) widestX = Math.max(widestX, ctx.measureText(String(l)).width);
+  const xSpacing = Math.max(40, widestX + 10);
+  const stride = Math.max(1, Math.ceil((bins * (plotW / bins)) / (plotW / Math.ceil(plotW / xSpacing))));
+  const wantLabels = Math.max(2, Math.floor(plotW / xSpacing));
+  const xStride = Math.max(1, Math.ceil(bins / wantLabels));
+  for (let i = 0; i < bins; i++) {
+    if (i % xStride !== 0 && i !== bins - 1) continue;
+    const cx = padL + (i + 0.5) * (plotW / bins);
+    const lbl = String(xLabels[i]);
+    const tw = ctx.measureText(lbl).width;
+    let lx = cx - tw / 2;
+    if (lx < padL) lx = padL;
+    if (lx + tw > w - padR) lx = w - padR - tw;
+    ctx.fillText(lbl, lx, h - padB + 14);
+  }
+  // Bars
   counts.forEach((c, i) => {
-    const x = pad + (i / bins) * plotW;
-    const bw = plotW / bins - 2;
+    const x = padL + (i / bins) * plotW;
+    const bw = Math.max(1, plotW / bins - 2);
     const val = useLog ? Math.log(1 + c) : c;
     const bh = (val / plotMax) * plotH;
     const binStart = min + i * binW;
     ctx.fillStyle = binStart < 0 ? C.neg : binStart < binW ? C.accent : C.pos;
-    ctx.fillRect(x + 1, h - pad - bh, bw, bh);
+    ctx.fillRect(x + 1, h - padB - bh, bw, bh);
   });
+  // Top-row badges (log indicator, clipped indicator) — stacked rows so they
+  // never collide with each other or with the tallest bar.
+  ctx.fillStyle = C.text; ctx.font = 'italic 10px -apple-system, sans-serif';
+  let badgeY = padT - 8;
   if (useLog) {
-    ctx.fillStyle = C.text; ctx.font = 'italic 10px -apple-system, sans-serif';
-    ctx.fillText('log-scale y · bar height = ln(1+count)', pad + 6, pad + 12);
+    ctx.fillText('log-scale y · bar height = ln(1+count)', padL + 4, badgeY);
+    badgeY += 12;
   }
   if (clipped > 0) {
-    ctx.fillStyle = C.text; ctx.font = 'italic 10px -apple-system, sans-serif';
-    ctx.fillText(clipped + ' outlier' + (clipped > 1 ? 's' : '') + ' clipped to range', pad + 6, pad + (useLog ? 26 : 12));
+    ctx.fillText(clipped + ' outlier' + (clipped > 1 ? 's' : '') + ' clipped to range', padL + 4, badgeY);
   }
   // Axis titles
   ctx.fillStyle = C.text; ctx.font = '10px -apple-system, sans-serif';
   if (opts.xLabel) {
     const t = opts.xLabel; const tw = ctx.measureText(t).width;
-    ctx.fillText(t, (w + pad) / 2 - tw / 2, h - 4);
+    ctx.fillText(t, padL + (plotW - tw) / 2, h - 4);
   }
   if (opts.yLabel) {
-    ctx.save(); ctx.translate(12, h / 2); ctx.rotate(-Math.PI / 2);
+    ctx.save(); ctx.translate(12, padT + plotH / 2); ctx.rotate(-Math.PI / 2);
     const t = opts.yLabel; ctx.fillText(t, -ctx.measureText(t).width / 2, 0);
     ctx.restore();
   }
@@ -7852,14 +7914,24 @@ function computeH2HMatrixByQuartile(pool, events) {
 }
 
 function computeScoreTrajectory(events, seasons) {
+  // Iterate over the YEARS PRESENT IN EVENTS, not a hardcoded 1..seasons.
+  // Continuation runs (Run 2 = Y16..Y30, Run 3 = Y31..Y45, ...) carry years
+  // outside the 1..seasons range. Any event with a non-finite champScore is
+  // dropped from the per-year aggregate so a single corrupt entry can't poison
+  // the avg/min into NaN, which would make drawCurve render a blank chart.
   const out = [];
-  for (let y = 1; y <= seasons; y++) {
-    const yr = events.filter(e => e.year === y);
-    if (yr.length === 0) continue;
-    const champ = yr.map(e => e.champScore);
-    const avg = champ.reduce((a,b) => a+b, 0) / champ.length;
+  if (!events || events.length === 0) return out;
+  const yearSet = new Set();
+  for (const e of events) if (Number.isFinite(+e.year)) yearSet.add(+e.year);
+  const years = Array.from(yearSet).sort((a, b) => a - b);
+  for (const y of years) {
+    const champ = events
+      .filter(e => +e.year === y && Number.isFinite(+e.champScore))
+      .map(e => +e.champScore);
+    if (champ.length === 0) continue;
+    const avg = champ.reduce((a, b) => a + b, 0) / champ.length;
     const min = Math.min.apply(null, champ);
-    out.push({ year: y, avg, min, count: yr.length });
+    out.push({ year: y, avg, min, count: champ.length });
   }
   return out;
 }
@@ -7943,69 +8015,177 @@ function computeAvgFinalsDaySpread(events) {
 
 function drawCurve(canvas, points, xKey, yKey, opts) {
   opts = opts || {};
-  const w = canvas.width, h = canvas.height, pad = 38;
+  const w = canvas.width, h = canvas.height;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
   const C = chartColors();
+  // Adaptive padding: Y-axis pad must hold the widest tick label; X-axis pad
+  // must clear the tick label + axis title row. Sample the formatter early to
+  // size them, so wide labels (money like "-$1.50M") don't overrun the axis.
+  const titleSlot = opts.xLabel ? 16 : 0;            // bottom row for x-axis title
+  const yLabelSlot = opts.yLabel ? 16 : 0;           // left column for y-axis title
+  const padT = 22;                                   // top breathing room (best-fit / log-scale badges)
+  const padB = 22 + titleSlot;
   // Empty / invalid data: render a visible placeholder so the chart doesn't silently blank.
   function noData(reason) {
     ctx.fillStyle = C.text; ctx.font = 'italic 11px -apple-system, sans-serif';
-    ctx.fillText(reason || 'No data available', pad + 6, h / 2);
+    ctx.fillText(reason || 'No data available', 12, h / 2);
   }
   if (!points || points.length === 0) { noData('No data for this run'); return; }
-  const xs = points.map(p => p[xKey]).filter(Number.isFinite);
-  const ys = points.map(p => p[yKey]).filter(Number.isFinite);
-  if (xs.length === 0 || ys.length === 0) { noData('No valid data points'); return; }
+  // Filter to points whose x AND y are both finite — drop the rest so a single
+  // corrupt entry can't poison the curve. Without this, one NaN propagates
+  // through Math.min/max and the chart silently blanks.
+  const valid = points.filter(p => Number.isFinite(+p[xKey]) && Number.isFinite(+p[yKey]));
+  if (valid.length === 0) { noData('No valid data points'); return; }
+  const xs = valid.map(p => +p[xKey]);
+  const ys = valid.map(p => +p[yKey]);
   const okNum = (v) => (typeof v === 'number' && Number.isFinite(v));
   const xMin = okNum(opts.xMin) ? opts.xMin : Math.min.apply(null, xs);
   const xMax = okNum(opts.xMax) ? opts.xMax : Math.max.apply(null, xs);
-  // Auto-range Y: include negatives if any data is negative (Model B has all-negative champion scores).
-  const yDataMin = Math.min.apply(null, ys);
-  const yDataMax = Math.max.apply(null, ys);
+  // Symmetric-log Y option: useful for cumulative series that span 3+ orders of
+  // magnitude (early-year revenue $0–$50k vs late-year $30M+ would be invisible
+  // on linear). We use sign(y)·log1p(|y|) so zero/negatives still plot.
+  const useLogY = !!opts.logScale;
+  const symLog = (v) => (v >= 0 ? 1 : -1) * Math.log(1 + Math.abs(v));
+  const yTransform = useLogY ? symLog : ((v) => v);
+  const ysT = ys.map(yTransform);
+  const yDataMin = Math.min.apply(null, ysT);
+  const yDataMax = Math.max.apply(null, ysT);
   const yPad = Math.max(0.1, (yDataMax - yDataMin) * 0.1);
-  let yMin = okNum(opts.yMin) ? opts.yMin : (yDataMin < 0 ? yDataMin - yPad : 0);
-  let yMax = okNum(opts.yMax) ? opts.yMax : (yDataMax > 0 ? yDataMax + yPad : yPad);
+  let yMin = okNum(opts.yMin) && !useLogY ? opts.yMin : (yDataMin < 0 ? yDataMin - yPad : 0);
+  let yMax = okNum(opts.yMax) && !useLogY ? opts.yMax : (yDataMax > 0 ? yDataMax + yPad : yPad);
   // Degenerate: all y values equal (1-point data, or flat line). Open the range so the line is visible.
   if (yMax - yMin < 0.5) {
     const center = (yMax + yMin) / 2;
     yMin = center - 1;
     yMax = center + 1;
   }
+  // Build Y tick label strings up front so we can size padL to the widest label.
+  ctx.font = '10px -apple-system, sans-serif';
+  const ySteps = 5;
+  const yTickLabels = [];
+  for (let i = 0; i <= ySteps; i++) {
+    const tickT = yMin + (yMax - yMin) * (i / ySteps);
+    const tickRaw = useLogY ? (Math.sign(tickT) * (Math.exp(Math.abs(tickT)) - 1)) : tickT;
+    const lbl = opts.yFormat ? opts.yFormat(tickRaw) : tickRaw.toFixed(opts.yDecimals != null ? opts.yDecimals : 1);
+    yTickLabels.push(lbl);
+  }
+  const widestY = Math.max.apply(null, yTickLabels.map(l => ctx.measureText(l).width));
+  const padL = yLabelSlot + Math.max(28, Math.ceil(widestY) + 8);
+  const padR = 14;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
   // axes
   ctx.strokeStyle = C.axis; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(pad, pad); ctx.lineTo(pad, h - pad); ctx.lineTo(w - pad, h - pad); ctx.stroke();
-  ctx.fillStyle = C.text; ctx.font = '10px -apple-system, sans-serif';
-  const ySteps = 5;
+  ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, h - padB); ctx.lineTo(w - padR, h - padB); ctx.stroke();
+  ctx.fillStyle = C.text;
+  // Y ticks — right-aligned to axis so wide money labels don't enter the plot.
   for (let i = 0; i <= ySteps; i++) {
-    const v = yMin + (yMax - yMin) * (i / ySteps);
-    const y = h - pad - (i / ySteps) * (h - 2 * pad);
-    ctx.fillText(v.toFixed(opts.yDecimals != null ? opts.yDecimals : 1), 4, y + 3);
-    if (i > 0) { ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(w - pad, y); ctx.stroke(); }
+    const lbl = yTickLabels[i];
+    const y = h - padB - (i / ySteps) * plotH;
+    const tw = ctx.measureText(lbl).width;
+    ctx.fillText(lbl, padL - 4 - tw, y + 3);
+    if (i > 0) { ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke(); }
   }
-  const xSteps = 4;
+  // X ticks — text-width-centered, clamped to plot bounds, with adaptive count
+  // so labels don't overlap on narrow canvases. xDecimals=0 → integer ticks
+  // (year axes need this; previously 16..30 produced "16.00, 19.50, ..." with
+  // forced decimals).
+  const xDecimals = opts.xDecimals != null ? opts.xDecimals : 2;
+  const xFmt = (v) => xDecimals === 0 ? Math.round(v).toString() : v.toFixed(xDecimals);
+  // Estimate label width using the wider of xMin/xMax samples + 12px breathing room.
+  const sampleW = Math.max(ctx.measureText(xFmt(xMin)).width, ctx.measureText(xFmt(xMax)).width);
+  const targetSpacing = Math.max(40, sampleW + 12);
+  const xSteps = Math.max(2, Math.min(6, Math.floor(plotW / targetSpacing)));
   for (let i = 0; i <= xSteps; i++) {
     const v = xMin + (xMax - xMin) * (i / xSteps);
-    const x = pad + (i / xSteps) * (w - 2 * pad);
-    ctx.fillStyle = C.text; ctx.fillText(v.toFixed(opts.xDecimals != null ? opts.xDecimals : 2), x - 10, h - pad + 14);
+    const x = padL + (i / xSteps) * plotW;
+    const lbl = xFmt(v);
+    const tw = ctx.measureText(lbl).width;
+    let lx = x - tw / 2;
+    if (lx < padL) lx = padL;                       // left-clamp
+    if (lx + tw > w - padR) lx = w - padR - tw;     // right-clamp
+    ctx.fillStyle = C.text; ctx.fillText(lbl, lx, h - padB + 14);
   }
-  // curve
-  const plotX = (v) => pad + ((v - xMin) / (xMax - xMin || 1)) * (w - 2 * pad);
-  const plotY = (v) => h - pad - ((v - yMin) / (yMax - yMin || 1)) * (h - 2 * pad);
+  // curve (uses transformed y so log mode plots correctly)
+  const plotX = (v) => padL + ((v - xMin) / (xMax - xMin || 1)) * plotW;
+  const plotY = (v) => h - padB - ((yTransform(v) - yMin) / (yMax - yMin || 1)) * plotH;
   ctx.strokeStyle = opts.color || C.primary;
   ctx.lineWidth = 2.5;
   ctx.beginPath();
-  points.forEach((p, i) => {
-    const px = plotX(p[xKey]), py = plotY(p[yKey]);
+  valid.forEach((p, i) => {
+    const px = plotX(+p[xKey]), py = plotY(+p[yKey]);
     if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
   });
   ctx.stroke();
   // dots
   ctx.fillStyle = opts.color || C.primary;
-  for (const p of points) {
-    ctx.beginPath(); ctx.arc(plotX(p[xKey]), plotY(p[yKey]), 3, 0, 2 * Math.PI); ctx.fill();
+  for (const p of valid) {
+    ctx.beginPath(); ctx.arc(plotX(+p[xKey]), plotY(+p[yKey]), 3, 0, 2 * Math.PI); ctx.fill();
   }
-  // labels
-  if (opts.xLabel) { ctx.fillStyle = C.text; ctx.fillText(opts.xLabel, w - pad - ctx.measureText(opts.xLabel).width, h - 6); }
-  if (opts.yLabel) { ctx.save(); ctx.fillStyle = C.text; ctx.translate(12, h / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(opts.yLabel, 0, 0); ctx.restore(); }
+  // Best-fit overlay — least-squares linear regression in transformed Y space so
+  // it reads naturally on log charts too. Drawn dashed in the accent color so it
+  // doesn't compete visually with the data line. Useful for noisy time series
+  // (Avg Champion Score · Year jitters event-by-event but trends slowly).
+  let drewBestFit = false;
+  if (opts.bestFit === 'linear' && valid.length >= 2) {
+    const n = valid.length;
+    let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (let i = 0; i < n; i++) {
+      const xv = xs[i], yv = ysT[i];
+      sx += xv; sy += yv; sxx += xv * xv; sxy += xv * yv;
+    }
+    const denom = n * sxx - sx * sx;
+    if (Math.abs(denom) > 1e-9) {
+      const slope = (n * sxy - sx * sy) / denom;
+      const intercept = (sy - slope * sx) / n;
+      const fitX1 = xMin, fitX2 = xMax;
+      const fitT1 = slope * fitX1 + intercept;
+      const fitT2 = slope * fitX2 + intercept;
+      const fitPx1 = plotX(fitX1);
+      const fitPy1 = h - padB - ((fitT1 - yMin) / (yMax - yMin || 1)) * plotH;
+      const fitPx2 = plotX(fitX2);
+      const fitPy2 = h - padB - ((fitT2 - yMin) / (yMax - yMin || 1)) * plotH;
+      ctx.save();
+      ctx.strokeStyle = C.accent;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(fitPx1, fitPy1);
+      ctx.lineTo(fitPx2, fitPy2);
+      ctx.stroke();
+      ctx.restore();
+      drewBestFit = true;
+    }
+  }
+  // Top-row badges — measureText-positioned, right-aligned, with explicit gap so
+  // they don't collide with each other or with data points near the top edge.
+  ctx.font = 'italic 10px -apple-system, sans-serif';
+  ctx.fillStyle = C.text;
+  let badgeRight = w - padR - 2;
+  if (drewBestFit) {
+    const t = 'best fit';
+    const tw = ctx.measureText(t).width;
+    ctx.fillText(t, badgeRight - tw, padT - 6);
+    badgeRight -= tw + 12;
+  }
+  if (useLogY) {
+    const t = 'log-scale y';
+    const tw = ctx.measureText(t).width;
+    ctx.fillText(t, badgeRight - tw, padT - 6);
+  }
+  // Axis titles — placed in dedicated slots so they never overlap tick labels.
+  ctx.font = '10px -apple-system, sans-serif';
+  if (opts.xLabel) {
+    ctx.fillStyle = C.text;
+    const t = opts.xLabel, tw = ctx.measureText(t).width;
+    ctx.fillText(t, padL + (plotW - tw) / 2, h - 4);
+  }
+  if (opts.yLabel) {
+    ctx.save(); ctx.fillStyle = C.text;
+    ctx.translate(12, padT + plotH / 2);
+    ctx.rotate(-Math.PI / 2);
+    const t = opts.yLabel, tw = ctx.measureText(t).width;
+    ctx.fillText(t, -tw / 2, 0); ctx.restore();
+  }
 }
 
 function drawHeatmap(canvas, matrix, labelsX, labelsY, opts) {
@@ -8110,13 +8290,19 @@ function drawTierConversions(canvas, tiers) {
     const ltxtW = ctx.measureText(ltxt).width;
     ctx.fillText(ltxt, gx + (barW * 3 + 4) / 2 - ltxtW / 2, h - padB + 14);
   });
-  // Legend at top
+  // Legend at top — measureText-driven so swatches and labels never collide,
+  // and the legend wraps to a second row if it exceeds the available width.
   ctx.font = '10px -apple-system, sans-serif';
-  let lx = padL + 4;
+  const sw = 10, gap = 4, itemGap = 14;
+  let lx = padL + 4, ly = 14;
+  const maxX = w - padR - 4;
   legendLabels.forEach((lab, i) => {
-    ctx.fillStyle = colors[i]; ctx.fillRect(lx, 12, 10, 8);
-    ctx.fillStyle = C.text; ctx.fillText(lab, lx + 14, 20);
-    lx += 14 + ctx.measureText(lab).width + 18;
+    const tw = ctx.measureText(lab).width;
+    const itemW = sw + gap + tw;
+    if (lx + itemW > maxX && lx > padL + 4) { lx = padL + 4; ly += 14; }
+    ctx.fillStyle = colors[i]; ctx.fillRect(lx, ly - 2, sw, 8);
+    ctx.fillStyle = C.text; ctx.fillText(lab, lx + sw + gap, ly + 6);
+    lx += itemW + itemGap;
   });
 }
 
@@ -9902,6 +10088,7 @@ function renderActiveRun(root, r) {
       color: chartColors().accent,
       yMin: Math.min(-1, Math.floor(scoreStats.min) - 1),
       yMax: Math.max(1, Math.ceil(scoreStats.max) + 1),
+      bestFit: 'linear',
     });
     drawStackedArea(cv4, ['preflop','flop','turn','river'].map(s => ({ label: streetLabel(s), check: m.actionRate[s].check || 0, bet: m.actionRate[s].bet || 0, call: m.actionRate[s].call || 0, raise: m.actionRate[s].raise || 0, fold: m.actionRate[s].fold || 0 })), ['check','bet','call','raise','fold'], ['check','bet','call','raise','fold']);
     drawHeatmap(cv5, m.h2hMatrix.rate, ['Q1','Q2','Q3','Q4'], ['Q1','Q2','Q3','Q4'], { xTitle: 'Runner-up quartile', yTitle: 'Champion quartile' });
@@ -9945,6 +10132,9 @@ function renderActiveRun(root, r) {
         labelFormat: v => Math.round(v),
         xLabel: 'Career golf total',
         yLabel: 'Players',
+        // Career-total spreads can have a long tail (a few players with -200+
+        // dominate the bin counts). Auto-log keeps the body and tail both readable.
+        logScale: 'auto',
       });
       // Update note with % below par
       const underPar = careerScores.filter(v => v < 0).length;
@@ -9956,7 +10146,14 @@ function renderActiveRun(root, r) {
     }
     if (hasEco) {
       drawROITiers(cv7, m.economics.tiers);
-      drawFoundationRevenue(cv8, m.economics.foundationSeries);
+      // Auto-engage log-cumulative when the cumulative max exceeds 100× the first
+      // year's value — that's the threshold past which linear scaling crushes
+      // the early years against the floor.
+      const fs = m.economics.foundationSeries || [];
+      const firstCum = fs.length > 0 ? Math.max(1, fs[0].cumulative || 0) : 1;
+      const lastCum = fs.length > 0 ? (fs[fs.length - 1].cumulative || 0) : 0;
+      const useLogCum = lastCum / firstCum >= 100;
+      drawFoundationRevenue(cv8, fs, { logCumulative: useLogCum });
       drawRevenueByType(cv9, m.economics.revByType);
       const buckets = m.economics.profitBuckets;
       if (buckets.length > 0) {
@@ -9984,6 +10181,10 @@ function renderActiveRun(root, r) {
           labelFormat: v => fmtMoney(v),
           xLabel: 'Career P&L',
           yLabel: 'Players',
+          // Profit distribution is heavy-tailed: most players cluster around the
+          // small-loss bin, a handful of dynasties sit at +$15M+. Auto-log so the
+          // tail is visible without flattening the central pile to one tall bar.
+          logScale: 'auto',
         });
       }
     }
@@ -10030,15 +10231,40 @@ function drawROITiers(canvas, tiers) {
   const yt = 'Return on buy-ins'; ctx.fillText(yt, -ctx.measureText(yt).width / 2, 0); ctx.restore();
 }
 
-function drawFoundationRevenue(canvas, series) {
+function drawFoundationRevenue(canvas, series, opts) {
+  opts = opts || {};
   const w = canvas.width, h = canvas.height;
-  const padL = 66, padR = 66, padT = 32, padB = 32;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
   const C = chartColors();
   if (series.length === 0) return;
 
+  // Log option: when cumulative spans 3+ orders of magnitude (Y1 ~$50k vs Y45
+  // ~$50M), linear scaling crushes early years against the floor. log1p keeps
+  // the early growth and the late plateau both legible.
+  const useLogCum = !!opts.logCumulative;
+  const cumT = (v) => useLogCum ? Math.log(1 + Math.max(0, v)) : v;
+
   const yearRevMax = Math.max(1, Math.max.apply(null, series.map(s => s.revenue)) * 1.15);
-  const cumMax = Math.max(1, Math.max.apply(null, series.map(s => s.cumulative)) * 1.05);
+  const cumRawMax = Math.max(1, Math.max.apply(null, series.map(s => s.cumulative)));
+  const cumMax = useLogCum ? cumT(cumRawMax) * 1.05 : cumRawMax * 1.05;
+
+  // Adaptive padding driven by the widest tick label on each axis. Without this,
+  // a $1.50M label at padL=66 leaves only 10px to the title slot — labels collide
+  // with the rotated axis title on narrow canvases.
+  ctx.font = '10px -apple-system, sans-serif';
+  const sampleSteps = 5;
+  let widestLeft = 0, widestRight = 0;
+  for (let i = 0; i <= sampleSteps; i++) {
+    const lv = (yearRevMax * i) / sampleSteps;
+    widestLeft = Math.max(widestLeft, ctx.measureText(fmtMoney(lv)).width);
+    const rT = (cumMax * i) / sampleSteps;
+    const rRaw = useLogCum ? (Math.exp(rT) - 1) : rT;
+    widestRight = Math.max(widestRight, ctx.measureText(fmtMoney(rRaw)).width);
+  }
+  const padL = 18 /* axis title slot */ + Math.ceil(widestLeft) + 10;
+  const padR = 18 /* axis title slot */ + Math.ceil(widestRight) + 10;
+  const padT = 30; // legend row + breathing
+  const padB = 32; // x ticks + breathing
   const plotW = w - padL - padR, plotH = h - padT - padB;
 
   // axes frames
@@ -10060,11 +10286,13 @@ function drawFoundationRevenue(canvas, series) {
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
     }
   }
-  // right-axis ticks (cumulative scale)
+  // right-axis ticks (cumulative scale) — display untransformed money values
+  // even when plotting on a log axis, so the labels stay readable.
   for (let i = 0; i <= steps; i++) {
-    const v = (cumMax * i) / steps;
+    const tickT = (cumMax * i) / steps;
+    const tickRaw = useLogCum ? (Math.exp(tickT) - 1) : tickT;
     const y = h - padB - (i / steps) * plotH;
-    const lbl = fmtMoney(v);
+    const lbl = fmtMoney(tickRaw);
     ctx.fillText(lbl, w - padR + 6, y + 3);
   }
 
@@ -10079,8 +10307,10 @@ function drawFoundationRevenue(canvas, series) {
     ctx.fillText(lbl, x - ctx.measureText(lbl).width / 2, h - padB + 14);
   });
 
-  // per-year bars (scaled to left axis)
-  const barW = Math.min(32, step - 6);
+  // per-year bars (scaled to left axis). For long series (e.g., 45 years), step
+  // shrinks so bars become slivers — keep at least 1px and add a 1px gap so
+  // adjacent bars stay visually separable.
+  const barW = Math.max(1, Math.min(32, step - 2));
   series.forEach((s, i) => {
     const x = padL + step * i + (step - barW) / 2;
     const bh = (s.revenue / yearRevMax) * plotH;
@@ -10088,37 +10318,60 @@ function drawFoundationRevenue(canvas, series) {
     ctx.fillRect(x, h - padB - bh, barW, bh);
   });
 
-  // cumulative line (scaled to right axis)
+  // cumulative line (scaled to right axis; transformed if log mode)
   ctx.strokeStyle = C.primary; ctx.lineWidth = 2.5;
   ctx.beginPath();
   series.forEach((s, i) => {
     const x = padL + step * (i + 0.5);
-    const y = h - padB - (s.cumulative / cumMax) * plotH;
+    const y = h - padB - (cumT(s.cumulative) / cumMax) * plotH;
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
   ctx.stroke();
   ctx.fillStyle = C.primary;
   series.forEach((s, i) => {
     const x = padL + step * (i + 0.5);
-    const y = h - padB - (s.cumulative / cumMax) * plotH;
+    const y = h - padB - (cumT(s.cumulative) / cumMax) * plotH;
     ctx.beginPath(); ctx.arc(x, y, 3, 0, 2 * Math.PI); ctx.fill();
   });
 
-  // Axis titles
+  // Axis titles — placed in the dedicated 18px slot at each side.
   ctx.fillStyle = C.text; ctx.font = '10px -apple-system, sans-serif';
-  ctx.save(); ctx.translate(14, (padT + h - padB) / 2); ctx.rotate(-Math.PI / 2);
+  ctx.save(); ctx.translate(12, padT + plotH / 2); ctx.rotate(-Math.PI / 2);
   const lbl1 = 'Per-year rake ($)';
   ctx.fillText(lbl1, -ctx.measureText(lbl1).width / 2, 0); ctx.restore();
-  ctx.save(); ctx.translate(w - 14, (padT + h - padB) / 2); ctx.rotate(Math.PI / 2);
-  const lbl2 = 'Cumulative ($)';
+  ctx.save(); ctx.translate(w - 6, padT + plotH / 2); ctx.rotate(Math.PI / 2);
+  const lbl2 = useLogCum ? 'Cumulative ($, log)' : 'Cumulative ($)';
   ctx.fillText(lbl2, -ctx.measureText(lbl2).width / 2, 0); ctx.restore();
 
-  // Legend
-  ctx.font = '11px -apple-system, sans-serif';
-  ctx.fillStyle = C.accent; ctx.fillRect(padL + 8, 10, 10, 8);
-  ctx.fillStyle = C.text; ctx.fillText('Per-year rake', padL + 24, 18);
-  ctx.fillStyle = C.primary; ctx.fillRect(padL + 144, 10, 10, 8);
-  ctx.fillStyle = C.text; ctx.fillText('Cumulative foundation', padL + 160, 18);
+  // Legend — measureText-positioned so swatches and labels stay clear of each
+  // other, and the whole row is centered above the plot. Falls back to 11px → 10px
+  // if the legend is wider than the plot.
+  const legendItems = [
+    { color: C.accent, text: 'Per-year rake' },
+    { color: C.primary, text: useLogCum ? 'Cumulative foundation (log)' : 'Cumulative foundation' },
+  ];
+  const swatch = 10, gap = 6, itemGap = 18;
+  function legendWidth(font) {
+    ctx.font = font + ' -apple-system, sans-serif';
+    let total = 0;
+    legendItems.forEach((it, i) => {
+      total += swatch + gap + ctx.measureText(it.text).width;
+      if (i < legendItems.length - 1) total += itemGap;
+    });
+    return total;
+  }
+  let legendFont = '11px';
+  let lw = legendWidth(legendFont);
+  if (lw > plotW) { legendFont = '10px'; lw = legendWidth(legendFont); }
+  ctx.font = legendFont + ' -apple-system, sans-serif';
+  let lx = padL + Math.max(0, (plotW - lw) / 2);
+  const ly = 10;
+  legendItems.forEach(it => {
+    ctx.fillStyle = it.color; ctx.fillRect(lx, ly, swatch, 8);
+    lx += swatch + gap;
+    ctx.fillStyle = C.text; ctx.fillText(it.text, lx, ly + 8);
+    lx += ctx.measureText(it.text).width + itemGap;
+  });
 }
 
 function drawRevenueByType(canvas, revByType) {
