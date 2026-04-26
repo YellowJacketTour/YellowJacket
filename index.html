@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.26-v26";
+const APP_VERSION = "2026.04.26-v27";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3159,8 +3159,14 @@ function buzzAvatarSVG(size) {
 
 function formatScore(n) {
   if (n == null) return '-';
-  if (n > 0) return '+' + n;
-  return String(n);
+  if (typeof n !== 'number' || !Number.isFinite(n)) return String(n);
+  // YJ totals can be fractional once the honey divisor is applied (e.g. 18-hole
+  // game with 50 honey credits → 50/18 = 2.78). Render integers as integers,
+  // and fractions to one decimal so the scorecard stays readable.
+  const isInt = Math.abs(n - Math.round(n)) < 1e-9;
+  const shown = isInt ? Math.round(n) : Number(n.toFixed(1));
+  if (shown > 0) return '+' + shown;
+  return String(shown);
 }
 
 function statCard(label, value, delta, valueClass) {
@@ -3574,69 +3580,69 @@ Views.codex = function() {
     p('Honey is always the light drizzle on top of the dominant golf scorecard. Lower total wins.'),
     h3('Permanent Invariants'),
     ul([
-      'honeyMagnitudeTamed = true — the divisor scales by round length so honey is never overpowering.',
-      'Mandatory starting pot = 2 honey per hole (prevents check-fests).',
-      'carryOverEnabled = true in finals only — tied holes carry the pot to the next decisive hole during 72-hole finals; outside of finals, tied pots are simply not awarded.',
-      'Last-agreed-total semantics — no summing, no doubling, no matched contributions anywhere in the engine.',
-      'These are not user-tunable. They are the law.',
+      'Mandatory starting pot = 2 honey per hole. Every hole opens with the pot already at 2 honey before any betting decision is made. There are no blinds or antes.',
+      'Honey divisor scales by round length: 72-hole rounds use divisor 72, 18-hole rounds use 18, 9-hole rounds use 9, 1-hole quick matches use 1 (full-value honey). The divisor is set by the round\'s total hole count, not by the event tier.',
+      'Last-agreed-total wagering: a bet or raise sets a NEW agreed total pot size; a call accepts that total. The pot is always exactly the most recently agreed total — never a sum of contributions, never doubled, never matched.',
+      'Tied-hole carry: when a hole ends in a tied showdown (both players make the same hand value), both players score 0 (par) for the hole and the entire pot rolls forward as the starting honey for the NEXT hole in the same match. Carry compounds across consecutive ties until one player wins a decisive hole, at which point the winner takes the full accumulated pot. Carries stay within a single match; no carry crosses match boundaries.',
+      'Uniform fold rule on every street: the folder loses the previously agreed pot in honey and posts +1 bogey on the scorecard. The non-folder takes 0 (par) on the scorecard and gains the previously agreed pot in honey. There is no street-based fold-penalty table.',
+      'These rules are not user-tunable. They are the law.',
     ])
   );
   view.appendChild(law);
 
   // ---- Tournament Formats ----
   const fmt = section('2 · Tournament Formats',
-    p('The Yellow Jacket engine supports two tournament structures. Each captures a different cultural feel.'),
+    p('The Yellow Jacket engine supports two tournament structures, switchable per simulation run. Both formats use the same per-hole engine — only the macro structure differs.'),
     h3('Bracket Knockout (WSOP feel)'),
-    p('Default. Single-elimination bracket. Each round is a heads-up match: 9-hole rounds while the field is larger than 16, then 18-hole rounds until only 2 finalists remain. Those two play a 72-hole heads-up final (4 days × 18 holes). Champion is the last player standing.'),
-    p('Drama-forward: every match has elimination pressure. One cooler can end your event. Rewards short-burst dominance.'),
+    p('Single-elimination bracket. Heads-up matches throughout. Match length scales with bracket depth: 9-hole matches while the field is larger than 16 players, 18-hole matches once the field is 16 or fewer, and a 72-hole heads-up final between the last two players standing. The 72-hole final is played as four 18-hole rounds, and its honey divisor is 72 (not 18); the 9- and 18-hole earlier rounds use divisors 9 and 18 respectively. Champion = last player standing. Each match has elimination pressure; one cooler ends your event.'),
     h3('Aggregate Stroke Play (PGA Masters feel)'),
-    p('Optional, configurable. Every player in the field plays 4 rounds × 18 holes = 72 holes. Each round you are paired with a fresh opponent (rotating-partner stroke play). Per-hole zero-sum honey credits still apply within each pairing, then total net honey is divided by 18 before scoring. After 72 holes, the player with the lowest total net score is crowned. Cuts at 36 and 54 holes optionally trim the field.'),
-    p('Authentic golf-major feel. Champions earn it across 72 holes, not by surviving one bracket. Lower per-event variance, stronger long-run skill signal.'),
-    h3('The Main Event (always hybrid in aggregate mode)'),
-    p('When the engine runs aggregate format, the Main Event still uses bracket cuts to trim its 30,000-seat field down to 9–18 finalists, who then play a 72-hole aggregate stroke-play final among themselves. WSOP cuts → PGA-Masters final.'),
+    p('Every player in the field plays 4 rounds × 18 holes = 72 total holes. Each round you are paired with a fresh opponent (rotating-partner stroke play). Per-hole zero-sum honey credits accumulate within each pairing; at the end of 72 holes, total net honey across all four rounds is divided by 72 (the round length, not 18) and subtracted from your total scorecard. The player with the lowest net total wins. Optional cuts at the 36-hole and 54-hole marks trim the field. Lower per-event variance, stronger long-run skill signal than bracket play.'),
+    h3('The Main Event'),
+    p('Single championship per season. The default Main field is ' + fmtNum(cfg.mainField || 128) + ' players (Players-Championship-style invitational rather than mass-WSOP). Field composition is 70% via the satellite ladder and 30% direct entry (champion exemptions plus top season-points players); see Section 8 for the ladder mechanics. In bracket-knockout format, the Main runs as a standard bracket ending in a 72-hole heads-up final. In aggregate format, the Main runs as 72-hole aggregate stroke play across the entire field. Either way, the Main always settles on 72 holes.'),
     h3('Playoffs'),
-    p('Sudden death only when needed. If two or more players are tied for first after 72 holes, a 2–4 hole aggregate playoff resolves the tie. No mandatory 1v1 final ever required.')
+    p('Sudden-death only when needed. If two or more players are tied for first after the event\'s scheduled holes, a short 2–4 hole aggregate playoff resolves the tie. No mandatory 1v1 final is forced when the natural result is unambiguous.')
   );
   view.appendChild(fmt);
 
   // ---- Strategy ----
   const strat = section('3 · Strategy for the Elite',
-    h3('Honey-EV thinking'),
-    p('Every wagered stroke is a permanent adjustment to your scorecard. Treat large pots as exponentially more valuable than small ones — winning a big honey pot is worth more than several small ones combined. Aggressively build pots when you have equity; tighten dramatically when you do not.'),
-    h3('Threshold polarization'),
-    p('The Honey-Stroke AI reflects how skilled players actually play: bet/raise more aggressively in big pots with positive equity, fold faster in big pots with negative equity. Watch a Pro-tier or Elite-tier AI in Single Player mode and notice the polarization — that is the optimal pattern.'),
-    h3('Stroke-cap discipline'),
-    p('Every event has a per-street cap (Tea Box 25%, Drive 50%, Hazard 75%, Putt 100% of the event maximum). Use the cap, do not chase past it. Late-street pressure is most effective: Putt-street folds give the bettor a −2 scorecard reward.'),
-    h3('Tied-hole arithmetic'),
-    p('Carry pots are sneaky. After two tied holes, the next decisive winner picks up triple-loaded honey. If you suspect a tied showdown is coming on the river, consider the carry value to whoever wins the next hole. Sometimes a small bet on a tied river is worth more than a big bet on a decisive one.'),
+    h3('Pot-control wins seasons'),
+    p('The hand-strength distribution puts most showdowns at One Pair or worse — the modal showdown posts a slight bogey. Net scorecard improvement comes almost entirely from winning honey pots, not from holding strong hands. Build pots when you have an equity edge; concede them cheaply when you do not. The honey divisor (72 for full-event scoring) means you need many small pots — or a few large ones — to move the round score by a single stroke.'),
+    h3('The fold rule rewards ALL fold pressure equally'),
+    p('Every fold returns the same outcome to the bettor: 0 (par) on the scorecard plus the previously agreed pot in honey. There is NO street-based bonus — a Putt-street fold is no more valuable than a Tea Box fold in scorecard terms. What changes by street is the SIZE of the previously agreed pot: pots grow as betting progresses, so late-street folds tend to deliver more honey simply because the agreed total has had more rounds to climb.'),
+    h3('Per-event stroke caps and progressive street caps'),
+    p('Each event sets a maximum agreed pot size for the hole — the stroke cap. Default per-event caps: Regular ' + (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6) + ' honey, Major ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10) + ' honey, Main early rounds ' + (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' honey, Main 72-hole finals ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10) + ' honey. Within each hole, the cap unlocks progressively by street: Tea Box 25%, Drive 50%, Hazard 75%, Putt 100%. So in a Major (cap 10), a Tea Box bet cannot propose more than 3 honey total; by the Putt the full 10 is available. This forces escalation to feel like real no-limit poker rather than a single-cap free-for-all.'),
+    h3('Tied-hole carry arithmetic'),
+    p('When a hole ties at showdown, the entire pot rolls into the NEXT hole as starting honey. The next hole opens at (2 mandatory + carry) instead of just 2. Multiple consecutive ties stack: tie-of-tie produces a starting pot equal to the prior tied pot. Whoever wins the next decisive hole sweeps the entire stack at once. If you suspect a tied river is coming, a small bet that builds a small pot may be worth more than a large bet that you fold to — because the small carry survives into the next hole, while a fold loses the agreed total outright.'),
     h3('Major qualifier path'),
-    p('Top finishers in each major earn a free Main Event seat (the satellite mechanic). Defaults: top ' + (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 128) + ' qualifiers per major × 4 majors = up to ' + (4 * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 128)) + ' free seats per Main. Worth $10,000 each. Major performance compounds.'),
+    p('Top finishers in each major earn a free Main Event seat (the satellite mechanic). Current defaults: top ' + (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 512) + ' qualifiers per major × ' + (cfg.majors || 4) + ' majors = up to ' + ((cfg.majors || 4) * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 512)) + ' free seats per Main. Each seat is worth ' + fmtMoney(cfg.buyInMain || 10000) + ' (the direct buy-in price). Deep major performance compounds — a single major run can pay for a Main seat.'),
     h3('Long-run skill signal'),
-    p('Real poker tournaments produce high single-event variance even for the best players. The simulator\'s linear skillR² is naturally low (0.001–0.05 range) because one Main lottery win can dominate a career. The sharper signals are:'),
+    p('Heads-up poker tournaments produce high single-event variance even for the best players. The simulator\'s linear skillR² is naturally modest (0.05–0.45 range) because one Main lottery win can dominate a career. The sharper signals to track:'),
     ul([
-      'eliteMajorDominance — % of major wins captured by the top-10% skill tier (target: 25%+)',
-      'skillSpearman — rank correlation between skill and total wins (target: 0.15+)',
-      'finalsSkillEdge — mean skill difference between finalist and runner-up (target: positive)',
+      'eliteMajorDominance — fraction of major wins captured by the top-10% skill tier (calibrated target: 0.45–0.60).',
+      'skillSpearman — rank correlation between skill and career win totals (calibrated target: 0.20–0.40).',
+      'finalsSkillEdge — mean skill gap between champion and runner-up across all finals (target: > 0).',
+      'skillEVSpearman — rank correlation between skill and per-decision EV realization (target: > 0.30).',
     ])
   );
   view.appendChild(strat);
 
   // ---- Economics ----
   const eco = section('4 · Tour Economics',
-    p('Yellow Jacket Inc. operates the Tour. Buy-ins flow into a gross pool; rake (' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '% by default) goes to the foundation; the remainder forms the prize pool. Sponsor purses (TV / broadcast money in the real-world golf model) ride on top of the player money and are not raked.'),
+    p('Yellow Jacket Inc. operates the Tour. Every direct buy-in flows into a gross pool; rake (' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '% by default) is taken off the top to fund the Tour foundation, and the remainder becomes that event\'s prize pool. Sponsor purses, when configured (modeled after PGA Tour broadcast money), are added on top of the player prize pool and are NOT raked.'),
     h3('Buy-ins by event class'),
     tbl(
       ['Event', 'Buy-in', 'Field size'],
       [
-        ['Major', '$' + fmtNum(cfg.buyInMajor != null ? cfg.buyInMajor : 1000), fmtNum(cfg.majorField != null ? cfg.majorField : 256)],
-        ['Regular', '$' + fmtNum(cfg.buyInRegular != null ? cfg.buyInRegular : 100), fmtNum(cfg.regularField != null ? cfg.regularField : 1008)],
-        ['Main Event', '$' + fmtNum(cfg.buyInMain != null ? cfg.buyInMain : 10000), fmtNum(cfg.mainField != null ? cfg.mainField : 30000)],
+        ['Regular',    fmtMoney(cfg.buyInRegular != null ? cfg.buyInRegular : 100), fmtNum(cfg.regularField != null ? cfg.regularField : 2048)],
+        ['Major',      fmtMoney(cfg.buyInMajor   != null ? cfg.buyInMajor   : 1000), fmtNum(cfg.majorField   != null ? cfg.majorField   : 1024)],
+        ['Main Event', fmtMoney(cfg.buyInMain    != null ? cfg.buyInMain    : 10000), fmtNum(cfg.mainField    != null ? cfg.mainField    : 128)],
       ]
     ),
     h3('Payout structure'),
-    p('Geometric decay (default ' + (cfg.payoutDecay != null ? cfg.payoutDecay : 0.70) + ') across in-the-money finishers. Top 15% of the field cashes (min 2 places, max 64 places). Champion takes the largest single payout; subsequent places decay geometrically toward the cut line.'),
+    p('Top 15% of the field cashes (with a floor of 2 paid places and a cap of 64). Payouts decay geometrically across in-the-money finishers (default decay factor ' + (cfg.payoutDecay != null ? cfg.payoutDecay : 0.74) + ') — each successive finishing position pays the prior position multiplied by the decay factor, so the champion takes the largest single share and subsequent places taper toward the cut line.'),
     h3('Champion exemption'),
-    p('Past major winners enter majors free for ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years after their last win. Compounds career advantage for proven champions.')
+    p('A player who wins any major receives free entry into all subsequent majors for ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years after their most recent major win. The exemption renews every time they win another major. This compounds career advantage for proven champions and is paid for by the rake on direct entries.')
   );
   view.appendChild(eco);
 
@@ -3674,56 +3680,62 @@ Views.codex = function() {
   // hands earn negative golf scores. The honey pot is what differentiates the
   // skilled-pot-control champion from the field on top of those base numbers.
   const odds = section('7 · Odds & Breakout Tables',
-    p('Reference probabilities for serious Honey-Stroke study. Frequencies are standard 7-card Texas Hold\'em values; per-hole golf score columns reflect the live Yellow Jacket scoring table.'),
+    p('Reference probabilities for serious Honey-Stroke study. Frequencies are standard 7-card Texas Hold\'em values. Score columns show the live Yellow Jacket scorecard value (range −5..+2) that the corresponding final hand would post at showdown — see Section 1 for the full hand-to-score mapping.'),
     h3('Preflop Starting Hand Breakdown'),
+    p('Counts among the 1,326 distinct two-card starting combinations. The "expected showdown score" column is what your hand class typically converts to AT SHOWDOWN after seeing five community cards — preflop scoring is irrelevant; only the final 7-card hand matters.'),
     tbl(
-      ['Hand Type', 'Combinations', '% of All Hands', 'Typical Honey-Stroke Score'],
+      ['Hand Type', 'Combinations', '% of All Hands', 'Expected Showdown Score'],
       [
-        ['Pocket Pairs',                  '78',    '5.88%',  '+1 to +3'],
-        ['Suited Hands (non-pair)',       '312',   '23.53%', '+2 to +4'],
-        ['Offsuit Connectors / Gappers',  '~1,200','~45%',   '+3 to +4'],
-        ['All Other Offsuit',             '~3,366','25.06%', '+4'],
+        ['Pocket Pairs (TT–AA, premium)', '30',    '2.26%',  '0 to −1 (often improves to set/two pair)'],
+        ['Pocket Pairs (22–99, small)',   '48',    '3.62%',  '+1 to 0 (usually stays a pair)'],
+        ['Suited Connectors / Hi-Hi',     '~92',   '~6.9%',  '−1 to +1 (drawing strength)'],
+        ['Other Suited',                  '~220',  '~16.6%', '0 to +2'],
+        ['Offsuit Broadway',              '~144',  '~10.9%', '0 to +1'],
+        ['Other Offsuit',                 '~792',  '~59.7%', '+1 to +2'],
       ]
     ),
-    h3('Flop Breakout (5 cards total)'),
+    h3('Flop Breakout (post-flop, 5 cards seen)'),
+    p('What you typically hold immediately after the flop. The "showdown score if it holds" column estimates the scorecard value if the current made hand is also your final hand at showdown — actual showdown values may improve via turn/river.'),
     tbl(
-      ['Made Hand / Strong Draw', 'Probability', 'Honey-Stroke Score Impact'],
+      ['Made Hand / Strong Draw', 'Probability', 'Showdown Score if it Holds'],
       [
-        ['Set or better',                '11.8%',  '−2 to −3'],
-        ['Two Pair',                     '4.8%',   '+2'],
-        ['Top Pair + good kicker',       '17%',    '+3'],
-        ['Flush Draw (9 outs)',          '11.0%',  '−1 (if completed)'],
-        ['Open-Ended Straight Draw (8 outs)', '10.0%', '0 (if completed)'],
-        ['Gutshot Straight Draw (4 outs)',    '16.5%', '+1 to +2'],
-        ['Overcards / nothing',          '~40%',   '+4'],
+        ['Set or better (trips/quads/full)', '~11.8%', '−1 (trips), −2 to −3 (full house), −4 (quads)'],
+        ['Two Pair',                          '~4.8%',  '0 standard, −1 if J+ top pair'],
+        ['Top Pair, strong kicker',           '~17%',   '0 (TT+ pair) to +1 (lower pair)'],
+        ['Flush Draw (9 outs)',               '~11.0%', '−1 to −2 if completed; +1 to +2 if missed'],
+        ['Open-Ended Straight Draw (8 outs)', '~10.0%', '−1 to −2 if completed; +1 to +2 if missed'],
+        ['Gutshot Straight Draw (4 outs)',    '~16.5%', '−1 if completed; +1 to +2 if missed'],
+        ['Overcards / no made hand',          '~40%',   '+1 (J-high+ at showdown) to +2 (weak high card)'],
       ]
     ),
     h3('Turn & River Completion Odds'),
+    p('Odds of completing a draw on a single street, on the river only if you miss the turn, and cumulatively by the river. These are pure 52-card combinatorics and are independent of the Honey-Stroke scoring layer.'),
     tbl(
-      ['Draw Type', 'Outs', 'Turn Only', 'River Only (if missed turn)', 'By River'],
+      ['Draw Type', 'Outs', 'Turn Only', 'River Only (if missed turn)', 'By River (cumulative)'],
       [
         ['Flush Draw',                  '9',  '19.1%', '19.6%', '35.0%'],
         ['Open-Ended Straight Draw',    '8',  '17.0%', '17.4%', '31.5%'],
         ['Gutshot Straight Draw',       '4',  '8.5%',  '8.7%',  '16.5%'],
-        ['Flush Draw + Open-Ended',     '15', '31.9%', '32.6%', '54.1%'],
+        ['Flush + Open-Ended Combo',    '15', '31.9%', '32.6%', '54.1%'],
       ]
     ),
-    h3('Final Hand Distribution by River (7 cards total)'),
+    h3('Final Hand Distribution at Showdown (7 cards seen)'),
+    p('Probability that a 7-card hand falls into each category, and the Honey-Stroke scorecard value the hand posts. The "Score" column shows standard / premium-kicker buckets where applicable.'),
     tbl(
-      ['Final Hand Category', 'Probability', 'Honey-Stroke Score'],
+      ['Final Hand Category', 'Probability', 'Honey-Stroke Score (standard / premium)'],
       [
-        ['Straight Flush / Royal', '0.031%', '−5 / −4'],
-        ['Four of a Kind',         '0.168%', '−3'],
-        ['Full House',             '2.60%',  '−2'],
-        ['Flush',                  '3.03%',  '−1'],
-        ['Straight',               '4.62%',  '0'],
-        ['Three of a Kind',        '4.83%',  '+1'],
-        ['Two Pair',               '23.5%',  '+2'],
-        ['One Pair',               '43.0%',  '+3'],
-        ['High Card (no pair)',    '17.4%',  '+4'],
+        ['Royal / Straight Flush', '0.031%', '−5'],
+        ['Four of a Kind',         '0.168%', '−4'],
+        ['Full House',             '2.60%',  '−2 / −3 (J+ trips)'],
+        ['Flush',                  '3.03%',  '−1 / −2 (T-high+)'],
+        ['Straight',               '4.62%',  '−1 / −2 (9-high+)'],
+        ['Three of a Kind',        '4.83%',  '−1'],
+        ['Two Pair',               '23.5%',  '0 / −1 (J+ top pair)'],
+        ['One Pair',               '43.0%',  '+1 / 0 (TT+)'],
+        ['High Card (no pair)',    '17.4%',  '+2 / +1 (J-high+)'],
       ]
     ),
-    p('What this tells you: the modal showdown is One Pair, which posts a +3 bogey under the live scoring table. The field-average per-hole golf score is mildly positive — meaning *every champion below par was won on pot control*, not on hand frequency. This is why the honey pot is the load-bearing scoring layer: hand distribution puts everyone slightly above par; honey-credit accumulation is what pulls champions back into negative territory.')
+    p('What this tells you: the modal showdown is One Pair (~43%), which usually posts a +1 bogey or par under the live scoring table. About 60% of the time the field-average showdown is a Pair or High Card — slightly above par. Champions get below par almost entirely through honey credits won at showdown and via folds, not through frequent eagle-tier hands. Pot-control skill is the load-bearing scoring lever; hand frequency is the floor.')
   );
   view.appendChild(odds);
 
@@ -3733,20 +3745,20 @@ Views.codex = function() {
   // anti-multi-accounting mechanism — laid out plainly so players can audit
   // the model. Quotes the cfg buy-ins live so the docs stay in sync.
   const econ = section('8 · Economics & Company Profitability',
-    p('Yellow Jacket Inc. funds itself through a transparent rake on every buy-in. Direct entries pay full price; satellite winners pay nothing and the seat is funded by the satellite\'s own player pool. Sponsor purses (when configured) are added on top of player money and are not raked.'),
+    p('Yellow Jacket Inc. funds itself through a transparent rake on every direct buy-in. Direct entries pay full price; satellite winners pay nothing for the higher-tier seat — that seat is funded by the lower-tier satellite\'s player pool. Sponsor purses (when configured) are added on top of the prize pool and are not raked.'),
     h3('Pricing Table'),
     tbl(
       ['Event Tier', 'Direct Buy-in', 'Satellite Tier(s)', 'Field Size'],
       [
-        ['Regular',  fmtNum(cfg.buyInRegular || 100) + ' (' + fmtMoney(cfg.buyInRegular || 100) + ')', fmtMoney(cfg.satelliteTierRegular || 15) + ' satellite (Tier 1)', fmtNum(cfg.regularField || 2048)],
-        ['Major',    fmtNum(cfg.buyInMajor || 1000) + ' (' + fmtMoney(cfg.buyInMajor || 1000) + ')', fmtMoney(cfg.satelliteTierMajor || 150) + ' satellite (Tier 2)', fmtNum(cfg.majorField || 992)],
-        ['Main Event', fmtNum(cfg.buyInMain || 10000) + ' (' + fmtMoney(cfg.buyInMain || 10000) + ')', (Array.isArray(cfg.satelliteTierMain) ? cfg.satelliteTierMain.map(fmtMoney).join(' → ') : '$500 → $1,500 → $4,000') + ' (Tier 3 ladder)', fmtNum(cfg.mainField || 30000)],
+        ['Regular',    fmtMoney(cfg.buyInRegular || 100), fmtMoney(cfg.satelliteTierRegular || 15) + ' satellite (Tier 1)', fmtNum(cfg.regularField || 2048)],
+        ['Major',      fmtMoney(cfg.buyInMajor   || 1000), fmtMoney(cfg.satelliteTierMajor || 150) + ' satellite (Tier 2)', fmtNum(cfg.majorField || 1024)],
+        ['Main Event', fmtMoney(cfg.buyInMain    || 10000), (Array.isArray(cfg.satelliteTierMain) ? cfg.satelliteTierMain.map(fmtMoney).join(' → ') : '$500 → $1,500 → $4,000 → $5,000') + ' (Tier 3 ladder)', fmtNum(cfg.mainField || 128)],
       ]
     ),
     h3('Rake Mechanics'),
-    p('Rake = ' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '% of every direct buy-in. The satellite ladder generates additional rake at every tier: a player who climbs from Tier 1 → Tier 2 → Tier 3 → Main has paid into four separate rake events, so the Tour collects more total revenue from satellite climbers than from direct buy-ins of equivalent face value. This is by design — the ladder is what funds the Tour while keeping the headline buy-in accessible.'),
+    p('Rake = ' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '% of every direct buy-in. The satellite ladder generates additional rake at every tier: a player who climbs from Tier 1 → Tier 2 → Tier 3 → Main has paid into multiple separate rake events, so the Tour collects more total revenue from satellite climbers than from a single direct buy-in of equivalent face value. This is the intentional design — the ladder funds the Tour foundation while keeping the headline Main buy-in accessible to anyone who plays the qualifier path.'),
     h3('Main Event Field Composition'),
-    p('The 30,000-seat Main is composed 70% via the satellite ladder and 30% via direct entry. Direct seats go to champion exemptions first (past Main winners within the ' + (cfg.exemptionYears || 3) + '-year window) and then to the top season-points players. Satellite seats prioritize current-year major qualifiers, then active cashers across regulars and majors. The remainder, if any, fills via random open buy-in.'),
+    p('The Main field (default ' + fmtNum(cfg.mainField || 128) + ' seats) is composed ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30)) * 100).toFixed(0) + '% via the satellite ladder and ' + ((cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30) * 100).toFixed(0) + '% via direct entry. Direct seats prioritize champion exemptions (past Main winners within the ' + (cfg.exemptionYears || 3) + '-year window) and then top season-points players. Satellite seats prioritize current-year major qualifiers (top ' + fmtNum(cfg.mainQualifiersPerMajor || 512) + ' from each major), then active cashers across regulars and majors. Any remaining seats fill from open random buy-in.'),
     h3('Progressive Satellite Requirement'),
     p('A player must cash in a lower-tier event to unlock the next satellite tier. In the offline simulator this is implemented through the existing event types: cashing in regulars during the season counts as Tier-1 progression; cashing in majors counts as Tier-2/3 progression; the mainQualifierUntil flag (top finishers of this year\'s majors) is the top gate. The satellite priority order is: major qualifiers → active cashers → open entry.'),
     h3('Why This Maximizes Rake While Keeping the Game Fair'),
@@ -3955,39 +3967,63 @@ function aiTakeTurn(g) {
   const c = g.current;
   if (!c || c.result || c.toAct !== 'p2') return;
   // Re-sync the global stroke cap in case the user opened the simulator and
-  // changed it mid-match — the AI must respect the cap that this match was
-  // created with, not whatever the simulator slider currently says.
+  // changed it mid-match — the AI must respect the cap this match was created
+  // with, not whatever the simulator slider currently shows.
   if (g.strokeCap) setStrokeCap(g.strokeCap);
   const profile = g.aiProfile || makeProfileForSkill(0.40);
+  // v23 decideFor signature:
+  //   (cards, community, currentProposal, agreedTotal, isPending,
+  //    profile, preComputedHand, preComputedTex, gameContext)
+  // Action protocol:
+  //   isPending=false → { check | bet }   (bet.amount = NEW agreed total)
+  //   isPending=true  → { fold | call | raise }   (raise.amount = NEW agreed total)
+  const isPending = c.currentProposal != null;
+  const currentProposal = isPending ? c.currentProposal : c.agreedTotal;
   const gameContext = { mode: 'solo', holeNumber: g.holeNum, totalHoles: g.totalHoles };
   const decision = decideFor(
-    c.p2Cards,           // AI's hole cards
-    c.community,         // visible community
-    c.currentBet,        // street's current bet
-    c.matched.p2,        // AI's matched amount this street
-    c.strokes,           // accumulated strokes from prior streets
-    profile,             // AI's profile (skill-derived thresholds)
-    c.matched.p1,        // human's matched amount this street (range read)
-    undefined,
-    undefined,
-    g.carryPot || 0,
+    c.p2Cards,        // AI hole cards
+    c.community,      // visible community
+    currentProposal,  // pending proposal level (or current agreed total when none pending)
+    c.agreedTotal,    // already-accepted pot level
+    isPending,        // whether AI is responding to a live proposal
+    profile,
+    undefined,        // preComputedHand cache (unused in solo mode)
+    undefined,        // preComputedTex cache (unused in solo mode)
     gameContext
   );
   switch (decision.action) {
     case 'fold':  mpAct(g, 'fold'); break;
     case 'check': mpAct(g, 'check'); break;
     case 'call':  mpAct(g, 'call'); break;
-    case 'bet':   mpAct(g, 'bet', Math.max(1, decision.amount | 0)); break;
-    case 'raise': mpAct(g, 'raise', Math.max(1, decision.amount | 0)); break;
-    default:      mpAct(g, 'check'); break; // safety fallback
+    case 'bet':
+    case 'raise': {
+      // amount from decideFor IS the new agreed total. Clamp into the legal
+      // open-bet / raise range so a stale or buggy proposal can't wedge the UI.
+      const cap = mpStreetCap(g, c.street);
+      const floor = isPending ? c.currentProposal : c.agreedTotal;
+      const newTotal = Math.max(floor + 1, Math.min(cap, decision.amount | 0));
+      if (newTotal > floor && newTotal <= cap) mpAct(g, isPending ? 'raise' : 'bet', newTotal);
+      else if (isPending) mpAct(g, 'call');     // can't propose anything legal → call
+      else                mpAct(g, 'check');    // can't propose, no pending → check
+      break;
+    }
+    default: mpAct(g, isPending ? 'call' : 'check'); break;
   }
 }
 
 function createLocalGame(p1name, p2name, mode) {
+  // Per-game running totals split into golf (scorecard) and honey (raw credit).
+  // Final displayed score = golfTotal − (honeyTotal / divisor), where divisor is
+  // honeyDivisorFor(g.totalHoles). This matches the simulator's playMatch and
+  // the rulebook: net honey is divided by round length once at the end, not
+  // per-hole. p1.total / p2.total are computed-derived for display convenience.
   return {
-    mode, p1: { name: p1name, total: 0 }, p2: { name: p2name, total: 0 },
+    mode,
+    p1: { name: p1name, golfTotal: 0, honeyTotal: 0, total: 0 },
+    p2: { name: p2name, golfTotal: 0, honeyTotal: 0, total: 0 },
     holeNum: 1, totalHoles: 18, scores: [],
-    current: newHoleState('p1'), turnFor: 'p1',
+    current: newHoleState('p1', 0),
+    turnFor: 'p1',
     carryPot: 0,
     started: Date.now(), ended: false,
     // Snapshot the active stroke cap so mid-game config changes don't alter this match.
@@ -3995,17 +4031,47 @@ function createLocalGame(p1name, p2name, mode) {
   };
 }
 
-function newHoleState(dealer) {
+function newHoleState(dealer, carryPot) {
+  // YJ agreed-total semantics — replaces the classic-poker matched/currentBet model:
+  //   agreedTotal     = the pot level both players have ALREADY accepted. Opens at
+  //                     2 (mandatory pot) plus any tied-hole carry.
+  //   currentProposal = a pending proposal to RAISE the agreed total. null when
+  //                     no proposal is on the table (both players have either
+  //                     checked or accepted the current agreedTotal).
+  //   pendingFor      = which side must respond to currentProposal (null when
+  //                     no proposal is pending).
+  // The non-dealer acts first preflop (heads-up convention).
   const deck = shuffle(makeDeck());
+  const opener = (carryPot || 0) + 2;
   return {
-    deck, street: 'preflop', strokes: 0, currentBet: 0,
-    matched: { p1: 0, p2: 0 }, hasActed: { p1: false, p2: false },
+    deck, street: 'preflop',
+    agreedTotal: opener,
+    currentProposal: null,
+    pendingFor: null,
+    hasActed: { p1: false, p2: false },
     toAct: dealer === 'p1' ? 'p2' : 'p1',
     dealer, folded: null, result: null,
     p1Cards: [deck.pop(), deck.pop()],
     p2Cards: [deck.pop(), deck.pop()],
     community: [],
   };
+}
+
+// Compute the maximum agreed-total a player may propose this street, applying
+// the progressive 25/50/75/100% street unlock to the per-event stroke cap. For
+// caps ≤ 3, the full cap is available from preflop (no headroom to split).
+function mpStreetCap(g, street) {
+  const totalCap = g.strokeCap || CurrentStrokeCap || 3;
+  return streetCapFor(street, totalCap);
+}
+
+// Display total = golfTotal − honeyTotal / divisor. The divisor matches the
+// simulator's playMatch / the rulebook: 72 for 72-hole rounds, 18 for 18-hole,
+// 9 for 9-hole, 1 for 1-hole quick matches.
+function mpRecomputeTotals(g) {
+  const div = honeyDivisorFor(g.totalHoles) || 1;
+  g.p1.total = g.p1.golfTotal - g.p1.honeyTotal / div;
+  g.p2.total = g.p2.golfTotal - g.p2.honeyTotal / div;
 }
 
 function renderActiveMP() {
@@ -4142,13 +4208,14 @@ Views.rules = function() {
     return b;
   }
   cfgStrip.appendChild(snap('Scoring system', 'Honey-Stroke', 'Tour Standard'));
-  cfgStrip.appendChild(snap('Regular cap', (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6), 'strokes max'));
-  cfgStrip.appendChild(snap('Major cap', (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10), 'strokes max'));
-  cfgStrip.appendChild(snap('Main cap', (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' / ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10), 'early · finals'));
-  cfgStrip.appendChild(snap('Major field', (cfg.majorField != null ? cfg.majorField : 96), 'players per major'));
+  cfgStrip.appendChild(snap('Regular cap', (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6), 'max agreed pot'));
+  cfgStrip.appendChild(snap('Major cap', (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10), 'max agreed pot'));
+  cfgStrip.appendChild(snap('Main cap', (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' / ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10), 'early · 72-hole finals'));
+  cfgStrip.appendChild(snap('Major field', (cfg.majorField != null ? cfg.majorField : 1024), 'players per major'));
+  cfgStrip.appendChild(snap('Main field',  (cfg.mainField  != null ? cfg.mainField  : 128),  'players per main'));
   cfgStrip.appendChild(snap('Exemption', (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' yrs', 'past champs play free'));
-  cfgStrip.appendChild(snap('Season schedule', (cfg.majors || 4) + ' / ' + (cfg.regulars || 8) + ' / ' + (cfg.mains || 1), 'majors · regulars · main'));
-  cfgStrip.appendChild(snap('Rake', ((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1) + '%', 'house take'));
+  cfgStrip.appendChild(snap('Season schedule', (cfg.majors != null ? cfg.majors : 12) + ' / ' + (cfg.regulars != null ? cfg.regulars : 40) + ' / ' + (cfg.mains != null ? cfg.mains : 1), 'majors · regulars · main'));
+  cfgStrip.appendChild(snap('Rake', ((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1) + '%', 'house take · direct buy-ins only'));
   liveCard.appendChild(cfgStrip);
   view.appendChild(liveCard);
 
@@ -4156,12 +4223,12 @@ Views.rules = function() {
   const core = el('div', { class: 'card green', style: 'margin-top: 16px;' });
   core.appendChild(el('h2', { text: 'The Honey-Stroke System' }));
   core.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 13px; color: var(--text-primary); line-height: 1.55; margin-bottom: 12px;',
-    text: 'Heads-up Texas Hold\'em on a golf scorecard. Hand strength sets your per-hole golf score; bet sizing forms a side pot of strokes — the honey pot. Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard, so claiming bigger pots improves your golf number without runaway scores.'
+    text: 'Heads-up Texas Hold\'em played onto a golf scorecard. Hand strength at showdown sets your per-hole golf score (range −5 to +2). Wagering builds an honey pot using agreed-total semantics: a bet or raise PROPOSES a new total pot size, a call ACCEPTS that total, and the pot is always exactly the most recently agreed amount — never matched, never doubled. Total net honey earned across the round is divided by the round\'s hole count (72 / 18 / 9 / 1 for finals / 18-hole rounds / 9-hole bracket matches / 1-hole quick matches) and subtracted from the total scorecard. Lower total wins.'
   }));
 
   // Per-hole golf scorecard table
   core.appendChild(el('h3', { text: 'Per-hole scorecard (by hand category)', style: 'margin-top: 6px;' }));
-  core.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;', text: 'The winner of a decisive showdown scores the golf value of their own hand. The loser ALSO scores the golf value of their own hand — strong losing hands still post a respectable number. The wagered-strokes pot becomes a honey credit for the winner; total net honey is divided by 18 before scoring.' }));
+  core.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;', text: 'On a decisive showdown, EACH player scores the golf value of THEIR OWN hand — the loser still posts whatever number their own hand earned, so a strong losing hand isn\'t wasted. The winner additionally receives the entire honey pot as a credit. On a tied showdown, BOTH players score 0 (par) and the pot rolls forward as starting honey for the next hole. On a fold, the folder posts +1 (bogey) and the non-folder posts 0 (par); the non-folder takes the previously agreed pot in honey.' }));
   const scoreTable = el('table');
   scoreTable.appendChild(el('thead', null, el('tr', null,
     el('th', { text: 'Hand category' }),
@@ -4201,20 +4268,26 @@ Views.rules = function() {
   core.appendChild(rule('The lore — honey, the hive, and the sting',
     'Every wager pours a drop of honey into the pot. Win the hand and the honey is yours; tie and it carries forward, sweetening the next pot. A bluff is a sting: a yellow jacket\'s feint that dares the opponent to stay. A successful sting takes the honey untouched. A called sting draws blood from your own stack. Bumble bees gather quietly; yellow jackets sting to claim the hive.'
   ));
-  core.appendChild(rule('Per-round score',
-    'finalRoundScore = totalGolfScorecard − (netHoney / 18). Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard. This normalizes honey to the natural unit of one 18-hole round, producing realistic and prestigious PGA-style champion scores while fully preserving poker skill expression. Lower total wins the round.'
+  core.appendChild(rule('Per-round score (dynamic divisor by round length)',
+    'finalRoundScore = totalGolfScorecard − (netHoney / divisor). The divisor matches the round length: 72-hole rounds use 72, 18-hole rounds use 18, 9-hole bracket matches use 9, and 1-hole quick matches use 1 (full-value honey). The divisor is set by the round\'s hole count — not by the event tier — so a 4-round 72-hole aggregate event normalizes honey across all 72 holes at divisor 72, while a 9-hole bracket match normalizes at divisor 9. Lower total wins the round.'
   ));
-  core.appendChild(rule('Tied holes carry',
-    'When both players reach showdown with the same hand value, both score 0 (par) and the wagered-strokes pot accumulates into the carry pot for the next decisive hole. Multiple consecutive ties pile up; whichever player wins the next decisive hole sweeps the entire accumulated carry as part of their honey take.'
+  core.appendChild(rule('Mandatory starting pot (no blinds, no antes)',
+    'Every hole opens with the agreed pot already set to 2 honey before any betting decision is made. Both players are equally committed to that 2 from the first action — there are no blinds, no antes, no positional cost. If the hole carries forward from a prior tied hole, the carry adds to that 2 (so a hole following a 6-honey tie opens at 2 + 6 = 8 honey).'
   ));
-  core.appendChild(rule('Folds — street-based concession',
-    'Folds aren\'t a flat penalty. The folder\'s scorecard score scales by how late the fold came — Tea Box +2, Drive/Hazard +1, Putt 0 (a Putt-street folder almost made par). The bettor scores 0 to −2 (Putt bettor earns the biggest reward) AND takes the wagered-strokes pot as a honey credit. So forcing a late-street fold is doubly valuable: smaller scorecard hit + bigger pot.'
+  core.appendChild(rule('Agreed-total wagering (NOT matched contributions)',
+    'A bet or raise PROPOSES a new total pot size for the hole; a call ACCEPTS that proposal. The pot is always exactly the most recently agreed total — never a sum of contributions. Example: hole opens at 2. You raise to 5. Opponent calls — pot is now 5 (not 7, not 10). On the flop you raise to 9. Opponent calls — pot is 9. River check-check — pot stays at 9. There is no doubling, no matching, no per-player commitment tracking.'
   ));
-  core.appendChild(rule('Progressive street caps',
-    'The event\'s stroke-cap is partitioned across streets: 25% by end of Tea Box, 50% by Drive, 75% by Hazard, 100% by Putt. This forces pot escalation to feel like real NL Hold\'em rather than a single-cap free-for-all. Per-event caps: regular 6, major 10, main 6, main finals 10.'
+  core.appendChild(rule('Tied holes carry forward',
+    'When both players reach showdown with the same hand value, both score 0 (par) on the scorecard and the entire pot rolls forward as the starting honey for the NEXT hole in the same match. The next hole opens at (2 mandatory + carry) honey. Multiple consecutive ties stack: tie-of-tie compounds the carry. Whichever player wins the next decisive hole sweeps the full accumulated stack as a honey credit. Carries stay within a single match — they do not persist across match boundaries.'
   ));
-  core.appendChild(rule('Pot-odds-aware AI with honey-EV foresight',
-    'AI opponents estimate their hand equity each street. They couple equity to honey-pot expected value: when adj > 50% the AI lowers its bet/raise thresholds (becomes more aggressive) and lowers its fold threshold (rarely folds with positive equity). When adj < 50% the same coupling drives faster folds and tighter calls. The polarized response is what translates the pot-reward math into observable skill across a season.'
+  core.appendChild(rule('Folds — uniform on every street',
+    'The fold rule is the same on Tea Box, Drive, Hazard, and Putt: the folder posts +1 (bogey) on the scorecard and gains 0 honey. The non-folder posts 0 (par) on the scorecard and takes the PREVIOUSLY AGREED pot (the level both players had already accepted before the proposal that triggered the fold) as a honey credit. Example: pot is agreed at 5. Opponent raises to 8. You fold. You post +1 bogey. Opponent posts 0 par and gains 5 honey. The unaccepted proposal of 8 is moot — only the prior agreed total transfers. There is no street-based penalty table; what makes late-street folds more valuable in practice is that the previously agreed pot has had more chances to climb.'
+  ));
+  core.appendChild(rule('Per-event stroke caps and progressive street unlock',
+    'Each event sets a maximum agreed pot size for any single hole — the stroke cap. Default per-event caps: Regular ' + (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6) + ' honey, Major ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10) + ' honey, Main early rounds ' + (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' honey, Main 72-hole finals ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10) + ' honey. Within each hole, the cap unlocks progressively by street: 25% available by Tea Box (preflop), 50% by Drive (flop), 75% by Hazard (turn), 100% by Putt (river). For caps of 3 or less the progressive unlock is disabled and the full cap is available from Tea Box. This forces pot escalation to mirror real no-limit Hold\'em rather than a single-cap free-for-all on the first street.'
+  ));
+  core.appendChild(rule('AI decision logic (pure Honey-Stroke EV)',
+    'AI opponents evaluate each decision using YJ-aware EV math, not classic poker pot odds. They compute their adjusted equity (`adj`) on every street, then directly compare expected value across the available actions: ev_fold = −divisor − previousAgreedTotal honey; ev_check/call = (2·adj − 1) × pot − showdownGolfCost(adj); ev_bet/raise = foldEquity·evWinByFold + (1 − foldEquity)·evShowdown for each candidate new agreed total. The bot picks the action with the highest EV, perturbed by player-specific decision noise (low-skill players inject more randomness; elites act closer to optimal). YJ profile optima are tuned to foldOpt 0.05, betOpt 0.55, raiseOpt 0.75 — these are NOT classic poker thresholds; they reflect the optimal aggression level when the pot itself directly improves your scorecard.'
   ));
   // === Aggregate-stroke-play lore — describes the future-target Honey-Stroke
   // format. This text ships with the Rules tab regardless of whether the engine
@@ -4223,7 +4296,7 @@ Views.rules = function() {
   // section becomes the live description; until then it describes the planned
   // structure. Wording locked exactly per design spec — do not paraphrase. ===
   core.appendChild(rule('Scoring the Honey-Stroke Final',
-    'Regulars and Majors are decided by a full 72-hole aggregate score — four complete rounds of 18 holes. The Main Event follows a WSOP-style mass field with cuts, leading to a final 72-hole aggregate among the surviving qualifiers. Every hole still transfers zero-sum honey credits, and total net honey is divided by 18 before being subtracted from the golf scorecard. The player with the lowest total net score after 72 holes is crowned champion.'
+    'In aggregate format, every event is decided by a full 72-hole score: four complete 18-hole rounds with rotating-partner pairings each round. In bracket format, only the heads-up final between the last two surviving players is 72 holes; earlier rounds are 9-hole or 18-hole heads-up matches. Either way, when the round length is 72 holes, total net honey across all 72 holes is divided by 72 (not 18) and subtracted from the total scorecard. The player with the lowest net total is crowned champion.'
   ));
   core.appendChild(rule('Legendary Under-Par Doubles',
     'It is both mathematically possible and exceptionally rare for multiple players to finish a 72-hole final under par. When this happens, the match enters Yellow Jacket lore. It is the ultimate sign of true masters pushing each other to greatness — the highest possible honor short of wearing the Yellow Jacket itself.'
@@ -4232,10 +4305,10 @@ Views.rules = function() {
     'If two or more players are tied for first after 72 holes, the match enters a short sudden-death playoff (2-4 hole aggregate, 1v1 or small group). No mandatory 72-hole heads-up final for any event — playoffs only fire when needed.'
   ));
   core.appendChild(rule('Field selection',
-    'Regulars: 65% season merit + 20% ranking + 15% open qualifier (default field 1,008). Majors: 18% champion exemptions + 32% ranking + 22% season + 13% career + 15% open (default field 256). Mains: 30,000-seat open championship — satellite qualifiers seated first, remaining seats filled by random open buy-ins from the rest of the pool. Past major champions enter majors free within ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years of their last win.'
+    'Regulars (default field ' + fmtNum(cfg.regularField || 2048) + '): 65% prior-season merit + 20% career ranking + 15% open qualifier. Majors (default field ' + fmtNum(cfg.majorField || 1024) + '): ' + (((cfg.majorChampShare != null ? cfg.majorChampShare : 0.14) * 100).toFixed(0)) + '% champion exemptions + ' + (((cfg.majorRankingShare != null ? cfg.majorRankingShare : 0.24) * 100).toFixed(0)) + '% career ranking + ' + (((cfg.majorSeasonShare != null ? cfg.majorSeasonShare : 0.26) * 100).toFixed(0)) + '% prior-season + ' + (((cfg.majorCareerShare != null ? cfg.majorCareerShare : 0.14) * 100).toFixed(0)) + '% career performance + ' + (((cfg.majorOpenShare != null ? cfg.majorOpenShare : 0.22) * 100).toFixed(0)) + '% open qualifier. Main Event (default field ' + fmtNum(cfg.mainField || 128) + '): ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30)) * 100).toFixed(0) + '% via the satellite ladder (qualifiers + active cashers in priority order), ' + ((cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30) * 100).toFixed(0) + '% direct entry (champion exemptions first, then top season-points players). Past major champions enter all subsequent majors free within ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years of their most recent major win; the exemption window renews on each new major win.'
   ));
   core.appendChild(rule('Satellites — majors as qualifiers for the Main',
-    'Every major doubles as a Main Event satellite. The top ' + (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 128) + ' finishers in each major earn a free seat in this year\'s Main Event (no buy-in). Models the WSOP path where most Main entrants either pay direct or win their seat through a satellite tournament. With 4 majors per season, that\'s up to ' + (4 * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 128)) + ' free seats per Main — small percentage of the field, big economic prize for major-tier finishers.'
+    'Every major doubles as a Main Event satellite. The top ' + fmtNum(cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 512) + ' finishers in each major earn a free seat in this year\'s Main Event (no Main buy-in required). With ' + (cfg.majors != null ? cfg.majors : 12) + ' majors per season, that\'s up to ' + fmtNum((cfg.majors != null ? cfg.majors : 12) * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 512)) + ' qualifier seats per Main — though only ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30)) * 100).toFixed(0) + '% of the Main field (' + fmtNum(Math.round((cfg.mainField || 128) * (1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30)))) + ' of ' + fmtNum(cfg.mainField || 128) + ' seats) is allocated to satellite winners, so when qualifiers exceed available seats they are seated by major-finish priority. Each satellite-won seat is worth ' + fmtMoney(cfg.buyInMain || 10000) + ' in saved buy-in.'
   ));
   // === Event Pricing & Qualification subsection ===
   // Documents the full satellite-ladder economy plus the 70/30 Main field split.
@@ -4246,7 +4319,7 @@ Views.rules = function() {
     'Direct buy-ins: Regular ' + fmtMoney(cfg.buyInRegular || 100) + ', Major ' + fmtMoney(cfg.buyInMajor || 1000) + ', Main ' + fmtMoney(cfg.buyInMain || 10000) + '. Satellite ladder: Regular tier ' + fmtMoney(cfg.satelliteTierRegular || 15) + ', Major tier ' + fmtMoney(cfg.satelliteTierMajor || 150) + ', Main tier ladder ' + (Array.isArray(cfg.satelliteTierMain) ? cfg.satelliteTierMain.map(fmtMoney).join(' → ') : '$500 → $1,500 → $4,000') + '. Progressive requirement: a player must cash in a lower-tier event to unlock the next satellite tier. The Main Event field is composed 70% via the satellite ladder (qualifiers + active cashers) and 30% direct entry (top 30% of previous season + champion exemptions). The progressive lock makes Sybil-pattern multi-accounting unprofitable: a fresh account starting at the bottom must cash repeatedly across regulars and majors to reach the Main, paying multiple buy-ins along the way — so the cost of fielding a fake account exceeds the expected return from a single deep run.'
   ));
   core.appendChild(rule('Yellow Jacket Inc. economics',
-    'grossPool = Σ buy-ins. revenue = grossPool × rakePercent (default ' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '%). prizePool = grossPool − revenue + sponsorPurse. Sponsor purse rides on top of player money (PGA Tour model) and is not raked. Payouts decay geometrically across ITM finishers (top 15%, capped 2..64).'
+    'grossPool = Σ direct buy-ins. revenue = grossPool × rakePercent (default ' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '%) — this is the Tour\'s take. prizePool = grossPool − revenue + sponsorPurse. Sponsor purses (when configured per event) ride on top of player money — modeled after PGA Tour broadcast/sponsor money — and are NOT raked. Payouts go to the top 15% of the field (with a floor of 2 paid places and a cap of 64), decaying geometrically across positions with default decay factor ' + (cfg.payoutDecay != null ? cfg.payoutDecay : 0.74) + ' (each successive ITM position pays the prior position × the decay factor). Satellite winners do not contribute to the gross pool of the higher-tier event — their seats are already paid for by the lower-tier satellite\'s player pool.'
   ));
   view.appendChild(core);
 
@@ -4309,12 +4382,22 @@ function renderGameTable(g) {
   }
   tbl.appendChild(commRow);
 
+  // Pot HUD — shows the YJ agreed-total state plainly:
+  //   Pot: the level both players have already accepted.
+  //   Proposed: the level a pending bet/raise is asking the other player to
+  //             accept (only shown when there's a live proposal).
+  //   Cap: the per-street stroke cap currently in effect (after progressive unlock).
+  const streetCap = mpStreetCap(g, c.street);
   const potWrap = el('div', { style: 'text-align: center;' });
-  potWrap.appendChild(el('div', { class: 'pot-info' },
-    el('span', null, 'Street: ', el('b', { text: streetLabel(c.street) })),
-    el('span', null, 'Strokes: ', el('b', { text: c.strokes + '/3' })),
-    el('span', null, 'Bet: ', el('b', { text: '+' + c.currentBet }))
-  ));
+  const potRow = el('div', { class: 'pot-info' },
+    el('span', null, 'Phase: ', el('b', { text: streetLabel(c.street) })),
+    el('span', null, 'Pot: ', el('b', { text: c.agreedTotal + ' honey' }))
+  );
+  if (c.currentProposal != null) {
+    potRow.appendChild(el('span', null, 'Proposed: ', el('b', { text: c.currentProposal + ' honey' })));
+  }
+  potRow.appendChild(el('span', null, 'Cap: ', el('b', { text: streetCap + ' honey' })));
+  potWrap.appendChild(potRow);
   tbl.appendChild(potWrap);
 
   const p1Seat = el('div', { class: 'seat' });
@@ -4337,16 +4420,39 @@ function renderGameTable(g) {
     actions.appendChild(el('div', { class: 'result-banner' }, 'Pass the device to ', el('b', { text: (c.toAct === 'p1' ? g.p1.name : g.p2.name) })));
     actions.appendChild(el('button', { class: 'btn outline small', onclick: () => { g.turnFor = c.toAct; renderActiveMP(); } }, 'Ready'));
   } else {
-    const canCheck = c.currentBet === c.matched[c.toAct];
-    const toCall = c.currentBet - c.matched[c.toAct];
-    const gameCap = g.strokeCap || CurrentStrokeCap;
-    const rem = gameCap - c.strokes - c.currentBet;
-    if (canCheck) actions.appendChild(el('button', { class: 'btn', onclick: () => mpAct(g, 'check') }, 'Check'));
-    else actions.appendChild(el('button', { class: 'btn', onclick: () => mpAct(g, 'call') }, 'Call (+' + toCall + ')'));
-    for (let i = 1; i <= Math.min(gameCap, rem); i++) {
-      actions.appendChild(el('button', { class: 'btn outline', onclick: () => mpAct(g, canCheck ? 'bet' : 'raise', i) }, (canCheck ? 'Bet ' : 'Raise ') + i));
+    // YJ action UI: bet/raise buttons offer NEW agreed-total options (not increments).
+    //   - When no proposal is pending: Check or open-bet to a new total > agreedTotal.
+    //   - When a proposal is pending: Call (accept it), Raise to a higher total, or Fold.
+    // Bet/raise option set is bounded by (floor + 1 .. streetCap), with the floor
+    // = currentProposal when pending, else agreedTotal. We render up to ~5 evenly-
+    // spaced options so the button row stays readable even at large stroke caps.
+    const pending = c.currentProposal != null;
+    const floor = pending ? c.currentProposal : c.agreedTotal;
+    const cap = mpStreetCap(g, c.street);
+    if (!pending) {
+      actions.appendChild(el('button', { class: 'btn', onclick: () => mpAct(g, 'check') }, 'Check'));
+    } else {
+      actions.appendChild(el('button', { class: 'btn', onclick: () => mpAct(g, 'call') }, 'Call to ' + c.currentProposal));
     }
-    actions.appendChild(el('button', { class: 'btn fold', onclick: () => mpAct(g, 'fold') }, 'Fold'));
+    const room = Math.max(0, cap - floor);
+    if (room > 0) {
+      // Suggest up to 5 new-total options spread between (floor + 1) and cap.
+      const options = [];
+      const stops = Math.min(5, room);
+      for (let i = 1; i <= stops; i++) {
+        const t = stops === 1 ? cap : Math.round(floor + (room * i) / stops);
+        const clamped = Math.max(floor + 1, Math.min(cap, t));
+        if (!options.includes(clamped)) options.push(clamped);
+      }
+      const verb = pending ? 'Raise to ' : 'Bet to ';
+      const action = pending ? 'raise' : 'bet';
+      options.forEach(newTotal => {
+        actions.appendChild(el('button', { class: 'btn outline', onclick: () => mpAct(g, action, newTotal) }, verb + newTotal));
+      });
+    }
+    if (pending) {
+      actions.appendChild(el('button', { class: 'btn fold', onclick: () => mpAct(g, 'fold') }, 'Fold'));
+    }
   }
   tbl.appendChild(actions);
   return tbl;
@@ -4376,51 +4482,80 @@ function mpAct(g, action, amount) {
   if (c.result || c.toAct == null) return;
   const actor = c.toAct;
   const other = actor === 'p1' ? 'p2' : 'p1';
+  const pending = c.currentProposal != null;
   if (action === 'fold') {
+    // Fold is only a legal response to a pending proposal. (Folding without a
+    // proposal would be silly — there's nothing to escape from. Guard so misclicks
+    // mid-uncontested-street don't end the hole.)
+    if (!pending) return;
     c.folded = actor;
     resolveMPHole(g); renderActiveMP(); scheduleAITurnIfNeeded(g); return;
   }
   if (action === 'check') {
-    if (c.currentBet !== c.matched[actor]) return;
+    // Check is only legal when no proposal is pending. Both players must check
+    // to close the street; the dealer's check after the non-dealer's check ends
+    // the round at the current agreedTotal.
+    if (pending) return;
     c.hasActed[actor] = true;
-    if (c.hasActed[other] && c.matched[other] === c.currentBet) { advanceMPRound(g); renderActiveMP(); scheduleAITurnIfNeeded(g); return; }
+    if (c.hasActed[other]) {
+      advanceMPRound(g); renderActiveMP(); scheduleAITurnIfNeeded(g); return;
+    }
     c.toAct = other;
   } else if (action === 'call') {
-    if (c.currentBet <= c.matched[actor]) return;
-    c.matched[actor] = c.currentBet;
+    // Call accepts the pending proposal — agreedTotal jumps to currentProposal,
+    // proposal clears, and the street ends (heads-up: a call always closes
+    // the round once the prior actor has committed to a proposal).
+    if (!pending) return;
+    c.agreedTotal = c.currentProposal;
+    c.currentProposal = null;
+    c.pendingFor = null;
     c.hasActed[actor] = true;
     advanceMPRound(g); renderActiveMP(); scheduleAITurnIfNeeded(g); return;
   } else if (action === 'bet' || action === 'raise') {
-    const gameCap = g.strokeCap || CurrentStrokeCap;
-    if (!amount || c.strokes + c.currentBet + amount > gameCap) return;
-    c.currentBet += amount;
-    c.matched[actor] = c.currentBet;
+    // Bet (no pending) or raise (pending): propose a NEW agreed total.
+    //   - amount IS the proposed new agreed total (NOT an additive increment).
+    //   - Must strictly exceed the current floor: agreedTotal for a bet,
+    //     currentProposal for a raise.
+    //   - Capped by the per-street stroke cap (progressive 25/50/75/100%).
+    const cap = mpStreetCap(g, c.street);
+    const floor = pending ? c.currentProposal : c.agreedTotal;
+    const proposed = +amount | 0;
+    if (proposed <= floor || proposed > cap) return;
+    if (action === 'bet' && pending) return;       // can't open-bet with a pending proposal
+    if (action === 'raise' && !pending) return;    // can't raise without a proposal to raise
+    c.currentProposal = proposed;
+    c.pendingFor = other;
     c.hasActed[actor] = true;
     c.hasActed[other] = false;
     c.toAct = other;
+  } else {
+    return;
   }
   if (g.mode === 'hotseat' && c.toAct) g.turnFor = null;
   renderActiveMP();
-  // CRITICAL: any action that just transfers the turn within the same betting
-  // round (a check that doesn't close it, a bet, a raise) falls through to here
-  // without firing the AI scheduler in the early-return paths above. Hook it
-  // unconditionally so the AI gets called whenever it's now p2's turn in solo
-  // mode. Without this, the human's bet/raise leaves Hive Scout frozen forever.
+  // Any action that transfers the turn within the same betting round (an opening
+  // check, an open bet, or a raise) lands here. Hook the AI scheduler so the
+  // bot picks up its turn in solo mode — otherwise Hive Scout sits idle.
   scheduleAITurnIfNeeded(g);
 }
 
 function advanceMPRound(g) {
+  // YJ has no per-street stroke accumulation. The agreed total carries from
+  // street to street unchanged unless a new proposal is made and accepted on
+  // the next street. We just deal the next community card(s) and reset the
+  // hasActed flags so both players get a fresh action window on the new street.
   const c = g.current;
-  c.strokes += c.currentBet;
-  c.currentBet = 0;
-  c.matched = { p1: 0, p2: 0 };
+  c.currentProposal = null;
+  c.pendingFor = null;
   c.hasActed = { p1: false, p2: false };
   if (c.street === 'preflop') { c.community.push(c.deck.pop(), c.deck.pop(), c.deck.pop()); c.street = 'flop'; }
   else if (c.street === 'flop') { c.community.push(c.deck.pop()); c.street = 'turn'; }
   else if (c.street === 'turn') { c.community.push(c.deck.pop()); c.street = 'river'; }
   else if (c.street === 'river') { c.street = 'showdown'; resolveMPHole(g); return; }
-  const gameCap = g.strokeCap || CurrentStrokeCap;
-  if (c.strokes >= gameCap) {
+  // If the agreed total has already reached the per-event stroke cap, no more
+  // proposals are possible — fast-forward to showdown with the remaining board.
+  const totalCap = g.strokeCap || CurrentStrokeCap;
+  if (c.agreedTotal >= totalCap) {
     while (c.community.length < 5) c.community.push(c.deck.pop());
     c.street = 'showdown';
     resolveMPHole(g); return;
@@ -4431,24 +4566,25 @@ function advanceMPRound(g) {
 
 function resolveMPHole(g) {
   const c = g.current;
-  const carryPot = g.carryPot || 0;
-  let p1s, p2s, desc;
+  // The agreed total at the time of resolution IS the entire pot — it already
+  // includes the mandatory 2 honey opener and any tied-hole carry that fed in
+  // when the hole was created. carryPot tracking remains on g.carryPot purely
+  // so we can roll a NEW carry forward if THIS hole ties.
+  let p1Golf = 0, p2Golf = 0, p1Honey = 0, p2Honey = 0, desc = '';
   if (c.folded) {
-    // Honey-Stroke fold path mirrors playHole: street-based concession scorecard,
-    // bettor takes the wagered pot as a honey credit which subtracts from their score.
-    const streetIdx = (c.community.length < 3) ? 0 : (c.community.length === 3) ? 1 : (c.community.length === 4) ? 2 : 3;
-    const folderScore = [2, 1, 1, 0][streetIdx];
-    const bettorScore = [0, -1, -1, -2][streetIdx];
+    // YJ uniform fold rule (matches simulator playHole): folder posts +1 bogey,
+    // non-folder posts 0 par AND takes the PREVIOUSLY AGREED pot in honey.
+    // The currentProposal that triggered the fold is moot — it was never
+    // accepted. agreedTotal is the level both players had already agreed to
+    // before that proposal, so it's the correct honey credit.
     const folderSide = c.folded;
     const bettorSide = folderSide === 'p1' ? 'p2' : 'p1';
-    const folderRaw = folderScore;
-    const honeyPot = c.strokes + carryPot;
-    const bettorRaw = bettorScore - honeyPot; // honey credit reduces score
-    p1s = folderSide === 'p1' ? folderRaw : bettorRaw;
-    p2s = folderSide === 'p2' ? folderRaw : bettorRaw;
+    const previouslyAgreed = c.agreedTotal;
+    if (folderSide === 'p1') { p1Golf = 1; p2Golf = 0; p2Honey = previouslyAgreed; }
+    else                     { p2Golf = 1; p1Golf = 0; p1Honey = previouslyAgreed; }
     const folderName = folderSide === 'p1' ? g.p1.name : g.p2.name;
     const bettorName = bettorSide === 'p1' ? g.p1.name : g.p2.name;
-    desc = folderName + ' folded. ' + bettorName + ' takes the ' + honeyPot + '-stroke honey pot. ' + folderName + ' ' + formatScore(folderRaw) + ', ' + bettorName + ' ' + formatScore(bettorRaw) + '.';
+    desc = folderName + ' folded. ' + bettorName + ' takes the ' + previouslyAgreed + '-honey pot (the previously agreed total). ' + folderName + ' +1 bogey, ' + bettorName + ' 0 par.';
     g.carryPot = 0;
   } else {
     while (c.community.length < 5) c.community.push(c.deck.pop());
@@ -4456,42 +4592,67 @@ function resolveMPHole(g) {
     const p2H = evaluate7(c.p2Cards, c.community);
     const cmp = p1H - p2H;
     if (cmp === 0) {
-      // Tied hole: both score par; pot carries to the next decisive hole.
-      p1s = 0; p2s = 0;
-      g.carryPot = carryPot + c.strokes;
-      desc = 'Tie at ' + CATEGORY_NAMES[p1H >>> 24] + '. Both score par. The ' + g.carryPot + '-stroke honey pot carries forward.';
-    }
-    else {
+      // Tied showdown: both 0 par, ENTIRE agreed total rolls forward as the
+      // starting honey for the next hole (compounding across consecutive ties).
+      p1Golf = 0; p2Golf = 0;
+      g.carryPot = c.agreedTotal;
+      desc = 'Tie at ' + CATEGORY_NAMES[p1H >>> 24] + '. Both score 0 par. The ' + c.agreedTotal + '-honey pot rolls forward to the next hole.';
+    } else {
+      // Decisive showdown: each player scores THEIR OWN hand's golf value, and
+      // the winner additionally takes the agreed total as a honey credit.
       const p1Wins = cmp > 0;
       const winnerHand = p1Wins ? p1H : p2H;
       const winnerGolf = golfScoreFromHandValue(winnerHand);
-      const loserGolf = golfScoreFromHandValue(p1Wins ? p2H : p1H);
-      // Winner's score = own golf score − honey pot (pot improves their round).
-      const honeyPot = c.strokes + carryPot;
-      const winnerScore = winnerGolf - honeyPot;
-      const loserScore = loserGolf;
-      p1s = p1Wins ? winnerScore : loserScore;
-      p2s = p1Wins ? loserScore : winnerScore;
-      const winName = p1Wins ? g.p1.name : g.p2.name;
+      const loserHand  = p1Wins ? p2H : p1H;
+      const loserGolf  = golfScoreFromHandValue(loserHand);
+      const winName  = p1Wins ? g.p1.name : g.p2.name;
       const loseName = p1Wins ? g.p2.name : g.p1.name;
-      desc = winName + ' wins with ' + CATEGORY_NAMES[winnerHand >>> 24] + ' and takes the ' + honeyPot + '-stroke honey pot. ' + winName + ' ' + formatScore(winnerScore) + ', ' + loseName + ' ' + formatScore(loserScore) + '.';
+      const pot = c.agreedTotal;
+      if (p1Wins) { p1Golf = winnerGolf; p1Honey = pot; p2Golf = loserGolf; }
+      else        { p2Golf = winnerGolf; p2Honey = pot; p1Golf = loserGolf; }
+      desc = winName + ' wins with ' + CATEGORY_NAMES[winnerHand >>> 24]
+           + ' and takes the ' + pot + '-honey pot. '
+           + winName + ' ' + formatScore(winnerGolf) + ' golf · '
+           + loseName + ' ' + formatScore(loserGolf) + ' golf '
+           + '(' + loseName + ' had ' + CATEGORY_NAMES[loserHand >>> 24] + ').';
       g.carryPot = 0;
     }
   }
-  g.p1.total += p1s; g.p2.total += p2s;
-  g.scores.push({ p1: p1s, p2: p2s });
+  // Accumulate raw per-hole golf and honey separately. The match's displayed
+  // score = golfTotal − honeyTotal / divisor, where divisor matches the round
+  // length (honeyDivisorFor(g.totalHoles)). Per-hole scores logged into
+  // g.scores capture both layers so the score history can be replayed faithfully.
+  g.p1.golfTotal  += p1Golf;
+  g.p1.honeyTotal += p1Honey;
+  g.p2.golfTotal  += p2Golf;
+  g.p2.honeyTotal += p2Honey;
+  mpRecomputeTotals(g);
+  g.scores.push({ p1Golf, p2Golf, p1Honey, p2Honey });
   c.result = { desc };
   if (g.mode === 'hotseat') g.turnFor = 'p1';
 }
 
 function mpNextHole(g) {
   if (g.holeNum >= g.totalHoles) {
-    if (g.p1.total === g.p2.total) { toast('Tied — entering sudden-death playoff'); }
-    else { g.ended = true; renderActiveMP(); return; }
+    // End-of-match: tie-breaker is the displayed total (golfTotal − honeyTotal/divisor),
+    // which is already computed onto g.p1.total / g.p2.total via mpRecomputeTotals.
+    if (Math.abs(g.p1.total - g.p2.total) < 1e-9) {
+      // Sudden-death extension: add one more hole and re-enter the loop. The
+      // carry from the just-tied final hole (if any) flows through naturally.
+      toast('Tied — sudden-death hole');
+      g.totalHoles++;
+    } else {
+      g.ended = true; renderActiveMP(); return;
+    }
   }
   g.holeNum++;
   const dealer = g.current.dealer === 'p1' ? 'p2' : 'p1';
-  g.current = newHoleState(dealer);
+  // Pass the accumulated carry into the new hole's opening pot so tied-hole
+  // honey rolls forward correctly. newHoleState seeds agreedTotal = 2 + carry.
+  g.current = newHoleState(dealer, g.carryPot || 0);
+  // The carry has been consumed by the new hole's opener; clear it so it
+  // doesn't double-add on the next resolve.
+  g.carryPot = 0;
   g.turnFor = g.mode === 'hotseat' ? null : 'p1';
   if (g.mode === 'sharelink') g.shareLink = encodeGameToURL(g);
   renderActiveMP();
@@ -4507,12 +4668,20 @@ function simpleHash(s) {
 }
 
 function encodeGameToURL(g) {
+  // Schema v2: YJ agreed-total state. Replaces the v1 classic-poker fields
+  // (strokes / currentBet / matched) with agreedTotal / currentProposal /
+  // pendingFor. Schema version is stamped so old links are rejected by
+  // decodeGameFromURL rather than silently mis-restored.
   const data = {
+    schemaVersion: 2,
     p1: g.p1, p2: g.p2, holeNum: g.holeNum, totalHoles: g.totalHoles,
-    scores: g.scores,
+    scores: g.scores, carryPot: g.carryPot || 0, strokeCap: g.strokeCap,
     current: {
-      deck: g.current.deck, street: g.current.street, strokes: g.current.strokes,
-      currentBet: g.current.currentBet, matched: g.current.matched, hasActed: g.current.hasActed,
+      deck: g.current.deck, street: g.current.street,
+      agreedTotal: g.current.agreedTotal,
+      currentProposal: g.current.currentProposal,
+      pendingFor: g.current.pendingFor,
+      hasActed: g.current.hasActed,
       toAct: g.current.toAct, dealer: g.current.dealer, folded: g.current.folded,
       result: g.current.result, p1Cards: g.current.p1Cards, p2Cards: g.current.p2Cards, community: g.current.community
     },
@@ -4534,7 +4703,13 @@ function decodeGameFromURL(url) {
     const encoded = parts.slice(2).join('/');
     const payload = decodeURIComponent(escape(atob(encoded)));
     if (simpleHash(payload) !== checksum) return null;
-    return JSON.parse(payload);
+    const data = JSON.parse(payload);
+    // Reject pre-v23 sharelinks rather than mis-restoring them — the field set
+    // is incompatible with the YJ agreed-total engine. A friendlier path could
+    // try to upgrade in place, but the safe default is to ask the players to
+    // restart so the active game state is unambiguous.
+    if (!data || data.schemaVersion !== 2) return null;
+    return data;
   } catch (e) { return null; }
 }
 
