@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.25-v22";
+const APP_VERSION = "2026.04.26-v23";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1313,6 +1313,24 @@ function activeScoringModel() { return SCORING_STYLES['honey-stroke']; }
 // "equity given opponent reached this street voluntarily."
 const WIN_PROB = [0.05, 0.38, 0.72, 0.87, 0.92, 0.96, 0.985, 0.999, 1.0, 1.0];
 
+// Yellow Jacket honey-divisor — DYNAMIC by round length (v23):
+//   72-hole finals  → divisor 72
+//   18-hole rounds  → divisor 18
+//   9-hole matches  → divisor  9
+//   1-hole matches  → divisor  1 (full-value drizzle for quick sims)
+// Threaded through gameContext.honeyDivisor by playMatch / runFinals so
+// decideFor's EV math sees the correct normalization for the round being
+// played. The static `honeyNormalizationDivisor` const below is kept as a
+// fallback for any code path that doesn't carry context. The actual
+// round-score formula in playMatch / runFinals always reads the dynamic
+// divisor via honeyDivisorFor(numHoles).
+function honeyDivisorFor(numHoles) {
+  const n = +numHoles || 0;
+  if (n >= 72) return 72;
+  if (n >= 18) return 18;
+  if (n >= 9)  return 9;
+  return 1;
+}
 // honeyNormalizationDivisor = 72 (4×18, like 4 rounds of golf / majors).
 // Golf dominates; honey is the light smoothing drizzle.
 const honeyNormalizationDivisor = 72;
@@ -1920,20 +1938,22 @@ function streetCapFor(street, totalCap) {
 //     so we don't re-run evaluate7 + boardTexture per decision (big hot-loop win).
 //   - `oppMatched` is the opponent's current street investment, used for range-aware
 //     threat assessment on postflop streets.
-function decideFor(cards, community, currentBet, matched, strokes, profile, oppMatched, preComputedHand, preComputedTex, carryPot = 0, gameContext = {}) {
+// decideFor — YJ DECISION KERNEL (v23, full rewrite).
+// New signature (call sites in playBettingRound updated to match):
+//   cards, community, currentProposal, agreedTotal, isPending, profile,
+//   preComputedHand, preComputedTex, gameContext
+// Action protocol:
+//   isPending=false → actor can { check, bet }   (bet.amount = NEW agreed total)
+//   isPending=true  → actor can { fold, call, raise }
+//                     (raise.amount = NEW agreed total > currentProposal)
+// Returns { action, amount, evChosen, evOptimal }
+function decideFor(cards, community, currentProposal, agreedTotal, isPending, profile, preComputedHand, preComputedTex, gameContext = {}) {
   const street = community.length === 0 ? 'preflop' : community.length === 3 ? 'flop' : community.length === 4 ? 'turn' : 'river';
   const streetCap = streetCapFor(street, CurrentStrokeCap);
-  const remaining = Math.max(0, streetCap - strokes - currentBet);
-  const toCall = currentBet - matched;
-  // Pot = the AGREED stroke level for this hand under Yellow Jacket rules.
-  // YJ semantics: a "bet" is a proposed new total stroke level for the hole,
-  // not an additive contribution that doubles when matched. 1 blind + 1 call =
-  // 1 stroke total (winner takes 1 honey credit), NOT 2. The previous classic-
-  // poker formulation `strokes + currentBet + matched` over-counted the
-  // actor's prior commitment any time matched[actor] > 0 (blind poster facing
-  // a raise, every multi-raise sequence) — inflating expectedHoneyEV and
-  // distorting the threshold-coupled fold/bet decisions in those scenarios.
-  const pot = strokes + currentBet;
+  const remaining = Math.max(0, streetCap - currentProposal);
+  // Pot for adj-estimation purposes = the post-call hole value (= currentProposal).
+  // Under YJ rules there's no "matched" / no doubling. Last agreed total IS the pot.
+  const pot = currentProposal;
 
   // Board-texture-aware strength. `estimateStrengthAware` returns hero's category-based
   // raw strength on the shown board, then adjusts for:
@@ -1943,139 +1963,82 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   // Skilled heroes (low profile.noise) apply these adjustments in full; noisy heroes
   // ignore them, preserving the behavioral distinction between disciplined and reckless play.
   const skillFactor = Math.max(0, Math.min(1, 1 - (profile.noise || 0) / 0.30));
-  const oppCommitted = Math.max(0, +oppMatched || 0);
-  const oppCommitFrac = streetCap > 0 ? Math.min(1, oppCommitted / streetCap) : 0;
+  // Under YJ, "opponent's commitment" maps to whether a proposal is pending and
+  // how aggressive it is relative to the streetCap. No matched chips exist.
+  const oppCommitFrac = isPending ? Math.min(1, (currentProposal - agreedTotal) / Math.max(1, streetCap)) : 0;
 
   let adj = estimateStrengthAware(cards, community, street, streetCap, skillFactor, oppCommitFrac, preComputedHand, preComputedTex);
-  // adjTrue = SKILL-INVARIANT ground-truth equity oracle — always computed with
-  // skillFactor = 1 so every player's chosen action is judged against the SAME
-  // board-aware oracle, not their own threat-blind view. The previous patch
-  // captured adj before noise, but estimateStrengthAware itself gates threat
-  // and draw adjustments by the actor's skillFactor — meaning a bottom-tier
-  // player's "oracle" was a noise-blind, threat-blind view that happened to
-  // agree with their bad calls. evChosen ≈ evOptimal collapsed to amount-
-  // discretization noise and skill correlation went to zero. With skillFactor=1
-  // the oracle sees full threat/draw awareness, so noisy / oblivious players
-  // accrue real EV loss for plays that look fine in fog but are losing against
-  // the true equity. The skipped recomputation when skillFactor already = 1
-  // avoids a redundant evaluate7 + texture pass for elite players.
+  // adjTrue = skill-invariant ground-truth equity oracle (skillFactor=1) so
+  // evChosen and evOptimal are judged against the same board-aware oracle for
+  // every player. Decisions use NOISY adj for skill differentiation.
   const adjTrue = (skillFactor < 1)
     ? estimateStrengthAware(cards, community, street, streetCap, 1, oppCommitFrac, preComputedHand, preComputedTex)
     : adj;
-  // Apply per-decision noise so the threshold-coupled honeyEV reads from the noisy
-  // post-equity estimate (skilled players' lower noise still gives them sharper EV).
   adj = Math.max(0.01, Math.min(1.0, adj + (Math.random() - 0.5) * profile.noise));
 
-  // === HONEY-STROKE AI: THRESHOLD-COUPLED HONEY EV ===
-  // Couple expectedHoneyEV directly to the CORE decision thresholds (bet / fold / raise)
-  // rather than mutating adj downstream. The previous adj-only patches failed because
-  // by the time adj was being adjusted, the threshold checks below had already been
-  // structurally fixed to profile.* values — the player's authored skill never reached
-  // through into actual aggression / folding behaviour. This block lifts honey value
-  // into the primary decision engine: high-skill players have their bet/raise
-  // thresholds dropped (and fold threshold relaxed toward pure pot-odds) when they
-  // have positive equity in a meaningful pot, and the opposite when they're behind.
-  // Authored skill (via skillFactor) gates the application — noisy bottom-tier
-  // players see no threshold movement.
-  // Pot value cap — clamps the honey-EV input so a single mega-pot can't drive
-  // AI thresholds into saturation. With CurrentStrokeCap = 6 (regulars) the cap
-  // lands at 12 strokes; with cap = 10 (majors / finals) it lands at 20. Beyond
-  // that the AI's expectedHoneyEV behaves the same regardless of pot size,
-  // which compresses champion-score outliers without flattening skill signal.
-  // YJ-correct potValue (no matched[actor] over-count) — see pot comment above.
-  const potValue = Math.min(CurrentStrokeCap * 2.0, strokes + currentBet + (carryPot || 0));
-  // Honey is the smoothing drizzle only. expectedSkinEV = potValue * (adj - 0.5) * skillFactor.
-  // Pure equity advantage formula — no arbitrary static constant. Golf hand scores dominate.
-  const expectedSkinEV = potValue * (adj - 0.5) * skillFactor;
-  const expectedHoneyEV = expectedSkinEV;
-
-  // Local copies of the three decision thresholds — modifying these instead of
-  // profile.* keeps the player object immutable across decisions in the same hand.
-  // Floors prevent runaway saturation (betThreshold → 0.05 means even mid-equity
-  // hands bet, but never literally 0; foldThreshold → 0.01 means fold only when
-  // way behind pot odds; raiseThreshold → 0.10 keeps raising rare on weak holdings).
-  let betThreshold   = Math.max(0.05, profile.betThreshold   - expectedHoneyEV * 0.8);
-  let foldThreshold  = Math.max(0.01, profile.foldThreshold  - expectedHoneyEV * 1.2);
-  let raiseThreshold = Math.max(0.10, profile.raiseThreshold - expectedHoneyEV * 0.6);
-
-  // Fix #1 + #5: pot-relative bet / raise sizing. Strong hands go bigger.
-  function potSizedAmount(sizeFactor) {
-    const raw = Math.max(1, Math.round(pot * sizeFactor));
-    return Math.min(raw, remaining);
-  }
-
-  // === EV TRACKING — Yellow Jacket game theory ===
-  // Compute the expected value of every action the actor could legally take at
-  // this decision point, then identify the optimal (highest-EV) candidate.
+  // === YJ EV MATH (v23 — replaces all legacy distortions) ===
+  // Removed: expectedSkinEV / expectedHoneyEV / threshold-coupling, ykFoldEV,
+  //          showdownGolfHoney, bettorGolfStroke table, potValue clamp.
+  // Active: round-impact EV in honey-equivalent units, dynamic divisor, no -toCall,
+  //         no -a, no matched. Loser pays nothing under YJ rules — only the
+  //         folder pays a +1 bogey on the scorecard plus loses the previous
+  //         agreed total in honey.
   //
-  // YELLOW JACKET FOLD COST: classic poker treats fold as EV=0 (forfeit pot,
-  // commit nothing more), but in YJ folding incurs a golf-scorecard penalty
-  // per playHole's resolution table — preflop +2 strokes, flop/turn +1,
-  // river 0. The round-total formula is `totalGolf − netHoney / 72`, so 1
-  // golf stroke = 72 honey-pot units in round-score impact. We charge fold
-  // EV the honey-equivalent of its scorecard penalty so the EV oracle (and
-  // therefore the EV-realization skill metric) reflects the rules elites are
-  // actually competing under. Without this, the metric rates classic-poker
-  // play as optimal even though it's catastrophic in YJ aggregate stroke play.
+  // Round-score impact (lower = better): roundScore = totalGolf − netHoney/divisor.
+  // EV (honey-equivalent, higher = better) = − roundImpact × divisor:
   //
-  // YJ EV approximation, Nash-complete (v22):
-  //   fold      → −foldScorecardPenalty[street] × 72   (scorecard penalty only)
-  //   check/call → adj × pot − showdownGolfHoney(adj)  (honey gain MINUS expected
-  //                                                     showdown scorecard cost)
-  //   bet/raise → foldEq × (newLevel − bettorGolfHoney)
-  //               + (1 − foldEq) × (adj × newLevel − showdownGolfHoney(adj))
-  // Classic poker uses `adj × (pot + toCall) − toCall` because matching a bet
-  // genuinely costs you `toCall` if you lose. YJ has no such cost: the loser
-  // doesn't forfeit strokes to the winner — they just don't collect the honey.
-  // BUT both players DO take a golf-scorecard score at showdown
-  // (golfScoreFromHandValue, range −5..+2), which v21 missed. Without that
-  // term in the EV, the AI says "always call pre-river" — wrong. The
-  // showdownGolfHoney(adj) approximation closes the Nash equilibrium so flop/
-  // turn folds happen on truly weak hands (~adj < 0.16) while river folds
-  // happen at the classic ~0.33 threshold.
-  const ykFoldStrokePenalty = street === 'preflop' ? 2
-                            : street === 'river'   ? 0 : 1;
-  const ykFoldEV = -ykFoldStrokePenalty * honeyNormalizationDivisor;
-  // Approximates E[golfScoreFromHandValue(theirHand) | adj] in honey-equivalent
-  // units. Linear fit: adj=0 → +2 strokes (high-card weak), adj=0.33 → 0 (mid),
-  // adj=0.83 → −3 (strong). Multiplied by honeyNormalizationDivisor (72) so
-  // the cost is comparable to honey-pot magnitudes used elsewhere in evOf.
-  function showdownGolfHoney(adjVal) {
-    return (2 - 6 * adjVal) * honeyNormalizationDivisor;
+  //   ev_fold     = −divisor − agreedTotal
+  //                  (folder takes +1 bogey golf AND loses agreedTotal honey)
+  //   ev_show(L,a) = (2a − 1) × L  −  (1.5 − 4a) × divisor
+  //                  (honey: zero-sum at level L, golf: linear-fit showdown
+  //                   approximation; positive = good for actor)
+  //   ev_check    = ev_show(agreedTotal, a)
+  //   ev_call     = ev_show(currentProposal, a)
+  //   ev_bet/raise(L) = foldEq × agreedTotal
+  //                   + (1 − foldEq) × ev_show(L, a)
+  //                  (if opp folds: actor wins agreedTotal honey + 0 par golf;
+  //                   if opp calls: showdown at proposed level L)
+  const divisor = Math.max(1, +(gameContext && gameContext.honeyDivisor) || honeyNormalizationDivisor);
+  function showEV(adjVal, level) {
+    return (2 * adjVal - 1) * level - (1.5 - 4 * adjVal) * divisor;
   }
-  function evOf(actionName, amount) {
-    if (actionName === 'fold') return ykFoldEV;
-    if (actionName === 'check') return adjTrue * pot - showdownGolfHoney(adjTrue);
-    if (actionName === 'call')  return adjTrue * pot - showdownGolfHoney(adjTrue);
-    const a = Math.max(0, +amount || 0);
-    const newLevel = pot + a;
-    const denom = Math.max(1, newLevel);
-    const foldEq = Math.max(0, Math.min(0.5, a / denom));
-    // bettorScoreTable from playHole = [0, -1, -1, -2] — actor's golf benefit
-    // when opp folds. Negative stroke = better golf, so subtract from honey EV.
-    const bettorGolfStroke = street === 'preflop' ? 0
-                           : street === 'river'   ? -2 : -1;
-    const bettorGolfHoney  = bettorGolfStroke * honeyNormalizationDivisor;
-    const evOpponentFolds  = newLevel - bettorGolfHoney;
-    const evOpponentCalls  = adjTrue * newLevel - showdownGolfHoney(adjTrue);
-    return foldEq * evOpponentFolds + (1 - foldEq) * evOpponentCalls;
+  function foldEqFor(newLevel) {
+    // Larger relative raise → more fold equity. Capped at 0.5 so AI can't price
+    // opponents out unrealistically. raiseAmount/newLevel, bounded.
+    const raiseAmount = Math.max(0, newLevel - agreedTotal);
+    return Math.max(0, Math.min(0.5, raiseAmount / Math.max(1, newLevel)));
   }
+  function betEV(adjVal, newLevel) {
+    const fe = foldEqFor(newLevel);
+    return fe * agreedTotal + (1 - fe) * showEV(adjVal, newLevel);
+  }
+  const evFoldAbs = -divisor - agreedTotal;
+
+  // Build candidate set with adjTrue (oracle) for the metric.
   const candidates = [];
-  if (toCall === 0) {
-    candidates.push({ name: 'check', amount: 0, ev: evOf('check', 0) });
+  // Proposal sizes are NEW agreed totals (YJ semantics). Capped by streetCap.
+  function proposalLevels(base) {
+    const levels = [];
+    [1.5, 2.0, 3.0].forEach(mult => {
+      const L = Math.min(streetCap, Math.max(base + 1, Math.round(base * mult)));
+      if (L > base) levels.push(L);
+    });
+    return levels;
+  }
+  if (!isPending) {
+    // No proposal pending — actor can check (accept agreedTotal) or bet (propose).
+    candidates.push({ name: 'check', amount: agreedTotal, ev: showEV(adjTrue, agreedTotal) });
     if (remaining > 0) {
-      [0.33, 0.67, 1.0].forEach(f => {
-        const amt = Math.min(remaining, Math.max(1, Math.round(pot * f)));
-        if (amt > 0) candidates.push({ name: 'bet', amount: amt, ev: evOf('bet', amt) });
+      proposalLevels(agreedTotal).forEach(L => {
+        candidates.push({ name: 'bet', amount: L, ev: betEV(adjTrue, L) });
       });
     }
   } else {
-    candidates.push({ name: 'fold', amount: 0, ev: ykFoldEV });
-    candidates.push({ name: 'call', amount: 0, ev: evOf('call', 0) });
+    candidates.push({ name: 'fold', amount: 0, ev: evFoldAbs });
+    candidates.push({ name: 'call', amount: currentProposal, ev: showEV(adjTrue, currentProposal) });
     if (remaining > 0) {
-      [0.5, 1.0, 1.5].forEach(f => {
-        const amt = Math.min(remaining, Math.max(1, Math.round(pot * f)));
-        if (amt > 0) candidates.push({ name: 'raise', amount: amt, ev: evOf('raise', amt) });
+      proposalLevels(currentProposal).forEach(L => {
+        candidates.push({ name: 'raise', amount: L, ev: betEV(adjTrue, L) });
       });
     }
   }
@@ -2083,17 +2046,15 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
   for (const c of candidates) if (c.ev > evOptimal) evOptimal = c.ev;
   if (!Number.isFinite(evOptimal)) evOptimal = 0;
 
-  // wrap(result) — augments the existing decision return value with evChosen
-  // and evOptimal so playBettingRound can record per-player EV stats.
   function wrap(result) {
     let evChosen = 0;
-    if (result.action === 'fold') evChosen = ykFoldEV;
+    if (result.action === 'fold') evChosen = evFoldAbs;
     else if (result.action === 'check') {
       const c = candidates.find(c => c.name === 'check');
-      evChosen = c ? c.ev : 0;
+      evChosen = c ? c.ev : showEV(adjTrue, agreedTotal);
     } else if (result.action === 'call') {
       const c = candidates.find(c => c.name === 'call');
-      evChosen = c ? c.ev : 0;
+      evChosen = c ? c.ev : showEV(adjTrue, currentProposal);
     } else if (result.action === 'bet' || result.action === 'raise') {
       let best = null, bestDelta = Infinity;
       for (const c of candidates) {
@@ -2101,38 +2062,37 @@ function decideFor(cards, community, currentBet, matched, strokes, profile, oppM
         const d = Math.abs(c.amount - (result.amount || 0));
         if (d < bestDelta) { best = c; bestDelta = d; }
       }
-      evChosen = best ? best.ev : evOf(result.action, result.amount);
+      evChosen = best ? best.ev : betEV(adjTrue, +result.amount || agreedTotal);
     }
     return Object.assign({ evChosen, evOptimal }, result);
   }
 
-  if (toCall === 0) {
-    // Option to check or bet
-    if (adj > betThreshold && remaining > 0) {
-      const sizeFactor = adj > 0.85 ? 1.0 : adj > 0.70 ? 0.67 : 0.33;
-      return wrap({ action: 'bet', amount: potSizedAmount(sizeFactor) });
+  // === DECISION LOGIC (v23) ===
+  // Profile thresholds drive bet/raise; fold uses direct YJ EV comparison.
+  // No threshold-coupling. profile.foldThreshold is no longer used in the
+  // decision path (kept for skill-rating distance only).
+  if (!isPending) {
+    if (adj > profile.betThreshold && remaining > 0) {
+      const sizeFactor = adj > 0.85 ? 3.0 : adj > 0.70 ? 2.0 : 1.5;
+      const newLevel = Math.min(streetCap, Math.max(agreedTotal + 1, Math.round(agreedTotal * sizeFactor)));
+      if (newLevel > agreedTotal) {
+        return wrap({ action: 'bet', amount: newLevel });
+      }
     }
     return wrap({ action: 'check' });
-  } else {
-    // Nash-correct YJ fold rule. Fold iff the EV of calling (honey gain MINUS
-    // expected showdown golf cost) is worse than the EV of folding (just the
-    // scorecard penalty). Uses noisy `adj` so disciplined elites accurately
-    // identify weak hands while noisy players misjudge — skill differentiation
-    // emerges on every street, not just the river. Per-street indifference
-    // points (with showdown golf cost factored in):
-    //   Preflop (foldPenalty=2): never fold — pot too small to overcome
-    //     2-stroke fold cost vs the call-then-showdown alternative.
-    //   Flop/turn (foldPenalty=1): fold at adj ≲ 0.16 (very weak hands).
-    //   River (foldPenalty=0): fold at adj ≲ 0.33 (classic pot-odds analog).
-    const evCallNoisy = adj * pot - showdownGolfHoney(adj);
-    if (evCallNoisy < ykFoldEV) return wrap({ action: 'fold' });
-    // Fix #5: pot-relative raise sizing when hand is premium.
-    if (adj > raiseThreshold && remaining > 0) {
-      const sizeFactor = adj > 0.90 ? 1.5 : adj > 0.80 ? 1.0 : 0.5;
-      return wrap({ action: 'raise', amount: potSizedAmount(sizeFactor) });
-    }
-    return wrap({ action: 'call' });
   }
+  // Pending proposal → fold / call / raise. Fold rule: noisy YJ EV comparison.
+  const evCallNoisy = (2 * adj - 1) * currentProposal - (1.5 - 4 * adj) * divisor;
+  const evFoldNoisy = -divisor - agreedTotal;
+  if (evCallNoisy < evFoldNoisy) return wrap({ action: 'fold' });
+  if (adj > profile.raiseThreshold && remaining > 0) {
+    const sizeFactor = adj > 0.90 ? 2.5 : adj > 0.80 ? 2.0 : 1.5;
+    const newLevel = Math.min(streetCap, Math.max(currentProposal + 1, Math.round(currentProposal * sizeFactor)));
+    if (newLevel > currentProposal) {
+      return wrap({ action: 'raise', amount: newLevel });
+    }
+  }
+  return wrap({ action: 'call' });
 }
 function makeRandomProfile() {
   // Retained for backwards compatibility. New code should prefer makeProfileForSkill,
@@ -2229,25 +2189,40 @@ function makeFreshStats() {
     evDecisions: 0, evChosenSum: 0, evOptimalSum: 0, evLossSum: 0,
   };
 }
+// playBettingRound — YJ AGREED-TOTAL MODEL (v23, full rewrite).
+// Inputs:
+//   strokes (re-interpreted): the running agreedTotal pot for the hole, carried
+//     in from the previous street (or from the mandatory hole-start pot of 2).
+//   initialBet: ignored under YJ rules — there is no blind. The mandatory pot
+//     is set in playHole at hole start. Kept for backward-compat signature only.
+// Output (backward-compatible shape):
+//   { strokes, folded }
+//     strokes = final agreedTotal for non-fold paths; pre-proposal agreedTotal
+//               (foldedAtAgreedTotal) for fold paths (= the previous level).
+//     folded  = 'a' | 'b' | null
+//
+// Rules (YJ, no classic poker semantics):
+//   - "bet" / "raise" = a PROPOSAL to set a NEW agreed total. Capped by streetCap.
+//     Sets currentProposal > agreedTotal. Does NOT change agreedTotal yet.
+//   - "call" / "check" = ACCEPT the current proposal. agreedTotal := currentProposal.
+//     If both players have agreed at the same level, the betting round ends.
+//   - "fold" = end the hand. agreedTotal stays at its PRE-proposal value
+//     (foldedAtAgreedTotal). Folder loses agreedTotal honey to opponent.
+//   - No "matched" array. No additive doubling. Pot = last agreed total only.
 function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, profileB, initialBet, firstToAct, carryPot = 0, gameContext = {}, pA = null, pB = null) {
-  let currentBet = initialBet || 0;
-  const matched = {a: 0, b: 0};
-  const acted = {a: false, b: false};
-  // On the preflop street the caller passes a blind (currentBet=1) + matches the non-acting player.
-  if (initialBet) {
-    const blindPoster = firstToAct === 'a' ? 'b' : 'a';
-    matched[blindPoster] = initialBet;
-  }
+  let agreedTotal = +strokes || 0;
+  let currentProposal = agreedTotal;        // no pending proposal at street start
+  // agreed[x] = true means player x has accepted the current state (currentProposal).
+  // Both start true at street entry — both already accept the carried-in agreedTotal.
+  const agreed = { a: true, b: true };
   let toAct = firstToAct || (dealer === 'a' ? 'b' : 'a');
   let folded = null;
+  let foldedAtAgreedTotal = agreedTotal;
   const street = community.length === 0 ? 'preflop' : community.length === 3 ? 'flop' : community.length === 4 ? 'turn' : 'river';
   const streetCap = streetCapFor(street, CurrentStrokeCap);
   const tex = community.length >= 3 ? boardTexture(community) : null;
   const aHand = community.length >= 3 ? evaluate7(aCards, community) : 0;
   const bHand = community.length >= 3 ? evaluate7(bCards, community) : 0;
-  // recordEV — credits per-decision EV stats to the right player, when player
-  // refs were threaded down. Pure no-op when pA / pB are absent (e.g. older
-  // call sites that haven't been updated yet), so this is fully backward-safe.
   function recordEV(side, decision) {
     const player = side === 'a' ? pA : pB;
     if (!player || !player.stats) return;
@@ -2264,33 +2239,56 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     const cards = actor === 'a' ? aCards : bCards;
     const profile = actor === 'a' ? profileA : profileB;
     const actorHand = actor === 'a' ? aHand : bHand;
-    const d = decideFor(cards, community, currentBet, matched[actor], strokes, profile, matched[other], actorHand, tex, carryPot, gameContext);
+    const isPending = currentProposal > agreedTotal;
+    const d = decideFor(cards, community, currentProposal, agreedTotal, isPending, profile, actorHand, tex, gameContext);
     recordEV(actor, d);
     if (typeof LabState !== 'undefined' && LabState.instrumentation && LabState.instrumentation.collector) {
       LabState.instrumentation.collector(street, d.action);
     }
-    if (d.action === 'fold') { folded = actor; break; }
-    if (d.action === 'check') {
-      acted[actor] = true;
-      if (acted[other] && currentBet === 0) break;
+    if (d.action === 'fold') {
+      folded = actor;
+      foldedAtAgreedTotal = agreedTotal;     // pre-proposal level
+      break;
+    }
+    if (d.action === 'check' || d.action === 'call') {
+      // Accept the current state. If a proposal was pending, agreedTotal advances.
+      agreedTotal = currentProposal;
+      agreed[actor] = true;
+      if (agreed[other]) break;              // both agree → end street
       toAct = other;
-    } else if (d.action === 'call') {
-      matched[actor] = currentBet; acted[actor] = true; break;
-    } else {
-      currentBet += d.amount;
-      matched[actor] = currentBet;
-      acted[actor] = true; acted[other] = false;
+      continue;
+    }
+    // bet | raise — a NEW proposal. Replaces (does not add to) currentProposal,
+    // capped by streetCap. The proposed amount IS the new total (not an additive).
+    const proposed = Math.min(streetCap, Math.max(currentProposal + 1, +d.amount || (currentProposal + 1)));
+    if (proposed <= currentProposal) {
+      // No-op (rejected proposal) — treat as call
+      agreedTotal = currentProposal;
+      agreed[actor] = true;
+      if (agreed[other]) break;
       toAct = other;
-      if (strokes + currentBet >= streetCap) {
-        const otherHand = other === 'a' ? aHand : bHand;
-        const resp = decideFor(other === 'a' ? aCards : bCards, community, currentBet, matched[other], strokes, other === 'a' ? profileA : profileB, matched[actor], otherHand, tex, carryPot, gameContext);
-        recordEV(other, resp);
-        if (resp.action === 'fold') { folded = other; break; }
-        matched[other] = currentBet; acted[other] = true; break;
+      continue;
+    }
+    currentProposal = proposed;
+    agreed[actor] = true;                    // proposer agrees to their own proposal
+    agreed[other] = false;                   // other must respond
+    toAct = other;
+    // Stroke-cap saturation: if proposal is at cap, force one final response from opp.
+    if (currentProposal >= streetCap) {
+      const otherHand = other === 'a' ? aHand : bHand;
+      const resp = decideFor(other === 'a' ? aCards : bCards, community, currentProposal, agreedTotal, true, other === 'a' ? profileA : profileB, otherHand, tex, gameContext);
+      recordEV(other, resp);
+      if (resp.action === 'fold') {
+        folded = other;
+        foldedAtAgreedTotal = agreedTotal;
+        break;
       }
+      // Auto-accept (call/raise both treated as agreement at cap)
+      agreedTotal = currentProposal;
+      break;
     }
   }
-  return { strokes: strokes + currentBet, folded };
+  return { strokes: folded ? foldedAtAgreedTotal : agreedTotal, folded };
 }
 function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   const t0 = SimPerf.enabled ? performance.now() : 0;
@@ -2299,17 +2297,23 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   const aCards = [DECK[off++], DECK[off++]];
   const bCards = [DECK[off++], DECK[off++]];
   let community = [];
-  let strokes = 0;
+  // === MANDATORY STARTING POT (v23) ===
+  // Every hole begins with an agreed pot of 2 honey, plus any carry from prior
+  // tied holes (carry only flows when carryOverEnabled — finals path only).
+  // The mandatory 2 prevents check-fests and gives every hole real economic
+  // stakes from the start, without requiring a "blind" mechanic.
+  let strokes = 2 + (carryPot || 0);
   let folded = null;
   const streets = ['preflop','flop','turn','river'];
   for (let si = 0; si < streets.length; si++) {
     const s = streets[si];
-    const initialBet = (s === 'preflop') ? 1 : 0;
     const firstToAct = startDealer === 'a' ? 'b' : 'a';
     const brT = SimPerf.enabled ? performance.now() : 0;
-    const br = playBettingRound(aCards, bCards, community, startDealer, strokes, pA.profile, pB.profile, initialBet, firstToAct, carryPot, gameContext, pA, pB);
+    // Pass agreedTotal-so-far as `strokes`, no blind (initialBet=0). carryPot
+    // is already folded into strokes at hole start.
+    const br = playBettingRound(aCards, bCards, community, startDealer, strokes, pA.profile, pB.profile, 0, firstToAct, 0, gameContext, pA, pB);
     SimPerf.add('bettingRound', brT);
-    strokes = br.strokes;
+    strokes = br.strokes;     // for fold: pre-proposal agreedTotal; otherwise: final agreedTotal
     if (br.folded) { folded = br.folded; break; }
     if (s === 'preflop') { community.push(DECK[off++], DECK[off++], DECK[off++]); }
     else if (s === 'flop') { community.push(DECK[off++]); }
@@ -2317,16 +2321,15 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     if (strokes >= CurrentStrokeCap && s !== 'river') { while (community.length < 5) community.push(DECK[off++]); break; }
   }
   if (folded) {
-    // Honey-Stroke fold path: street-based concession scorecard. The wagered-strokes
-    // pot becomes a honey credit for the non-folder; the folder takes a small positive
-    // scorecard penalty scaled to how late the fold came:
-    //   Preflop:  bettor  0,  folder +2  (least pressure → smallest reward)
-    //   Flop:     bettor −1,  folder +1
-    //   Turn:     bettor −1,  folder +1
-    //   River:    bettor −2,  folder  0  (folder came close to par before laying it down)
+    // === YJ FOLD SCORING (v23, replaces street-penalty tables) ===
+    // Folder: +1 bogey on golf scorecard, 0 honey gain.
+    // Non-folder: 0 par on golf scorecard, +previousAgreedTotal honey credit.
+    // `strokes` from playBettingRound is already the previousAgreedTotal
+    // (the level that was agreed BEFORE the proposal that triggered the fold).
     const streetIdx = (community.length < 3) ? 0 : (community.length === 3) ? 1 : (community.length === 4) ? 2 : 3;
-    const folderScoreTable = [2, 1, 1, 0];
-    const bettorScoreTable = [0, -1, -1, -2];
+    // Legacy table refs kept as no-ops so any debug overlay that reads them doesn't crash.
+    const folderScoreTable = [1, 1, 1, 1];
+    const bettorScoreTable = [0, 0, 0, 0];
     const folderScore = folderScoreTable[streetIdx];
     const bettorScore = bettorScoreTable[streetIdx];
     const aScore = folded === 'a' ? folderScore : bettorScore;
@@ -2405,6 +2408,13 @@ function playMatch(pA, pB, numHoles, opts) {
   let carryPot = 0;
   let dealer = Math.random() < 0.5 ? 'a' : 'b';
   const baseGameContext = opts.gameContext || null;
+  // === YJ DYNAMIC DIVISOR (v23) ===
+  // Match-length-aware honey normalization. 72 for 72-hole finals, 18 for an
+  // 18-hole round, 9 for a 9-hole bracket round, 1 for a single-hole match.
+  const divisor = honeyDivisorFor(numHoles);
+  // Carry-over only enabled in finals contexts (gameContext.isFinals = true).
+  // Outside of finals, ties don't carry — the pot is simply discarded.
+  const carryEnabled = !!(baseGameContext && baseGameContext.isFinals);
   const buildGameContext = (holeNumber) => {
     const baseHoleNumber = baseGameContext && Number.isFinite(+baseGameContext.holeNumber) ? +baseGameContext.holeNumber : 1;
     const totalHoles = baseGameContext && Number.isFinite(+baseGameContext.totalHoles) ? +baseGameContext.totalHoles : numHoles;
@@ -2412,27 +2422,32 @@ function playMatch(pA, pB, numHoles, opts) {
       mode: baseGameContext && baseGameContext.mode ? baseGameContext.mode : 'match',
       holeNumber: baseHoleNumber + holeNumber - 1,
       totalHoles,
+      honeyDivisor: divisor,                  // threaded into decideFor
+      isFinals: !!(baseGameContext && baseGameContext.isFinals),
     });
   };
   const applyHole = (r) => {
     totalGolfA += r.aScore; totalGolfB += r.bScore;
     if (r.tie) {
-      carryPot += (r.strokes || 0);
+      // Carry only in finals; otherwise the tied pot is forfeited (no transfer).
+      if (carryEnabled) carryPot += (r.strokes || 0);
     } else {
       const aSk = r.aHoneyCredit || 0;
       const bSk = r.bHoneyCredit || 0;
       totalHoneyA += aSk;
       totalHoneyB += bSk;
-      if (aSk > 0)      totalHoneyA += carryPot;
-      else if (bSk > 0) totalHoneyB += carryPot;
-      if (aSk > 0 || bSk > 0) carryPot = 0;
+      if (carryEnabled && carryPot > 0) {
+        if (aSk > 0)      totalHoneyA += carryPot;
+        else if (bSk > 0) totalHoneyB += carryPot;
+        if (aSk > 0 || bSk > 0) carryPot = 0;
+      }
     }
     updatePlayerHoleStats(pA, r, 'a'); updatePlayerHoleStats(pB, r, 'b');
   };
   for (let h = 0; h < numHoles; h++) {
     const holeNumber = h + 1;
     const gameContext = buildGameContext(holeNumber);
-    const r = playHole(pA, pB, dealer, carryPot, gameContext);
+    const r = playHole(pA, pB, dealer, carryEnabled ? carryPot : 0, gameContext);
     applyHole(r);
     dealer = dealer === 'a' ? 'b' : 'a';
   }
@@ -2440,8 +2455,8 @@ function playMatch(pA, pB, numHoles, opts) {
     const netHoneyA = totalHoneyA - totalHoneyB;
     const netHoneyB = totalHoneyB - totalHoneyA;
     return {
-      a: totalGolfA - (netHoneyA / honeyNormalizationDivisor),
-      b: totalGolfB - (netHoneyB / honeyNormalizationDivisor),
+      a: totalGolfA - (netHoneyA / divisor),
+      b: totalGolfB - (netHoneyB / divisor),
     };
   };
   let totals = computeTotals();
@@ -2451,7 +2466,7 @@ function playMatch(pA, pB, numHoles, opts) {
     while (aTotal === bTotal && playoffCount < 30) {
       const holeNumber = numHoles + playoffCount + 1;
       const gameContext = buildGameContext(holeNumber);
-      const r = playHole(pA, pB, dealer, carryPot, gameContext);
+      const r = playHole(pA, pB, dealer, carryEnabled ? carryPot : 0, gameContext);
       applyHole(r);
       dealer = dealer === 'a' ? 'b' : 'a';
       playoffCount++;
@@ -2635,13 +2650,16 @@ function runFinals(p1, p2) {
     }
     days.push({ day, p1Score: dayA, p2Score: dayB });
   }
-  // honeyNormalizationDivisor = 72 (4×18, like 4 rounds of golf / majors). Golf dominates; honey is the light smoothing drizzle.
+  // YJ DYNAMIC DIVISOR (v23): finals are the canonical 72-hole event, so the
+  // divisor is honeyDivisorFor(72) = 72. Explicit per-event normalization,
+  // matching playMatch's behavior.
+  const finalsDivisor = honeyDivisorFor(72);
   const computeFinalsTotals = () => {
     const netA = p1HoneyTotal - p2HoneyTotal;
     const netB = p2HoneyTotal - p1HoneyTotal;
     return {
-      a: p1Scorecard - (netA / honeyNormalizationDivisor),
-      b: p2Scorecard - (netB / honeyNormalizationDivisor),
+      a: p1Scorecard - (netA / finalsDivisor),
+      b: p2Scorecard - (netB / finalsDivisor),
     };
   };
   let totals = computeFinalsTotals();
@@ -3055,8 +3073,10 @@ function composite(p) { return p.majorWins * 10 + p.mainWins * 5 + p.regularWins
 // Buzz knowledge base
 const BuzzKnowledge = {
   faqs: [
-    { cat: 'rules', q: 'What is the scoring system?', a: 'Honey-Stroke. Two layers: (1) the scorecard — your hand category sets a bounded golf score for the hole (Royal Flush −5 down to High Card +2). (2) the honey pot — wagered strokes form a pot that the hole winner takes as a honey credit. Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard. Lower wins.' },
-    { cat: 'rules', q: 'What does the honey credit do?', a: 'It SUBTRACTS from your round score after normalization. Winning more honey pots than your opponent improves your golf number, but total net honey credits are divided by 18 first so scores stay realistic while poker skill remains decisive.' },
+    { cat: 'rules', q: 'What is the scoring system?', a: 'Honey-Stroke. Two layers: (1) the scorecard — your hand category sets a bounded golf score for the hole (Royal Flush −5 down to High Card +2). (2) the honey pot — every hole begins with a mandatory 2 honey; bets/raises propose a new agreed total; the hole winner takes that agreed total as honey. Net honey is divided by the round-length divisor (72 for finals, 18 for rounds, 9 for short bracket matches, 1 for single-hole) and subtracted from the golf scorecard. Lower wins.' },
+    { cat: 'rules', q: 'What does the honey credit do?', a: 'It SUBTRACTS from your round score after normalization. Winning more honey pots than your opponent improves your golf number, but net honey is divided by the round divisor first so honey stays a light drizzle on top of the dominant golf scorecard.' },
+    { cat: 'rules', q: 'How does a fold work?', a: 'When you fold to a proposal, you lose ONLY the previously agreed total in honey (the level both players had agreed to BEFORE the new proposal). You also take a +1 bogey on the scorecard. The non-folder takes 0 par AND receives that previous agreed total in honey. Same rule on every street — there is no street-based fold penalty table.' },
+    { cat: 'rules', q: 'How does betting work?', a: 'Agreed-total wagering. Every hole opens at 2 honey. A "bet" or "raise" is a PROPOSAL to set a new total agreed pot size (capped by the stroke cap). A "call" is acceptance — the pot then stands at the proposed total. No summing, no doubling, no matched contributions. The pot at any moment is the LAST agreed total only.' },
     { cat: 'rules', q: 'What happens on a tied hole?', a: 'Both players score 0 (par) and the wagered-strokes pot accumulates into a carry pot for the next decisive hole. Multiple consecutive ties stack; the winner of the next decisive hole sweeps the entire accumulated carry.' },
     { cat: 'rules', q: 'What happens on a fold?', a: 'The folder takes a small positive scorecard penalty scaled by street: Tea Box +2, Drive/Hazard +1, Putt 0. The bettor scores 0 to −2 AND takes the wagered-strokes pot as a honey credit — forcing a late-street fold is doubly valuable.' },
     { cat: 'rules', q: 'How many strokes can be bet per hole?', a: 'The event\'s stroke-cap controls the maximum total strokes per hole, partitioned across streets (25% by Tea Box, 50% by Drive, 75% by Hazard, 100% by Putt). Per-event caps: regular 6, major 10, main 6, main finals 10.' },
@@ -3518,16 +3538,27 @@ Views.codex = function() {
         ['High Card (weak)', 'Double Bogey', '+2'],
       ]
     ),
-    h3('Layer 2: The Honey Pot'),
-    p('Wagered strokes form the honey pot. The hole winner takes the entire pot as a honey credit. Tied holes carry the pot forward to sweeten the next decisive hole. Multiple consecutive ties pile up; whichever player wins the next clean hole sweeps the entire accumulated carry.'),
-    h3('Layer 3: Folds (street-based concession)'),
-    p('Folding is not flat. The folder takes a small positive scorecard penalty scaled by how late the fold came: Tea Box +2, Drive/Hazard +1, Putt 0. The bettor who forced the fold scores 0 to −2 AND takes the wagered-strokes pot. So forcing a late-street fold is doubly valuable: smaller scorecard hit on you, bigger pot in your basket.'),
-    h3('Per-Round Score'),
-    p('finalRoundScore = totalGolfScorecard − (netHoney / 18). Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard. This normalizes honey to the natural unit of one 18-hole round, producing realistic and prestigious PGA-style champion scores while fully preserving poker skill expression. Lower wins.'),
+    h3('Layer 2: The Honey Pot — Agreed-Total Wagering'),
+    p('Every hole begins with a mandatory starting pot of 2 honey. There are no blinds. From there, betting is by AGREED TOTAL, not by matched chips: a "bet" or "raise" is a proposal to set a NEW agreed pot size for the hole. A "call" is acceptance of the current proposal — the pot now stands at that level. There is no summing, no doubling, no matched contributions. The pot is always the LAST AGREED TOTAL.'),
+    p('Example: hole opens at 2. You raise to 5. Opponent calls — pot is now 5 (not 7, not 10). On the flop you raise to 9. Opponent calls — pot is now 9. River check-check — pot stays at 9. Showdown winner takes 9 honey.'),
+    h3('Layer 3: Folds — Lose The Previous Agreement, Take One Bogey'),
+    p('When you fold to a proposal, you lose ONLY the PREVIOUSLY AGREED total in honey (the level both players had agreed to before the new proposal). You also take a +1 bogey on the golf scorecard. The non-folder takes 0 (par) on the golf scorecard AND receives the previously agreed total in honey.'),
+    p('Example: pot is agreed at 5. Opponent raises to 8. You fold. You lose 5 honey to opponent and add +1 bogey to your scorecard. Opponent gains 5 honey and takes par (0). The proposal of 8 is moot — only the prior agreed total of 5 transfers. This is the same fold rule on every street; there is no street-based penalty table.'),
+    h3('Per-Round Score (dynamic by round length)'),
+    p('finalRoundScore = totalGolfScorecard − (netHoney / divisor). The divisor matches the round length:'),
+    ul([
+      '72-hole finals → divisor 72',
+      '18-hole rounds → divisor 18',
+      '9-hole bracket matches → divisor 9',
+      '1-hole quick matches → divisor 1 (full-value honey)',
+    ]),
+    p('Honey is always the light drizzle on top of the dominant golf scorecard. Lower total wins.'),
     h3('Permanent Invariants'),
     ul([
-      'honeyDivisor = 1 — net honey imbalance feeds the round total at full strength.',
-      'carryOverEnabled = true — tied holes always carry forward.',
+      'honeyMagnitudeTamed = true — the divisor scales by round length so honey is never overpowering.',
+      'Mandatory starting pot = 2 honey per hole (prevents check-fests).',
+      'carryOverEnabled = true in finals only — tied holes carry the pot to the next decisive hole during 72-hole finals; outside of finals, tied pots are simply not awarded.',
+      'Last-agreed-total semantics — no summing, no doubling, no matched contributions anywhere in the engine.',
       'These are not user-tunable. They are the law.',
     ])
   );
@@ -8911,7 +8942,7 @@ function renderConfigPanel(panel, mode) {
   scoreSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); line-height: 1.5;',
-    text: 'Hand category sets a bounded per-hole golf score (−5..+2). Wagered strokes form a honey pot; the hole winner takes the pot, ties carry it forward. Total net honey credits are divided by 18 before scoring. Honey divisor and carry-over are permanent invariants.'
+    text: 'Hand category sets a bounded per-hole golf score (−5..+2). Every hole opens with a mandatory 2-honey pot; bets/raises propose a new agreed total; calls accept it. The hole winner takes the agreed total in honey. Net honey is divided by the round-length divisor (72/18/9/1) before scoring. Folder loses the previous agreed total + 1 bogey; non-folder takes 0 par. Carry-over only inside 72-hole finals.'
   }));
 
   // Quick-load audit configuration: Yellow Jacket Tour Standard at clean-research
