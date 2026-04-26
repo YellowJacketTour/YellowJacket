@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.26-v31";
+const APP_VERSION = "2026.04.26-v32";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3562,6 +3562,7 @@ Views.codex = function() {
   intro.appendChild(el('h2', { text: 'Welcome to the Codex' }));
   intro.appendChild(p('The Yellow Jacket Tour is a hybrid card-and-golf game. Hands of heads-up Texas Hold\'em are scored on a golf scorecard. Wagered strokes form honey pots that adjust your final score. Survive 72 holes against the world\'s best, and you wear the Yellow Jacket itself.'));
   intro.appendChild(p('This Codex is the master manual. It explains the Honey-Stroke law, the two tournament formats supported by the engine, the strategy that separates elite players from the field, and the lore that gives the Tour its character.'));
+  intro.appendChild(p('The game ships in TWO variants. The competitive Yellow Jacket Tour uses the Bogey-Loss rule (decisive-showdown loser posts +1 bogey, sharper skill expression). The casual Bumblebee League uses the Honored-Loss rule (decisive-showdown loser scores own hand, gentler scoring with golf-realistic below-par totals). Variants share every other rule. See section 1 below for the full law of both, and the simulator\'s Variant dropdown to switch between them.'));
   view.appendChild(intro);
 
   // ---- The Honey-Stroke Scoring Law ----
@@ -3607,9 +3608,16 @@ Views.codex = function() {
       'Mandatory starting pot = 2 honey per hole. Every hole opens with the pot already at 2 honey before any betting decision is made. There are no blinds or antes.',
       'Honey divisor scales by round length: 72-hole rounds use divisor 72, 18-hole rounds use 18, 9-hole rounds use 9, 1-hole quick matches use 1 (full-value honey). The divisor is set by the round\'s total hole count, not by the event tier.',
       'Last-agreed-total wagering: a bet or raise sets a NEW agreed total pot size; a call accepts that total. The pot is always exactly the most recently agreed total — never a sum of contributions, never doubled, never matched.',
-      'Tied-hole carry: when a hole ends in a tied showdown (both players make the same hand value), both players score 0 (par) for the hole and the entire pot rolls forward as the starting honey for the NEXT hole in the same match. Carry compounds across consecutive ties until one player wins a decisive hole, at which point the winner takes the full accumulated pot. Carries stay within a single match; no carry crosses match boundaries.',
+      'Tied-hole carry: when a hole ends in a tied showdown (both players make the same hand value), both players score 0 (par) for the hole and the entire pot rolls forward as the starting honey for the NEXT hole in the same match. Carry compounds across consecutive ties until one player wins a decisive hole. Carries stay within a single match.',
       'Uniform fold rule on every street: the folder loses the previously agreed pot in honey and posts +1 bogey on the scorecard. The non-folder takes 0 (par) on the scorecard and gains the previously agreed pot in honey. There is no street-based fold-penalty table.',
-      'These rules are not user-tunable. They are the law.',
+    ]),
+    h3('Variant: Yellow Jacket vs Bumblebee'),
+    p('The decisive-showdown loser is scored differently between the two variants. This is the ONLY rule that differs.'),
+    ul([
+      'YELLOW JACKET (competitive tour): the decisive-showdown loser posts a fixed +1 bogey regardless of hand strength. Mirrors the fold rule. Sharper skill expression; champion scores typically +12 to +28.',
+      'BUMBLEBEE (casual league): the decisive-showdown loser scores their own hand\'s golf value (-5..+2) — flush-loser still posts -1 birdie. Preserves "your hand always counts" texture; champion scores typically -10 to -18.',
+      'Both variants share: per-hole engine, mandatory pot, agreed-total wagering, stroke caps, fold rule, tie carry, divisor, tournament formats, field selection, payout structure, economics. Only the loser-score differs.',
+      'The variant choice is not a calibration knob; it\'s a design dial between "competitive sharpness" and "casual texture." Pick the one that matches your audience.',
     ])
   );
   view.appendChild(law);
@@ -4241,6 +4249,12 @@ Views.rules = function() {
     return b;
   }
   cfgStrip.appendChild(snap('Scoring system', 'Honey-Stroke', 'Tour Standard'));
+  // v32 game variant — surface in the Rulebook live snapshot so players see
+  // which scoring law the simulator is currently set to use.
+  const variant = cfg.gameVariant || (cfg.loserBogey ? 'yellowjacket' : 'bumblebee');
+  cfgStrip.appendChild(snap('Variant',
+    variant === 'yellowjacket' ? 'Yellow Jacket' : 'Bumblebee',
+    variant === 'yellowjacket' ? 'competitive · Bogey Loss' : 'casual · Honored Loss'));
   cfgStrip.appendChild(snap('Regular cap', (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6), 'max agreed pot'));
   cfgStrip.appendChild(snap('Major cap', (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10), 'max agreed pot'));
   cfgStrip.appendChild(snap('Main cap', (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' / ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10), 'early · 72-hole finals'));
@@ -4313,11 +4327,12 @@ Views.rules = function() {
   core.appendChild(rule('Tied holes carry forward',
     'When both players reach showdown with the same hand value, both score 0 (par) on the scorecard and the entire pot rolls forward as the starting honey for the NEXT hole in the same match. The next hole opens at (2 mandatory + carry) honey. Multiple consecutive ties stack: tie-of-tie compounds the carry. Whichever player wins the next decisive hole sweeps the full accumulated stack as a honey credit. Carries stay within a single match — they do not persist across match boundaries.'
   ));
-  core.appendChild(rule('Loser scoring at decisive showdown (toggle · v31)',
-    'Two scoring rules are supported, switchable in the simulator config panel via the "Loser rule" dropdown. ' +
-    'HONORED LOSS (default): each player scores their own hand\'s golf value at showdown — a flush-loser still posts -1 birdie. Preserves the unique YJ "your hand always counts" texture; treats the scorecard as a record of hand strength independent of who won the pot. ' +
-    'BOGEY LOSS: winner scores own hand, but the loser posts a fixed +1 bogey regardless of hand strength. Mirrors the fold rule for any non-winning resolution; strips the strong-loser consolation; increases fold equity and sharpens per-event skill differentiation. Closer to classic poker. ' +
-    'The toggle affects only DECISIVE showdowns. Tied showdowns (both players hold equal hand value) still score 0 par for both regardless of mode. Folds still always post +1 bogey for the folder. The active rule is recorded in every CSV export as cfg.scoring.loserBogey so audit comparisons across runs are unambiguous.'
+  core.appendChild(rule('Game variants — Yellow Jacket vs Bumblebee (v32)',
+    'The game ships as TWO variants that share every rule except how a decisive-showdown loser is scored. Switchable in the simulator config panel via the "Variant" dropdown. ' +
+    'YELLOW JACKET (default · competitive tour): the loser at a decisive showdown posts a fixed +1 bogey regardless of hand strength. Mirrors the fold rule for any non-winning resolution. Sharper per-event skill differentiation; champion scores typically land in the +12 to +28 range. The competitive / professional tour scoring law. ' +
+    'BUMBLEBEE (casual league): the loser at a decisive showdown scores their own hand\'s golf value (-5..+2) — a flush-loser still posts -1 birdie. Preserves the "your hand always counts even when you lose" texture; gentler skill expression; champion scores typically land in the -10 to -18 range (golf-realistic below-par totals). The casual / social league scoring law. ' +
+    'BOTH variants share: the per-hole engine, the mandatory 2-honey opener, agreed-total wagering, per-event stroke caps with progressive unlock, the uniform fold rule (+1 bogey for folder, 0 par + previously-agreed pot for non-folder), tied-hole carry-forward, and the round-length divisor (72/18/9/1). Only the decisive-showdown loser score differs. Folds and ties are NOT affected by the variant choice. ' +
+    'The active variant is recorded in every CSV export as cfg.gameVariant ("yellowjacket" | "bumblebee") and cfg.scoring.loserBogey (boolean) so audit comparisons across variants are unambiguous.'
   ));
   core.appendChild(rule('Folds — uniform on every street',
     'The fold rule is the same on Tea Box, Drive, Hazard, and Putt: the folder posts +1 (bogey) on the scorecard and gains 0 honey. The non-folder posts 0 (par) on the scorecard and takes the PREVIOUSLY AGREED pot (the level both players had already accepted before the proposal that triggered the fold) as a honey credit. Example: pot is agreed at 5. Opponent raises to 8. You fold. You post +1 bogey. Opponent posts 0 par and gains 5 honey. The unaccepted proposal of 8 is moot — only the prior agreed total transfers. There is no street-based penalty table; what makes late-street folds more valuable in practice is that the previously agreed pot has had more chances to climb.'
@@ -6611,20 +6626,27 @@ const DEFAULT_SIM_CONFIG = {
   // the v30 noiseSpread reduction so the wider authored-skill range expresses
   // through a sharper per-decision kernel.
   skillSpread: 0.24,
-  // SCORING TOGGLE (v31): controls how a decisive-showdown loser is scored.
-  //   false (default, "Honored Loss"): loser scores their own hand's golf
-  //          value (-5..+2). Preserves the YJ "your hand still counts even
-  //          when you lose" texture — a flush-loser still posts -1 birdie.
-  //   true ("Bogey Loss"): loser takes a fixed +1 bogey regardless of hand.
-  //          Mirrors the fold rule (+1 bogey for any non-winning resolution).
-  //          Strips the strong-loser consolation, increases fold equity,
-  //          sharpens per-event skill differentiation. Closer to classic
-  //          poker semantics; less golf-flavored.
-  // The toggle is honored by both the simulator's playHole and the live
-  // single-player / multiplayer engine (resolveMPHole). Tied showdowns are
-  // unaffected — both players still score 0 par on a tie regardless of this
-  // flag. Folds are unaffected — the folder still takes +1 bogey.
-  loserBogey: false,
+  // GAME VARIANT (v32): YJ ships as TWO distinct variants that share every
+  // rule except decisive-showdown loser scoring.
+  //   'yellowjacket' (default, COMPETITIVE):  loserBogey = true.
+  //          Decisive-showdown losers post a fixed +1 bogey. Mirrors the
+  //          fold rule for any non-winning resolution. Sharper per-event
+  //          skill differentiation; champions score in the +12 to +28
+  //          range. The canonical Yellow Jacket Tour scoring law.
+  //   'bumblebee' (CASUAL):                    loserBogey = false.
+  //          Decisive-showdown losers score their own hand's golf value
+  //          (-5..+2). Preserves the "your hand always counts even when
+  //          you lose" texture; a flush-loser still posts -1 birdie.
+  //          Champions score in the -10 to -18 range (golf-realistic).
+  //          The casual / social Bumblebee League scoring law.
+  // gameVariant is the user-facing handle; loserBogey is the underlying
+  // mechanical flag. Setting gameVariant resolves loserBogey automatically
+  // (yellowjacket→true, bumblebee→false). The simulator engine reads
+  // CurrentLoserBogey, which is synced from cfg at sim start.
+  // Tied showdowns and folds are unaffected by the variant choice — both
+  // players still score 0 par on a tie, folder still posts +1 bogey.
+  gameVariant: 'yellowjacket',
+  loserBogey: true,
   majorChampShare: 0.14,
   majorRankingShare: 0.24,
   majorSeasonShare: 0.26,
@@ -8745,9 +8767,11 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('invariant.carryOverEnabled', true);
   cfgRow('scoring.honeyMagnitudeTamed', true);
   cfgRow('scoring.honeyNormalizationDivisor', 72);
-  // v31 loser-bogey toggle. false = "Honored Loss" (default — loser scores
-  // own hand). true = "Bogey Loss" (loser posts +1 bogey). Recorded in CSV
-  // so audits comparing two runs can tell which scoring rule was active.
+  // v32 game-variant identity + v31 loserBogey boolean. gameVariant is the
+  // user-facing name ('yellowjacket' = competitive / Bogey Loss; 'bumblebee'
+  // = casual / Honored Loss). loserBogey is the underlying mechanical flag
+  // the engine reads. Both are recorded so audits remain unambiguous.
+  cfgRow('gameVariant', snapCfg.gameVariant || (snapCfg.loserBogey ? 'yellowjacket' : 'bumblebee'));
   cfgRow('scoring.loserBogey', !!(snapCfg.loserBogey));
   cfgRow('skillMetricDefinition', 'average EV realization per decision (pure poker skill, not ROI)');
   cfgRow('ui.largeSimMode', LabState.config.largeSimMode ? 'enabled' : 'disabled');
@@ -9310,39 +9334,46 @@ function renderConfigPanel(panel, mode) {
     text: 'Production scoring is fixed: total net honey credits are divided by 18 before being subtracted from the golf scorecard. The old aggregate honey scale slider is retired; manual dampening values like 0.12 or 0.25 are no longer used because the division handles scaling.'
   }));
 
-  // === LOSER-BOGEY TOGGLE (v31) ============================================
-  // A/B switch between two decisive-showdown scoring rules:
-  //   "Honored Loss" (default): loser scores own hand's golf value (-5..+2)
-  //   "Bogey Loss":             loser posts fixed +1 bogey regardless of hand
-  // The flag is honored by both the simulator's playHole and the SP/MP
-  // engine's resolveMPHole. setLoserBogey is called at sim/SP startup and
-  // when the user clicks below to flip the toggle. cfg.loserBogey is the
-  // persisted source of truth; the global CurrentLoserBogey is the runtime
-  // mirror that the engine reads.
+  // === GAME VARIANT TOGGLE (v32) ===========================================
+  // Yellow Jacket ships as TWO variants that share every rule except
+  // decisive-showdown loser scoring:
+  //   'yellowjacket' (competitive): loser posts fixed +1 bogey. Sharper
+  //          skill differentiation; champions score in the +12 to +28 range.
+  //   'bumblebee' (casual):  loser scores own hand's golf value (-5..+2).
+  //          Preserves "your hand always counts" texture; champions score
+  //          in the -10 to -18 range (golf-realistic below-par).
+  // Internally cfg.loserBogey is the boolean that the engine reads; the
+  // dropdown sets BOTH cfg.gameVariant (string) and cfg.loserBogey (boolean)
+  // so legacy code paths and audit CSVs stay unambiguous.
   const lbRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
-  lbRow.appendChild(el('label', { text: 'Loser rule', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  lbRow.appendChild(el('label', { text: 'Variant', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
   const lbSel = el('select', { style: 'width: 100%;' });
   [
-    { v: 'honored', label: 'Honored Loss — loser scores own hand (default)' },
-    { v: 'bogey',   label: 'Bogey Loss — loser takes fixed +1 bogey' },
+    { v: 'yellowjacket', label: '🐝 Yellow Jacket — competitive (Bogey Loss, default)' },
+    { v: 'bumblebee',    label: '🐝 Bumblebee — casual (Honored Loss)' },
   ].forEach(o => {
     const opt = el('option', { value: o.v, text: o.label });
-    if ((LabState.config.loserBogey ? 'bogey' : 'honored') === o.v) opt.selected = true;
+    const current = LabState.config.gameVariant || (LabState.config.loserBogey ? 'yellowjacket' : 'bumblebee');
+    if (current === o.v) opt.selected = true;
     lbSel.appendChild(opt);
   });
   lbSel.onchange = () => {
-    const isBogey = lbSel.value === 'bogey';
-    LabState.config.loserBogey = isBogey;
-    setLoserBogey(isBogey);   // sync runtime so SP/Solo started right after also picks it up
+    const variant = lbSel.value;
+    const isYJ = variant === 'yellowjacket';
+    LabState.config.gameVariant = variant;
+    LabState.config.loserBogey = isYJ;
+    setLoserBogey(isYJ);  // sync runtime so SP/Solo started right after picks it up
     saveLabState();
-    toast(isBogey ? 'Loser rule: Bogey Loss (+1 fixed)' : 'Loser rule: Honored Loss (own hand)');
+    toast(isYJ
+      ? 'Variant: Yellow Jacket (competitive · Bogey Loss)'
+      : 'Variant: Bumblebee (casual · Honored Loss)');
   };
   lbRow.appendChild(lbSel);
   evSec.appendChild(lbRow);
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'Honored Loss: each player scores own hand value at showdown — a flush-loser still posts -1 birdie. Preserves YJ "your hand always counts" texture. Bogey Loss: winner scores own hand, loser posts +1 bogey. Strips strong-loser consolation, increases fold equity, sharpens per-event skill differentiation. Folds and ties are unaffected by this toggle.'
+    text: 'YELLOW JACKET (default): the competitive tour. Decisive-showdown losers post +1 bogey regardless of hand. Sharper per-event skill; champions in the +12 to +28 range. BUMBLEBEE: the casual league. Decisive-showdown losers score their own hand (-5..+2) — flush-loser still posts -1 birdie. Gentler scoring; champions in the -10 to -18 range. Both share the same engine, mandatory pot, agreed-total wagering, fold rule, and divisor. Folds and ties are NOT affected by this choice.'
   }));
 
   const simpleCfg = [
@@ -9449,9 +9480,11 @@ function renderConfigPanel(panel, mode) {
       rakePercent: 0.03, payoutDecay: 0.70,
       noiseSpread: 0.20, betSpread: 0.20, foldSpread: 0.18, raiseSpread: 0.15,
       skillSpread: 0.18,
-      // Audit preset locks Honored Loss for reproducibility — the v31
-      // loser-bogey toggle is opt-in and must be flipped explicitly via the
-      // Loser-rule dropdown in the config panel for an audit run to use it.
+      // Audit preset locks the Bumblebee variant (Honored Loss) for
+      // reproducibility against historical baseline runs. Switch the
+      // Variant dropdown to Yellow Jacket if you want the competitive
+      // Bogey-Loss scoring law in your audit run.
+      gameVariant: 'bumblebee',
       loserBogey: false,
       repeatRuns: 10,
       seed: 20260424,
@@ -10788,6 +10821,18 @@ function init() {
   // to read it again.
   if (LabState.config && LabState.config.ai && 'honeyEVMultiplier' in LabState.config.ai) {
     delete LabState.config.ai.honeyEVMultiplier;
+  }
+  // v32 migration: derive gameVariant from any pre-existing loserBogey value
+  // on restored saves. v31 had loserBogey as the canonical flag with no
+  // variant naming; v32 introduces the user-facing 'yellowjacket' / 'bumblebee'
+  // variant on top. If gameVariant is absent (legacy save), seed it from the
+  // boolean: loserBogey=true → 'yellowjacket', false → 'bumblebee'. If both
+  // are present, gameVariant takes precedence and re-resolves loserBogey.
+  if (LabState.config) {
+    if (!LabState.config.gameVariant) {
+      LabState.config.gameVariant = LabState.config.loserBogey ? 'yellowjacket' : 'bumblebee';
+    }
+    LabState.config.loserBogey = (LabState.config.gameVariant === 'yellowjacket');
   }
   // One-time production-defaults migration — runs when APP_VERSION changes so
   // saved configs from older builds pick up the latest production values for
