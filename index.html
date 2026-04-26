@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.26-v30";
+const APP_VERSION = "2026.04.26-v31";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1256,6 +1256,16 @@ function golfNameForScore(n) {
 const GOLF_NAMES = ['Birdie','Eagle','Eagle','Albatross','Albatross','Condor','Condor','Ostrich','Phoenix','Hole-in-One'];
 let CurrentStrokeCap = 3;
 function setStrokeCap(n) { CurrentStrokeCap = Math.max(1, Math.min(10, (+n) || 3)); }
+// SCORING TOGGLE (v31): when CurrentLoserBogey === true, decisive-showdown
+// losers post a fixed +1 bogey instead of their own hand's golf score.
+// Mirrors the cfg.loserBogey flag (see DEFAULT_SIM_CONFIG). Default false
+// preserves the v23 "Honored Loss" rule (each player scores own hand even
+// when losing). The simulator and the SP/MP engine both honor this flag —
+// playHole reads it directly; resolveMPHole reads from g.loserBogey, which
+// is snapshotted from this global at game-creation time so mid-config
+// changes don't alter an in-progress game.
+let CurrentLoserBogey = false;
+function setLoserBogey(b) { CurrentLoserBogey = !!b; }
 // =============================================================================
 // SCORING — Honey-Stroke is the sole, permanent scoring law for Yellow Jacket Tour.
 // Two-layer design:
@@ -2371,8 +2381,21 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
       carryPot: strokes,
     };
   }
-  const aScore = golfScoreFromHandValue(aH);
-  const bScore = golfScoreFromHandValue(bH);
+  // Decisive showdown scoring. Two modes — controlled by the v31
+  // CurrentLoserBogey toggle:
+  //   false ("Honored Loss"): each player scores their own hand. Loser with
+  //          a strong hand still posts a respectable number (e.g. flush -1).
+  //   true  ("Bogey Loss"): winner scores own hand, loser posts +1 bogey
+  //          regardless of hand. Mirrors the fold rule for non-winners.
+  // Tie path above is unaffected (both score 0 par either way).
+  let aScore, bScore;
+  if (CurrentLoserBogey) {
+    if (cmp > 0) { aScore = golfScoreFromHandValue(aH); bScore = 1; }
+    else         { bScore = golfScoreFromHandValue(bH); aScore = 1; }
+  } else {
+    aScore = golfScoreFromHandValue(aH);
+    bScore = golfScoreFromHandValue(bH);
+  }
   const aHoneyCredit = cmp > 0 ? strokes : 0;
   const bHoneyCredit = cmp > 0 ? 0 : strokes;
   SimPerf.add('showdown', sdT);
@@ -3933,8 +3956,11 @@ function pickAINameForTier(tier) {
 function startSolo(playerName, skill, tier, holes, cap) {
   const aiName = pickAINameForTier(tier);
   const aiProfile = makeProfileForSkill(Math.max(0.05, Math.min(0.95, +skill || 0.40)));
-  // Sync the global stroke cap so AI's decideFor uses the same cap as the human's UI.
+  // Sync the global stroke cap and loser-bogey toggle so AI's decideFor and
+  // resolveMPHole's showdown path read the same scoring rules the user just
+  // configured in the simulator panel.
   setStrokeCap(cap);
+  setLoserBogey(!!(LabState && LabState.config && LabState.config.loserBogey));
   const g = createLocalGame(playerName, aiName, 'solo');
   g.totalHoles = Math.max(1, Math.min(144, +holes || 18));
   g.strokeCap = cap;
@@ -3967,10 +3993,13 @@ function aiTakeTurn(g) {
   if (!g || g.mode !== 'solo' || g.ended) return;
   const c = g.current;
   if (!c || c.result || c.toAct !== 'p2') return;
-  // Re-sync the global stroke cap in case the user opened the simulator and
-  // changed it mid-match — the AI must respect the cap this match was created
-  // with, not whatever the simulator slider currently shows.
+  // Re-sync the global stroke cap and loser-bogey toggle in case the user
+  // opened the simulator and changed cfg mid-match — the AI must respect
+  // the rules this match was CREATED with, not whatever the simulator
+  // panel currently shows. g.strokeCap and g.loserBogey were snapshotted
+  // at createLocalGame time.
   if (g.strokeCap) setStrokeCap(g.strokeCap);
+  setLoserBogey(!!g.loserBogey);
   const profile = g.aiProfile || makeProfileForSkill(0.40);
   // v23 decideFor signature:
   //   (cards, community, currentProposal, agreedTotal, isPending,
@@ -4027,8 +4056,11 @@ function createLocalGame(p1name, p2name, mode) {
     turnFor: 'p1',
     carryPot: 0,
     started: Date.now(), ended: false,
-    // Snapshot the active stroke cap so mid-game config changes don't alter this match.
+    // Snapshot active scoring/cap toggles so mid-game config changes don't
+    // alter this match. strokeCap controls progressive street caps;
+    // loserBogey controls decisive-showdown loser scoring (own-hand vs +1).
     strokeCap: CurrentStrokeCap,
+    loserBogey: CurrentLoserBogey,
   };
 }
 
@@ -4280,6 +4312,12 @@ Views.rules = function() {
   ));
   core.appendChild(rule('Tied holes carry forward',
     'When both players reach showdown with the same hand value, both score 0 (par) on the scorecard and the entire pot rolls forward as the starting honey for the NEXT hole in the same match. The next hole opens at (2 mandatory + carry) honey. Multiple consecutive ties stack: tie-of-tie compounds the carry. Whichever player wins the next decisive hole sweeps the full accumulated stack as a honey credit. Carries stay within a single match — they do not persist across match boundaries.'
+  ));
+  core.appendChild(rule('Loser scoring at decisive showdown (toggle · v31)',
+    'Two scoring rules are supported, switchable in the simulator config panel via the "Loser rule" dropdown. ' +
+    'HONORED LOSS (default): each player scores their own hand\'s golf value at showdown — a flush-loser still posts -1 birdie. Preserves the unique YJ "your hand always counts" texture; treats the scorecard as a record of hand strength independent of who won the pot. ' +
+    'BOGEY LOSS: winner scores own hand, but the loser posts a fixed +1 bogey regardless of hand strength. Mirrors the fold rule for any non-winning resolution; strips the strong-loser consolation; increases fold equity and sharpens per-event skill differentiation. Closer to classic poker. ' +
+    'The toggle affects only DECISIVE showdowns. Tied showdowns (both players hold equal hand value) still score 0 par for both regardless of mode. Folds still always post +1 bogey for the folder. The active rule is recorded in every CSV export as cfg.scoring.loserBogey so audit comparisons across runs are unambiguous.'
   ));
   core.appendChild(rule('Folds — uniform on every street',
     'The fold rule is the same on Tea Box, Drive, Hazard, and Putt: the folder posts +1 (bogey) on the scorecard and gains 0 honey. The non-folder posts 0 (par) on the scorecard and takes the PREVIOUSLY AGREED pot (the level both players had already accepted before the proposal that triggered the fold) as a honey credit. Example: pot is agreed at 5. Opponent raises to 8. You fold. You post +1 bogey. Opponent posts 0 par and gains 5 honey. The unaccepted proposal of 8 is moot — only the prior agreed total transfers. There is no street-based penalty table; what makes late-street folds more valuable in practice is that the previously agreed pot has had more chances to climb.'
@@ -4599,23 +4637,33 @@ function resolveMPHole(g) {
       g.carryPot = c.agreedTotal;
       desc = 'Tie at ' + CATEGORY_NAMES[p1H >>> 24] + '. Both score 0 par. The ' + c.agreedTotal + '-honey pot rolls forward to the next hole.';
     } else {
-      // Decisive showdown: each player scores THEIR OWN hand's golf value, and
-      // the winner additionally takes the agreed total as a honey credit.
+      // Decisive showdown. Two scoring modes — see playHole comments and the
+      // cfg.loserBogey flag for full rationale:
+      //   g.loserBogey === false ("Honored Loss"): each player scores own
+      //          hand. Loser with strong hand still posts a respectable golf
+      //          value (e.g. flush -1).
+      //   g.loserBogey === true  ("Bogey Loss"): winner scores own hand,
+      //          loser posts a fixed +1 bogey regardless of hand strength.
+      // The flag is snapshotted onto g at game creation time so mid-config
+      // changes don't perturb an in-progress match.
       const p1Wins = cmp > 0;
       const winnerHand = p1Wins ? p1H : p2H;
       const winnerGolf = golfScoreFromHandValue(winnerHand);
       const loserHand  = p1Wins ? p2H : p1H;
-      const loserGolf  = golfScoreFromHandValue(loserHand);
+      const loserGolf  = g.loserBogey ? 1 : golfScoreFromHandValue(loserHand);
       const winName  = p1Wins ? g.p1.name : g.p2.name;
       const loseName = p1Wins ? g.p2.name : g.p1.name;
       const pot = c.agreedTotal;
       if (p1Wins) { p1Golf = winnerGolf; p1Honey = pot; p2Golf = loserGolf; }
       else        { p2Golf = winnerGolf; p2Honey = pot; p1Golf = loserGolf; }
+      const loserDescGolf = g.loserBogey
+        ? '+1 bogey (Bogey Loss rule)'
+        : formatScore(loserGolf) + ' golf';
       desc = winName + ' wins with ' + CATEGORY_NAMES[winnerHand >>> 24]
            + ' and takes the ' + pot + '-honey pot. '
            + winName + ' ' + formatScore(winnerGolf) + ' golf · '
-           + loseName + ' ' + formatScore(loserGolf) + ' golf '
-           + '(' + loseName + ' had ' + CATEGORY_NAMES[loserHand >>> 24] + ').';
+           + loseName + ' ' + loserDescGolf
+           + ' (' + loseName + ' had ' + CATEGORY_NAMES[loserHand >>> 24] + ').';
       g.carryPot = 0;
     }
   }
@@ -4676,7 +4724,8 @@ function encodeGameToURL(g) {
   const data = {
     schemaVersion: 2,
     p1: g.p1, p2: g.p2, holeNum: g.holeNum, totalHoles: g.totalHoles,
-    scores: g.scores, carryPot: g.carryPot || 0, strokeCap: g.strokeCap,
+    scores: g.scores, carryPot: g.carryPot || 0,
+    strokeCap: g.strokeCap, loserBogey: !!g.loserBogey,
     current: {
       deck: g.current.deck, street: g.current.street,
       agreedTotal: g.current.agreedTotal,
@@ -6562,6 +6611,20 @@ const DEFAULT_SIM_CONFIG = {
   // the v30 noiseSpread reduction so the wider authored-skill range expresses
   // through a sharper per-decision kernel.
   skillSpread: 0.24,
+  // SCORING TOGGLE (v31): controls how a decisive-showdown loser is scored.
+  //   false (default, "Honored Loss"): loser scores their own hand's golf
+  //          value (-5..+2). Preserves the YJ "your hand still counts even
+  //          when you lose" texture — a flush-loser still posts -1 birdie.
+  //   true ("Bogey Loss"): loser takes a fixed +1 bogey regardless of hand.
+  //          Mirrors the fold rule (+1 bogey for any non-winning resolution).
+  //          Strips the strong-loser consolation, increases fold equity,
+  //          sharpens per-event skill differentiation. Closer to classic
+  //          poker semantics; less golf-flavored.
+  // The toggle is honored by both the simulator's playHole and the live
+  // single-player / multiplayer engine (resolveMPHole). Tied showdowns are
+  // unaffected — both players still score 0 par on a tie regardless of this
+  // flag. Folds are unaffected — the folder still takes +1 bogey.
+  loserBogey: false,
   majorChampShare: 0.14,
   majorRankingShare: 0.24,
   majorSeasonShare: 0.26,
@@ -7435,6 +7498,10 @@ function resolveEventStrokeCaps(eventType, cfg) {
 // --- Full lab session (pool + seasons) — returns computed metrics too ---
 async function runLabSession(cfg, onProgress) {
   setStrokeCap(cfg.regularStrokeCap || cfg.strokeCap);
+  // Sync the v31 loser-bogey toggle from cfg so playHole's showdown branch
+  // picks it up. The flag only matters for decisive showdowns; ties and
+  // folds are unaffected.
+  setLoserBogey(!!cfg.loserBogey);
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -8678,6 +8745,10 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('invariant.carryOverEnabled', true);
   cfgRow('scoring.honeyMagnitudeTamed', true);
   cfgRow('scoring.honeyNormalizationDivisor', 72);
+  // v31 loser-bogey toggle. false = "Honored Loss" (default — loser scores
+  // own hand). true = "Bogey Loss" (loser posts +1 bogey). Recorded in CSV
+  // so audits comparing two runs can tell which scoring rule was active.
+  cfgRow('scoring.loserBogey', !!(snapCfg.loserBogey));
   cfgRow('skillMetricDefinition', 'average EV realization per decision (pure poker skill, not ROI)');
   cfgRow('ui.largeSimMode', LabState.config.largeSimMode ? 'enabled' : 'disabled');
   // YJ profile optima — these are the values actually driving decideFor's per-
@@ -9239,6 +9310,41 @@ function renderConfigPanel(panel, mode) {
     text: 'Production scoring is fixed: total net honey credits are divided by 18 before being subtracted from the golf scorecard. The old aggregate honey scale slider is retired; manual dampening values like 0.12 or 0.25 are no longer used because the division handles scaling.'
   }));
 
+  // === LOSER-BOGEY TOGGLE (v31) ============================================
+  // A/B switch between two decisive-showdown scoring rules:
+  //   "Honored Loss" (default): loser scores own hand's golf value (-5..+2)
+  //   "Bogey Loss":             loser posts fixed +1 bogey regardless of hand
+  // The flag is honored by both the simulator's playHole and the SP/MP
+  // engine's resolveMPHole. setLoserBogey is called at sim/SP startup and
+  // when the user clicks below to flip the toggle. cfg.loserBogey is the
+  // persisted source of truth; the global CurrentLoserBogey is the runtime
+  // mirror that the engine reads.
+  const lbRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  lbRow.appendChild(el('label', { text: 'Loser rule', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const lbSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 'honored', label: 'Honored Loss — loser scores own hand (default)' },
+    { v: 'bogey',   label: 'Bogey Loss — loser takes fixed +1 bogey' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if ((LabState.config.loserBogey ? 'bogey' : 'honored') === o.v) opt.selected = true;
+    lbSel.appendChild(opt);
+  });
+  lbSel.onchange = () => {
+    const isBogey = lbSel.value === 'bogey';
+    LabState.config.loserBogey = isBogey;
+    setLoserBogey(isBogey);   // sync runtime so SP/Solo started right after also picks it up
+    saveLabState();
+    toast(isBogey ? 'Loser rule: Bogey Loss (+1 fixed)' : 'Loser rule: Honored Loss (own hand)');
+  };
+  lbRow.appendChild(lbSel);
+  evSec.appendChild(lbRow);
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Honored Loss: each player scores own hand value at showdown — a flush-loser still posts -1 birdie. Preserves YJ "your hand always counts" texture. Bogey Loss: winner scores own hand, loser posts +1 bogey. Strips strong-loser consolation, increases fold equity, sharpens per-event skill differentiation. Folds and ties are unaffected by this toggle.'
+  }));
+
   const simpleCfg = [
     ['seasons', 'Seasons to run', 1, 100, 1],
   ];
@@ -9343,6 +9449,10 @@ function renderConfigPanel(panel, mode) {
       rakePercent: 0.03, payoutDecay: 0.70,
       noiseSpread: 0.20, betSpread: 0.20, foldSpread: 0.18, raiseSpread: 0.15,
       skillSpread: 0.18,
+      // Audit preset locks Honored Loss for reproducibility — the v31
+      // loser-bogey toggle is opt-in and must be flipped explicitly via the
+      // Loser-rule dropdown in the config panel for an audit run to use it.
+      loserBogey: false,
       repeatRuns: 10,
       seed: 20260424,
       label: '',
@@ -9463,6 +9573,7 @@ function renderConfigPanel(panel, mode) {
 // AND snapshot the run into LabState.runs. Single pipeline for Simple + Advanced modes.
 async function runSimulator(cfg, onProgress) {
   setStrokeCap(cfg.regularStrokeCap || cfg.strokeCap);
+  setLoserBogey(!!cfg.loserBogey);
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -10712,6 +10823,7 @@ function init() {
 
   setScoringStyle(LabState.config.scoringStyle || DEFAULT_SIM_CONFIG.scoringStyle);
   setStrokeCap(LabState.config.regularStrokeCap || LabState.config.strokeCap);
+  setLoserBogey(!!LabState.config.loserBogey);
 
   window.addEventListener('hashchange', onHashChange);
   onHashChange();
