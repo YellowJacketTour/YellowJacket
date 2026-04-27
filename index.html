@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.26-v37";
+const APP_VERSION = "2026.04.27-v39";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1319,6 +1319,20 @@ function setStrokeCap(n) { CurrentStrokeCap = Math.max(1, Math.min(10, (+n) || 3
 // changes don't alter an in-progress game.
 let CurrentLoserBogey = false;
 function setLoserBogey(b) { CurrentLoserBogey = !!b; }
+// DECISION DIVISOR (v39 Path 1): per-decision EV math uses a separate, smaller
+// divisor than end-of-round honey normalization. Decouples in-kernel fold cost
+// from the round-length stroke conversion. The original v23 math used the
+// round-length divisor (72 for aggregate events) inside decideFor, which made
+// folding cost ~72 honey-equivalent vs ~10 honey at risk for a call. Break-even
+// fold equity collapsed to ~13%, well below any realistic Hold'em hand, and the
+// fold rate vanished. With CurrentDecisionDivisor=9 (default), break-even fold
+// equity rises to ~18-25% across cap regimes — folds become meaningful tactical
+// decisions without changing the production round-scoring formula.
+let CurrentDecisionDivisor = 9;
+function setDecisionDivisor(n) {
+  const v = +n;
+  CurrentDecisionDivisor = (Number.isFinite(v) && v >= 1) ? v : 9;
+}
 // =============================================================================
 // SCORING — Honey-Stroke is the sole, permanent scoring law for Yellow Jacket Tour.
 // Two-layer design:
@@ -2061,9 +2075,32 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   //                   + (1 − foldEq) × ev_show(L, a)
   //                  (if opp folds: actor wins agreedTotal honey + 0 par golf;
   //                   if opp calls: showdown at proposed level L)
-  const divisor = Math.max(1, +(gameContext && gameContext.honeyDivisor) || honeyNormalizationDivisor);
+  // Per-decision divisor (v39 Path 1) — independent of round-end honey
+  // normalization. End-of-round finalRoundScore still uses honeyDivisorFor
+  // (72/18/9/1 by round length); only this in-kernel EV math uses the
+  // smaller decision divisor so folds stay tactical instead of being priced
+  // out by the long-round stroke compression.
+  const divisor = Math.max(1,
+    +(gameContext && gameContext.decisionDivisor) || CurrentDecisionDivisor);
+  // Variant flag (v39 Path 3a) — under loserBogey=true (Yellow Jacket variant),
+  // the showdown loser scores +1 fixed regardless of hand strength. The
+  // expected own-golf at showdown changes shape, so the linear-fit golf
+  // term branches on variant.
+  const loserBogey = (gameContext && typeof gameContext.loserBogey === 'boolean')
+    ? gameContext.loserBogey : CurrentLoserBogey;
   function showEV(adjVal, level) {
-    return (2 * adjVal - 1) * level - (1.5 - 4 * adjVal) * divisor;
+    // Honey term (zero-sum at level): unchanged by variant.
+    const honeyTerm = (2 * adjVal - 1) * level;
+    // Golf term — expected own-golf at showdown, in honey-equivalent units:
+    //   Bumblebee (loserBogey=false): both score own hand. Linear fit ≈ 1.5 − 4a
+    //     across the equity range; matches v23 behavior.
+    //   Yellow Jacket (loserBogey=true): winner scores own hand, loser +1 fixed.
+    //     E[g_YJ] = a·w(a) + (1−a)·1 with winner-conditional fit w(a) ≈ −1−2a
+    //            ≈ 1 − 2a − 2a²
+    const golfTerm = loserBogey
+      ? (1 - 2 * adjVal - 2 * adjVal * adjVal)
+      : (1.5 - 4 * adjVal);
+    return honeyTerm - golfTerm * divisor;
   }
   function foldEqFor(newLevel) {
     // Larger relative raise → more fold equity. Capped at 0.5 so AI can't price
@@ -2154,8 +2191,21 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     }
     return wrap({ action: 'check' });
   }
-  // Pending proposal → fold / call / raise. Fold rule: noisy YJ EV comparison.
-  const evCallNoisy = (2 * adj - 1) * currentProposal - (1.5 - 4 * adj) * divisor;
+  // Pending proposal → fold / call / raise.
+  // Path 3b (v39): profile.foldThreshold restored as a tightness floor.
+  // Disciplined-tight archetype expression — players whose foldThreshold
+  // exceeds their noisy equity estimate fold even when EV math says call.
+  // foldOpt=0.05 means optimal players almost never trip this floor; profile
+  // jitter pushes some low-skill players up to ~0.20, where they fold
+  // visibly more often, becoming the tight-passive subtype. Raise/bet
+  // thresholds (lines 2145, 2161) already work this way for archetype
+  // expression on the aggressive side — this restores symmetry on the
+  // defensive side, which v23 had mistakenly removed.
+  if (Number.isFinite(profile.foldThreshold) && adj < profile.foldThreshold) {
+    return wrap({ action: 'fold' });
+  }
+  // EV-based fold (variant-aware via showEV; noisy via adj instead of adjTrue).
+  const evCallNoisy = showEV(adj, currentProposal);
   const evFoldNoisy = -divisor - agreedTotal;
   if (evCallNoisy < evFoldNoisy) return wrap({ action: 'fold' });
   if (adj > profile.raiseThreshold && remaining > 0) {
@@ -4029,6 +4079,7 @@ function startSolo(playerName, skill, tier, holes, cap) {
   // configured in the simulator panel.
   setStrokeCap(cap);
   setLoserBogey(!!(LabState && LabState.config && LabState.config.loserBogey));
+  setDecisionDivisor(LabState && LabState.config && LabState.config.decisionDivisor);
   const g = createLocalGame(playerName, aiName, 'solo');
   g.totalHoles = Math.max(1, Math.min(144, +holes || 18));
   g.strokeCap = cap;
@@ -4068,6 +4119,7 @@ function aiTakeTurn(g) {
   // at createLocalGame time.
   if (g.strokeCap) setStrokeCap(g.strokeCap);
   setLoserBogey(!!g.loserBogey);
+  if (Number.isFinite(g.decisionDivisor)) setDecisionDivisor(g.decisionDivisor);
   const profile = g.aiProfile || makeProfileForSkill(0.40);
   // v23 decideFor signature:
   //   (cards, community, currentProposal, agreedTotal, isPending,
@@ -4129,6 +4181,7 @@ function createLocalGame(p1name, p2name, mode) {
     // loserBogey controls decisive-showdown loser scoring (own-hand vs +1).
     strokeCap: CurrentStrokeCap,
     loserBogey: CurrentLoserBogey,
+    decisionDivisor: CurrentDecisionDivisor,
   };
 }
 
@@ -5990,6 +6043,10 @@ function chartAxes(ctx, w, h, pad, yMin, yMax, xLabels, yFmt) {
 
 function drawHistogram(canvas, data, min, max, bins, opts) {
   opts = opts || {};
+  // Defensive: coerce bins to a positive integer. JS throws "Invalid array
+  // length" on `new Array(30.51)`, and several callers compute bins from
+  // float ranges (champ scores carry honey-divisor fractions).
+  bins = Math.max(1, Math.floor(bins) || 1);
   const w = canvas.width, h = canvas.height;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
   const C = chartColors();
@@ -6722,6 +6779,15 @@ const DEFAULT_SIM_CONFIG = {
   // players still score 0 par on a tie, folder still posts +1 bogey.
   gameVariant: 'yellowjacket',
   loserBogey: true,
+  // DECISION DIVISOR (v39) — per-decision EV math divisor for decideFor.
+  // INDEPENDENT of the round-end honey-normalization divisor (which still
+  // matches round length: 72/18/9/1). Lower values → folding becomes cheaper
+  // in the AI's perception → higher fold rates. Default 9 calibrated to
+  // produce ~18-25% break-even fold equity across cap regimes, matching the
+  // empirical fold rates of disciplined heads-up Hold'em play. Raising to 18+
+  // recovers the v37/v38 "almost never fold" behavior; dropping to 6 makes
+  // folds aggressive (think pot-committed-only-when-strong play).
+  decisionDivisor: 9,
   majorChampShare: 0.14,
   majorRankingShare: 0.24,
   majorSeasonShare: 0.26,
@@ -7609,6 +7675,7 @@ async function runLabSession(cfg, onProgress) {
   // picks it up. The flag only matters for decisive showdowns; ties and
   // folds are unaffected.
   setLoserBogey(!!cfg.loserBogey);
+  setDecisionDivisor(cfg.decisionDivisor);
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -8858,6 +8925,11 @@ function _exportRunToCSVImpl(snap) {
   // the engine reads. Both are recorded so audits remain unambiguous.
   cfgRow('gameVariant', snapCfg.gameVariant || (snapCfg.loserBogey ? 'yellowjacket' : 'bumblebee'));
   cfgRow('scoring.loserBogey', !!(snapCfg.loserBogey));
+  // v39: per-decision divisor used by decideFor's EV math. Independent of the
+  // round-end honey-normalization divisor; default 9 calibrates fold rates to
+  // the disciplined heads-up Hold'em range.
+  cfgRow('scoring.decisionDivisor',
+    Number.isFinite(+snapCfg.decisionDivisor) ? +snapCfg.decisionDivisor : 9);
   cfgRow('skillMetricDefinition', 'average EV realization per decision (pure poker skill, not ROI)');
   cfgRow('ui.largeSimMode', LabState.config.largeSimMode ? 'enabled' : 'disabled');
   // YJ profile optima — these are the values actually driving decideFor's per-
@@ -9755,6 +9827,7 @@ function renderConfigPanel(panel, mode) {
 async function runSimulator(cfg, onProgress) {
   setStrokeCap(cfg.regularStrokeCap || cfg.strokeCap);
   setLoserBogey(!!cfg.loserBogey);
+  setDecisionDivisor(cfg.decisionDivisor);
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -10614,7 +10687,9 @@ function renderActiveRun(root, r) {
         const minScore = Math.min.apply(null, scoreVals);
         const maxScore = Math.max.apply(null, scoreVals);
         const span = Math.max(1, maxScore - minScore + 1);
-        const bins = Math.max(5, Math.min(31, span));
+        // Math.round so fractional spans (champ scores carry honey-divisor
+        // fractions) yield an integer bin count for `new Array(bins)`.
+        const bins = Math.max(5, Math.min(31, Math.round(span)));
         drawHistogram(cv6, scoreVals, minScore - 0.5, maxScore + 0.5, bins, {
           labelFormat: v => Math.round(v),
           xLabel: 'Champion score',
@@ -11020,6 +11095,7 @@ function init() {
   setScoringStyle(LabState.config.scoringStyle || DEFAULT_SIM_CONFIG.scoringStyle);
   setStrokeCap(LabState.config.regularStrokeCap || LabState.config.strokeCap);
   setLoserBogey(!!LabState.config.loserBogey);
+  setDecisionDivisor(LabState.config.decisionDivisor);
 
   window.addEventListener('hashchange', onHashChange);
   onHashChange();
