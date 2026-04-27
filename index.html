@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.27-v39";
+const APP_VERSION = "2026.04.27-v40";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1401,12 +1401,31 @@ const WIN_PROB = [0.05, 0.38, 0.72, 0.87, 0.92, 0.96, 0.985, 0.999, 1.0, 1.0];
 // fallback for any code path that doesn't carry context. The actual
 // round-score formula in playMatch / runFinals always reads the dynamic
 // divisor via honeyDivisorFor(numHoles).
+// HONEY MAGNITUDE (v40 Path 2) — scales honey-to-stroke conversion at end of
+// round. Default 1.0 = original behavior (1 stroke = roundLength honey). At
+// 2.0, honey is twice as impactful (1 stroke = roundLength/2 honey), making
+// the honey layer meaningful enough to compete with the scorecard for skill
+// expression. The brief originally claimed honey was the "skilled adjustment
+// layer" but at magnitude=1 a 72-hole event caps skilled honey advantage at
+// ~5 strokes — washed out by a single bad showdown swing of -5..+2.
+let CurrentHoneyMagnitude = 1;
+function setHoneyMagnitude(n) {
+  const v = +n;
+  CurrentHoneyMagnitude = (Number.isFinite(v) && v > 0) ? v : 1;
+}
 function honeyDivisorFor(numHoles) {
   const n = +numHoles || 0;
-  if (n >= 72) return 72;
-  if (n >= 18) return 18;
-  if (n >= 9)  return 9;
-  return 1;
+  let base;
+  if (n >= 72) base = 72;
+  else if (n >= 18) base = 18;
+  else if (n >= 9) base = 9;
+  else base = 1;
+  // Apply honey-magnitude scaling. Higher magnitude → smaller divisor → honey
+  // is worth more strokes per unit. Both end-of-round scoring and decideFor's
+  // EV math read the divisor through this function (or its mirrored fallback),
+  // so player perception and actual scoring stay aligned.
+  const mult = (CurrentHoneyMagnitude > 0) ? CurrentHoneyMagnitude : 1;
+  return Math.max(0.01, base / mult);
 }
 // honeyNormalizationDivisor = 72 (4×18, like 4 rounds of golf / majors).
 // Golf dominates; honey is the light smoothing drizzle.
@@ -2112,7 +2131,11 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     const fe = foldEqFor(newLevel);
     return fe * agreedTotal + (1 - fe) * showEV(adjVal, newLevel);
   }
-  const evFoldAbs = -divisor - agreedTotal;
+  // v40 Path 3: under YJ variant (loserBogey=true), folding costs +2 strokes
+  // instead of +1. This restores asymmetry between fold and lose-showdown
+  // that the variant otherwise collapses.
+  const foldStrokeCost = loserBogey ? 2 : 1;
+  const evFoldAbs = -foldStrokeCost * divisor - agreedTotal;
 
   // Build candidate set with adjTrue (oracle) for the metric.
   const candidates = [];
@@ -2206,7 +2229,7 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   }
   // EV-based fold (variant-aware via showEV; noisy via adj instead of adjTrue).
   const evCallNoisy = showEV(adj, currentProposal);
-  const evFoldNoisy = -divisor - agreedTotal;
+  const evFoldNoisy = -foldStrokeCost * divisor - agreedTotal;
   if (evCallNoisy < evFoldNoisy) return wrap({ action: 'fold' });
   if (adj > profile.raiseThreshold && remaining > 0) {
     // v24: additive room-based raise sizing.
@@ -2446,14 +2469,24 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     if (strokes >= CurrentStrokeCap && s !== 'river') { while (community.length < 5) community.push(DECK[off++]); break; }
   }
   if (folded) {
-    // === YJ FOLD SCORING (v23, replaces street-penalty tables) ===
-    // Folder: +1 bogey on golf scorecard, 0 honey gain.
+    // === YJ FOLD SCORING (v23 + v40 variant-aware update) ===
+    // Folder: +1 (Bumblebee) or +2 (Yellow Jacket) on golf scorecard, 0 honey gain.
     // Non-folder: 0 par on golf scorecard, +previousAgreedTotal honey credit.
     // `strokes` from playBettingRound is already the previousAgreedTotal
     // (the level that was agreed BEFORE the proposal that triggered the fold).
+    //
+    // v40 Path 3: under Yellow Jacket variant (loserBogey=true), folder
+    // posts +2 instead of +1. Without this asymmetry, fold and lose-showdown
+    // both cost +1 stroke under YJ, which means folding strictly dominates
+    // losing the showdown (folding is ALWAYS cheaper in honey since it
+    // forfeits agreedTotal rather than currentProposal). That collapses the
+    // bluff-catching dimension. Making fold cost +2 under YJ restores the
+    // tension: calling marginal hands now offers genuine option value
+    // (you might win) at meaningful additional risk over folding.
     const streetIdx = (community.length < 3) ? 0 : (community.length === 3) ? 1 : (community.length === 4) ? 2 : 3;
+    const yjFoldStroke = CurrentLoserBogey ? 2 : 1;
     // Legacy table refs kept as no-ops so any debug overlay that reads them doesn't crash.
-    const folderScoreTable = [1, 1, 1, 1];
+    const folderScoreTable = [yjFoldStroke, yjFoldStroke, yjFoldStroke, yjFoldStroke];
     const bettorScoreTable = [0, 0, 0, 0];
     const folderScore = folderScoreTable[streetIdx];
     const bettorScore = bettorScoreTable[streetIdx];
@@ -2557,9 +2590,14 @@ function playMatch(pA, pB, numHoles, opts) {
   // 9 for a 9-hole bracket match.
   const eventHoles = +(baseGameContext && baseGameContext.totalHoles) || numHoles;
   const divisor = honeyDivisorFor(eventHoles);
-  // Carry-over only enabled in finals contexts (gameContext.isFinals = true).
-  // Outside of finals, ties don't carry — the pot is simply discarded.
-  const carryEnabled = !!(baseGameContext && baseGameContext.isFinals);
+  // v40 Path 1: carry-forward is now ALWAYS enabled. Previously gated on
+  // gameContext.isFinals so 99% of play (regulars, majors, all 4 rounds of
+  // 72-hole aggregate) discarded tied pots — stripping the meta-decision
+  // layer (slow-play to provoke ties, compounding pots, late-street
+  // pressure) from nearly every hole played. Tied pots now ALWAYS roll
+  // forward as the next hole's mandatory opener, restoring tied-hole carry
+  // as a strategic dimension across all event types.
+  const carryEnabled = true;
   const buildGameContext = (holeNumber) => {
     const baseHoleNumber = baseGameContext && Number.isFinite(+baseGameContext.holeNumber) ? +baseGameContext.holeNumber : 1;
     const totalHoles = baseGameContext && Number.isFinite(+baseGameContext.totalHoles) ? +baseGameContext.totalHoles : numHoles;
@@ -4080,6 +4118,7 @@ function startSolo(playerName, skill, tier, holes, cap) {
   setStrokeCap(cap);
   setLoserBogey(!!(LabState && LabState.config && LabState.config.loserBogey));
   setDecisionDivisor(LabState && LabState.config && LabState.config.decisionDivisor);
+  setHoneyMagnitude(LabState && LabState.config && LabState.config.honeyMagnitude);
   const g = createLocalGame(playerName, aiName, 'solo');
   g.totalHoles = Math.max(1, Math.min(144, +holes || 18));
   g.strokeCap = cap;
@@ -4120,6 +4159,7 @@ function aiTakeTurn(g) {
   if (g.strokeCap) setStrokeCap(g.strokeCap);
   setLoserBogey(!!g.loserBogey);
   if (Number.isFinite(g.decisionDivisor)) setDecisionDivisor(g.decisionDivisor);
+  if (Number.isFinite(g.honeyMagnitude)) setHoneyMagnitude(g.honeyMagnitude);
   const profile = g.aiProfile || makeProfileForSkill(0.40);
   // v23 decideFor signature:
   //   (cards, community, currentProposal, agreedTotal, isPending,
@@ -4182,6 +4222,7 @@ function createLocalGame(p1name, p2name, mode) {
     strokeCap: CurrentStrokeCap,
     loserBogey: CurrentLoserBogey,
     decisionDivisor: CurrentDecisionDivisor,
+    honeyMagnitude: CurrentHoneyMagnitude,
   };
 }
 
@@ -4745,19 +4786,23 @@ function resolveMPHole(g) {
   // so we can roll a NEW carry forward if THIS hole ties.
   let p1Golf = 0, p2Golf = 0, p1Honey = 0, p2Honey = 0, desc = '';
   if (c.folded) {
-    // YJ uniform fold rule (matches simulator playHole): folder posts +1 bogey,
-    // non-folder posts 0 par AND takes the PREVIOUSLY AGREED pot in honey.
-    // The currentProposal that triggered the fold is moot — it was never
-    // accepted. agreedTotal is the level both players had already agreed to
-    // before that proposal, so it's the correct honey credit.
+    // v40 fold rule (variant-aware): folder posts +1 (Bumblebee) or +2
+    // (Yellow Jacket) bogey; non-folder posts 0 par AND takes the PREVIOUSLY
+    // AGREED pot in honey. The currentProposal that triggered the fold is
+    // moot — it was never accepted. agreedTotal is the level both players
+    // had already agreed to before that proposal, so it's the correct
+    // honey credit. The variant-aware fold cost mirrors playHole: under YJ,
+    // fold = +2 to break the "fold strictly dominates losing showdown"
+    // pathology and restore bluff-catching tension.
     const folderSide = c.folded;
     const bettorSide = folderSide === 'p1' ? 'p2' : 'p1';
     const previouslyAgreed = c.agreedTotal;
-    if (folderSide === 'p1') { p1Golf = 1; p2Golf = 0; p2Honey = previouslyAgreed; }
-    else                     { p2Golf = 1; p1Golf = 0; p1Honey = previouslyAgreed; }
+    const foldStroke = g.loserBogey ? 2 : 1;
+    if (folderSide === 'p1') { p1Golf = foldStroke; p2Golf = 0; p2Honey = previouslyAgreed; }
+    else                     { p2Golf = foldStroke; p1Golf = 0; p1Honey = previouslyAgreed; }
     const folderName = folderSide === 'p1' ? g.p1.name : g.p2.name;
     const bettorName = bettorSide === 'p1' ? g.p1.name : g.p2.name;
-    desc = folderName + ' folded. ' + bettorName + ' takes the ' + previouslyAgreed + '-honey pot (the previously agreed total). ' + folderName + ' +1 bogey, ' + bettorName + ' 0 par.';
+    desc = folderName + ' folded. ' + bettorName + ' takes the ' + previouslyAgreed + '-honey pot (the previously agreed total). ' + folderName + ' +' + foldStroke + ' bogey, ' + bettorName + ' 0 par.';
     g.carryPot = 0;
   } else {
     while (c.community.length < 5) c.community.push(c.deck.pop());
@@ -6788,6 +6833,16 @@ const DEFAULT_SIM_CONFIG = {
   // recovers the v37/v38 "almost never fold" behavior; dropping to 6 makes
   // folds aggressive (think pot-committed-only-when-strong play).
   decisionDivisor: 9,
+  // HONEY MAGNITUDE (v40 Path 2) — global scalar that boosts honey impact
+  // on the scorecard. Default 1.0 = original behavior; 2.0 doubles honey
+  // value (1 stroke = 36 honey instead of 72 in a 72-hole event); 0.5
+  // halves it. Applied INSIDE honeyDivisorFor so both end-of-round scoring
+  // and decideFor's EV math stay aligned. The brief framed honey as the
+  // "skilled adjustment layer" but at magnitude 1.0 a 72-hole event caps
+  // skilled honey edge at ~5 strokes — washed out by single-hole swings.
+  // Higher magnitude restores honey as a genuine skill axis. Range
+  // recommended 1.0–4.0; values >4 risk honey dominating the scorecard.
+  honeyMagnitude: 1,
   majorChampShare: 0.14,
   majorRankingShare: 0.24,
   majorSeasonShare: 0.26,
@@ -7676,6 +7731,7 @@ async function runLabSession(cfg, onProgress) {
   // folds are unaffected.
   setLoserBogey(!!cfg.loserBogey);
   setDecisionDivisor(cfg.decisionDivisor);
+  setHoneyMagnitude(cfg.honeyMagnitude);
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -8930,6 +8986,15 @@ function _exportRunToCSVImpl(snap) {
   // the disciplined heads-up Hold'em range.
   cfgRow('scoring.decisionDivisor',
     Number.isFinite(+snapCfg.decisionDivisor) ? +snapCfg.decisionDivisor : 9);
+  // v40: honey-magnitude scalar applied inside honeyDivisorFor — boosts honey
+  // impact on the scorecard relative to the round-length default. 1.0 = legacy.
+  cfgRow('scoring.honeyMagnitude',
+    Number.isFinite(+snapCfg.honeyMagnitude) ? +snapCfg.honeyMagnitude : 1);
+  // v40: fold-stroke cost (variant-aware). Yellow Jacket variant raises fold
+  // to +2 strokes to break the "fold dominates losing showdown" pathology.
+  cfgRow('scoring.foldStrokeCost', snapCfg.loserBogey ? 2 : 1);
+  // v40: tied-hole carry-forward is now always-on (was finals-only).
+  cfgRow('scoring.carryAlwaysOn', true);
   cfgRow('skillMetricDefinition', 'average EV realization per decision (pure poker skill, not ROI)');
   cfgRow('ui.largeSimMode', LabState.config.largeSimMode ? 'enabled' : 'disabled');
   // YJ profile optima — these are the values actually driving decideFor's per-
@@ -9828,6 +9893,7 @@ async function runSimulator(cfg, onProgress) {
   setStrokeCap(cfg.regularStrokeCap || cfg.strokeCap);
   setLoserBogey(!!cfg.loserBogey);
   setDecisionDivisor(cfg.decisionDivisor);
+  setHoneyMagnitude(cfg.honeyMagnitude);
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -11096,6 +11162,7 @@ function init() {
   setStrokeCap(LabState.config.regularStrokeCap || LabState.config.strokeCap);
   setLoserBogey(!!LabState.config.loserBogey);
   setDecisionDivisor(LabState.config.decisionDivisor);
+  setHoneyMagnitude(LabState.config.honeyMagnitude);
 
   window.addEventListener('hashchange', onHashChange);
   onHashChange();
