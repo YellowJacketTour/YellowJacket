@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.26-v35";
+const APP_VERSION = "2026.04.26-v37";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3695,6 +3695,13 @@ Views.codex = function() {
     p('The hand-strength distribution puts most showdowns at One Pair or worse — the modal showdown posts a slight bogey. Net scorecard improvement comes almost entirely from winning honey pots, not from holding strong hands. Build pots when you have an equity edge; concede them cheaply when you do not. The honey divisor (72 for full-event scoring) means you need many small pots — or a few large ones — to move the round score by a single stroke.'),
     h3('The fold rule rewards ALL fold pressure equally'),
     p('Every fold returns the same outcome to the bettor: 0 (par) on the scorecard plus the previously agreed pot in honey. There is NO street-based bonus — a Putt-street fold is no more valuable than a Tea Box fold in scorecard terms. What changes by street is the SIZE of the previously agreed pot: pots grow as betting progresses, so late-street folds tend to deliver more honey simply because the agreed total has had more rounds to climb.'),
+    h3('Folds do NOT reveal cards — strategic implications'),
+    p('When a player folds, the non-folder ALWAYS scores 0 par regardless of the actual hand they were holding. Cards are never revealed on a fold. This is a deliberate design choice — it preserves the "concession" semantic of golf match play, where a conceded hole is scored par without playing it out. But it has two strategic implications most poker players miss:'),
+    ul([
+      'PREMIUM HANDS DO NOT EXTRACT MAXIMUM VALUE FROM FOLDS. If you hold a hand that would have posted -3 (full house, J+ trips) but your bet folds the opponent out, you score 0 par — you leave 3 strokes of golf value on the table. With strong hands, prefer bet sizes that get CALLED, not sizes that get folded. Build the pot, reach showdown, and realize the full -3 then. Forcing a fold with a premium hand is small-win territory: par + previously-agreed honey, no more.',
+      'WEAK HANDS HAVE ASYMMETRIC DOWNSIDE PROTECTION. Folding a weak high card costs you +1 bogey. Reaching showdown with the same hand and losing also costs you +1 (Yellow Jacket) or up to +2 (Bumblebee, your own weak hand value). Folding can be the cheaper escape route — especially in Yellow Jacket, where the showdown loss already caps at +1. Skilled weak-hand play looks like: fold to large bets when the previously-agreed pot is small, call to large bets when the previously-agreed pot is already large (the saving from folding shrinks as the agreed total grows).',
+      'IMPLICATION FOR AGGRESSION. Classic-poker intuition says "premium hand → bet big → opponent folds → you win the pot." In Yellow Jacket, that pattern caps your reward at the previously-agreed honey + 0 par. The richer reward path is "premium hand → bet to a level the opponent CALLS → showdown → realize -3 to -5 plus the agreed honey." Skilled players bet for value (extraction), not for fold equity (denial).',
+    ]),
     h3('Per-event stroke caps and progressive street caps'),
     p('Each event sets a maximum agreed pot size for the hole — the stroke cap. Default per-event caps: Regular ' + (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6) + ' honey, Major ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10) + ' honey, Main early rounds ' + (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' honey, Main 72-hole finals ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10) + ' honey. Within each hole, the cap unlocks progressively by street: Tea Box 25%, Drive 50%, Hazard 75%, Putt 100%. So in a Major (cap 10), a Tea Box bet cannot propose more than 3 honey total; by the Putt the full 10 is available. This forces escalation to feel like real no-limit poker rather than a single-cap free-for-all.'),
     h3('Tied-hole carry arithmetic'),
@@ -4389,6 +4396,12 @@ Views.rules = function() {
   ));
   core.appendChild(rule('Folds — uniform on every street',
     'The fold rule is the same on Tea Box, Drive, Hazard, and Putt: the folder posts +1 (bogey) on the scorecard and gains 0 honey. The non-folder posts 0 (par) on the scorecard and takes the PREVIOUSLY AGREED pot (the level both players had already accepted before the proposal that triggered the fold) as a honey credit. Example: pot is agreed at 5. Opponent raises to 8. You fold. You post +1 bogey. Opponent posts 0 par and gains 5 honey. The unaccepted proposal of 8 is moot — only the prior agreed total transfers. There is no street-based penalty table; what makes late-street folds more valuable in practice is that the previously agreed pot has had more chances to climb.'
+  ));
+  core.appendChild(rule('Folds DO NOT reveal cards — strategic note',
+    'When a player folds, the non-folder always scores 0 par REGARDLESS of the actual hand they were holding. Cards are never revealed on a fold. This is intentional — it preserves the "concession" semantic of golf match play, where a conceded hole is scored par without playing it out. ' +
+    'STRATEGIC CONSEQUENCE FOR PREMIUM HANDS: forcing a fold with a strong hand caps your reward at par + previously-agreed honey. You do NOT get the -3 to -5 golf value your hand would have realized at showdown. With strong hands, prefer bet sizes that get CALLED — build the pot, reach showdown, and realize the full hand value. ' +
+    'STRATEGIC CONSEQUENCE FOR WEAK HANDS: folding a weak hand costs +1 bogey but caps your honey loss at the PREVIOUSLY agreed pot (not the new proposal). Reaching showdown and losing also costs +1 in Yellow Jacket (or up to +2 in Bumblebee), but loses the LARGER agreed honey. Folding can be the cheaper escape, especially when the previously-agreed pot is small. ' +
+    'BOTTOM LINE: in Yellow Jacket, bet for value (extraction), not for fold equity (denial). Classic-poker pressure plays under-reward you here.'
   ));
   core.appendChild(rule('Per-event stroke caps and progressive street unlock',
     'Each event sets a maximum agreed pot size for any single hole — the stroke cap. Default per-event caps: Regular ' + (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6) + ' honey, Major ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10) + ' honey, Main early rounds ' + (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' honey, Main 72-hole finals ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10) + ' honey. Within each hole, the cap unlocks progressively by street: 25% available by Tea Box (preflop), 50% by Drive (flop), 75% by Hazard (turn), 100% by Putt (river). For caps of 3 or less the progressive unlock is disabled and the full cap is available from Tea Box. This forces pot escalation to mirror real no-limit Hold\'em rather than a single-cap free-for-all on the first street.'
@@ -6635,18 +6648,19 @@ const DEFAULT_SIM_CONFIG = {
   // "win deep in a major"; expensive path is paying buyInMain at the door.
   mainQualifiersPerMajor: 512,
   // TOURNAMENT FORMAT — switches between two structurally different event types:
-  //   'bracket' (default, WSOP feel): single-elim bracket. 9-hole rounds while
-  //     field > 16, then 18-hole rounds until 2 remain, then 72-hole heads-up
-  //     final via runFinals. Champion = last player standing. Drama-forward;
-  //     each match is elimination-pressure.
-  //   'aggregate' (PGA Masters feel): regulars and majors play 4 rounds × 18
-  //     holes = 72 holes total, with rotating-partner pairings each round. The
-  //     Main Event keeps bracket cuts down to a 16-player final field, then
+  //   'aggregate' (default, PGA Masters feel): regulars and majors play 4 rounds
+  //     × 18 holes = 72 holes total, with rotating-partner pairings each round.
+  //     The Main Event keeps bracket cuts down to a 16-player final field, then
   //     those 16 play 72-hole aggregate. Per-hole zero-sum honey credits still
   //     apply within each pairing. Champion = lowest aggregate net score.
+  //   'bracket' (WSOP feel): single-elim bracket. 9-hole rounds while field > 16,
+  //     then 18-hole rounds until 2 remain, then 72-hole heads-up final via
+  //     runFinals. Champion = last player standing. Drama-forward; each match
+  //     is elimination-pressure. v37 demoted from default; aggregate is the
+  //     production-canonical format. Bracket remains for comparison runs.
   // Both formats run on the SAME per-hole engine — only the macro structure
   // differs. Switch the flag to compare feels in the same simulator session.
-  tournamentFormat: 'bracket',
+  tournamentFormat: 'aggregate',
   // largeSimMode — disables all mid-run autosaves so 30k+ pool simulations
   // don't hit localStorage quota errors. One final save runs after the loop
   // completes. Older runs are auto-pruned to summary-only stats. Toggle via
@@ -7199,7 +7213,7 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   // Format dispatch. 'bracket' = single-elim (WSOP feel); 'aggregate' = 72-hole
   // stroke play (PGA feel). The Main Event in 'aggregate' mode is hybrid: bracket
   // cuts down to 16 finalists, then those 16 play the 72-hole stroke-play final.
-  const tournamentFormat = (cfg && cfg.tournamentFormat) === 'aggregate' ? 'aggregate' : 'bracket';
+  const tournamentFormat = (cfg && cfg.tournamentFormat) === 'bracket' ? 'bracket' : 'aggregate';
   const isAggregate = tournamentFormat === 'aggregate';
   // For aggregate Main: keep bracket cuts down to this finalist count.
   const aggregateMainFinalists = 16;
@@ -8869,7 +8883,7 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('regularField', snapCfg.regularField);
   cfgRow('mainField', snapCfg.mainField);
   cfgRow('mainQualifiersPerMajor', snapCfg.mainQualifiersPerMajor);
-  cfgRow('tournamentFormat', snapCfg.tournamentFormat || 'bracket');
+  cfgRow('tournamentFormat', snapCfg.tournamentFormat || 'aggregate');
   cfgRow('satelliteTierRegular', snapCfg.satelliteTierRegular);
   cfgRow('satelliteTierMajor', snapCfg.satelliteTierMajor);
   cfgRow('satelliteTierMain', Array.isArray(snapCfg.satelliteTierMain) ? snapCfg.satelliteTierMain.join('|') : snapCfg.satelliteTierMain);
@@ -9420,11 +9434,11 @@ function renderConfigPanel(panel, mode) {
   fmtRow.appendChild(el('label', { text: 'Format', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
   const fmtSel = el('select', { style: 'width: 100%;' });
   [
-    { v: 'bracket',   label: 'Bracket knockout (WSOP feel)' },
     { v: 'aggregate', label: 'Aggregate stroke play (PGA Masters feel)' },
+    { v: 'bracket',   label: 'Bracket knockout (WSOP feel)' },
   ].forEach(o => {
     const opt = el('option', { value: o.v, text: o.label });
-    if ((LabState.config.tournamentFormat || 'bracket') === o.v) opt.selected = true;
+    if ((LabState.config.tournamentFormat || 'aggregate') === o.v) opt.selected = true;
     fmtSel.appendChild(opt);
   });
   fmtSel.onchange = () => {
