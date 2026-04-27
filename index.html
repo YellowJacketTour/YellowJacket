@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.27-v42";
+const APP_VERSION = "2026.04.27-v43";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1332,6 +1332,19 @@ let CurrentDecisionDivisor = 9;
 function setDecisionDivisor(n) {
   const v = +n;
   CurrentDecisionDivisor = (Number.isFinite(v) && v >= 1) ? v : 9;
+}
+// POT-ELASTIC CAP (v43) — streetCap dynamically scales with pot size, capped
+// by a global ceiling. Restores no-limit-style overbet pressure on hot pots
+// without re-importing chip-counting friction. The progressive 25/50/75/100%
+// schedule remains as a floor (small pots stay small); pot-elastic kicks in
+// when k×agreedTotal exceeds the progressive floor. Setting k=0 reverts to
+// pure legacy progressive caps. Default 3 — produces meaningful preflop play
+// (Tea Box cap = 6 vs opener=2 → 4 honey room) and dramatic late-street
+// pressure on carry-pot inflated holes (cap can reach 3× the global cap).
+let CurrentPotElasticK = 3;
+function setPotElasticK(n) {
+  const v = +n;
+  CurrentPotElasticK = (Number.isFinite(v) && v >= 0) ? v : 3;
 }
 // =============================================================================
 // SCORING — Honey-Stroke is the sole, permanent scoring law for Yellow Jacket Tour.
@@ -2023,10 +2036,22 @@ function estimateStrengthAware(holeCards, community, street, streetCap, skillFac
 }
 // Progressive street cap: preflop 25%, flop 50%, turn 75%, river 100% of the global cap.
 // Small caps (≤3) use the global cap flat since there's no meaningful headroom to split.
-function streetCapFor(street, totalCap) {
+//
+// v43 POT-ELASTIC EXTENSION: when CurrentPotElasticK > 0 (default 3), the cap
+// can climb above the progressive floor as the pot grows. effectiveCap =
+// max(progressiveFloor, min(globalCeiling, k × agreedTotal)). globalCeiling
+// is 3× totalCap so single-hole risk stays bounded. Restores no-limit-style
+// overbet pressure on hot/carry pots and unlocks Tea Box (preflop) play
+// because k×opener of 6 exceeds the progressive floor of 1-2 honey.
+function streetCapFor(street, totalCap, agreedTotal) {
   if (!totalCap || totalCap <= 3) return totalCap || 3;
   const frac = { preflop: 0.25, flop: 0.50, turn: 0.75, river: 1.0 };
-  return Math.max(1, Math.ceil(totalCap * (frac[street] != null ? frac[street] : 1)));
+  const progressive = Math.max(1, Math.ceil(totalCap * (frac[street] != null ? frac[street] : 1)));
+  const k = CurrentPotElasticK;
+  if (k <= 0 || !Number.isFinite(+agreedTotal)) return progressive;
+  const elastic = Math.ceil(k * (+agreedTotal));
+  const ceiling = totalCap * 3;
+  return Math.max(progressive, Math.min(ceiling, elastic));
 }
 
 // decideFor: decision kernel called at every actionable moment in a hand.
@@ -2045,7 +2070,8 @@ function streetCapFor(street, totalCap) {
 // Returns { action, amount, evChosen, evOptimal }
 function decideFor(cards, community, currentProposal, agreedTotal, isPending, profile, preComputedHand, preComputedTex, gameContext = {}) {
   const street = community.length === 0 ? 'preflop' : community.length === 3 ? 'flop' : community.length === 4 ? 'turn' : 'river';
-  const streetCap = streetCapFor(street, CurrentStrokeCap);
+  // v43: pot-elastic streetCap consumes agreedTotal so cap scales with pot.
+  const streetCap = streetCapFor(street, CurrentStrokeCap, agreedTotal);
   const remaining = Math.max(0, streetCap - currentProposal);
   // Pot for adj-estimation purposes = the post-call hole value (= currentProposal).
   // Under YJ rules there's no "matched" / no doubling. Last agreed total IS the pot.
@@ -2131,10 +2157,13 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     const fe = foldEqFor(newLevel);
     return fe * agreedTotal + (1 - fe) * showEV(adjVal, newLevel);
   }
-  // Fold cost is uniform +1 stroke + agreedTotal honey, matching the rulebook.
-  // v40 raised this to +2 under YJ; reverted in v41 because it lowered fold
-  // rates rather than raising them.
-  const evFoldAbs = -divisor - agreedTotal;
+  // v43 commitment-escalating fold cost: +1 base + floor(agreedTotal/4)
+  // escalation strokes. The AI now correctly perceives that walking away
+  // from a big pot costs more golf strokes than walking from a small one,
+  // creating pot-control as a real skill axis and restoring bluff equity
+  // on inflated pots (committed opponents call more).
+  const foldStrokeCost = 1 + Math.floor((+agreedTotal || 0) / 4);
+  const evFoldAbs = -foldStrokeCost * divisor - agreedTotal;
 
   // Build candidate set with adjTrue (oracle) for the metric.
   const candidates = [];
@@ -2148,9 +2177,17 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     const levels = [];
     const room = Math.max(0, streetCap - base);
     if (room <= 0) return levels;
-    [0.25, 0.5, 1.0].forEach(f => {
+    // v43: 5 size tiers (was 3) — finer bet/raise granularity enables 3-bet
+    // and 4-bet wars within the cap. Combined with iteration headroom in
+    // playBettingRound, this restores range-vs-range preflop strategy
+    // within bounded space.
+    const seen = new Set();
+    [0.15, 0.30, 0.50, 0.70, 1.0].forEach(f => {
       const L = Math.min(streetCap, base + Math.max(1, Math.round(room * f)));
-      if (L > base) levels.push(L);
+      if (L > base && !seen.has(L)) {
+        seen.add(L);
+        levels.push(L);
+      }
     });
     return levels;
   }
@@ -2251,7 +2288,7 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   }
   // EV-based fold (variant-aware via showEV; noisy via adj instead of adjTrue).
   const evCallNoisy = showEV(adj, currentProposal);
-  const evFoldNoisy = -divisor - agreedTotal;
+  const evFoldNoisy = -foldStrokeCost * divisor - agreedTotal;
   if (evCallNoisy < evFoldNoisy) return wrap({ action: 'fold' });
   if (adj > profile.raiseThreshold && remaining > 0) {
     // v24: additive room-based raise sizing.
@@ -2389,7 +2426,9 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
   let folded = null;
   let foldedAtAgreedTotal = agreedTotal;
   const street = community.length === 0 ? 'preflop' : community.length === 3 ? 'flop' : community.length === 4 ? 'turn' : 'river';
-  const streetCap = streetCapFor(street, CurrentStrokeCap);
+  // v43: pot-elastic cap reads the live agreedTotal so big carry pots unlock
+  // proportionally larger street caps. Single-pot ceiling = 3× CurrentStrokeCap.
+  const streetCap = streetCapFor(street, CurrentStrokeCap, agreedTotal);
   const tex = community.length >= 3 ? boardTexture(community) : null;
   const aHand = community.length >= 3 ? evaluate7(aCards, community) : 0;
   const bHand = community.length >= 3 ? evaluate7(bCards, community) : 0;
@@ -2403,7 +2442,8 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     player.stats.evOptimalSum = (player.stats.evOptimalSum || 0) + evO;
     player.stats.evLossSum = (player.stats.evLossSum || 0) + Math.max(0, evO - evC);
   }
-  for (let iter = 0; iter < 8; iter++) {
+  // v43: bumped from 8 to 16 to allow 3-bet/4-bet/5-bet sequences within cap.
+  for (let iter = 0; iter < 16; iter++) {
     const actor = toAct;
     const other = actor === 'a' ? 'b' : 'a';
     const cards = actor === 'a' ? aCards : bCards;
@@ -2491,22 +2531,30 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     if (strokes >= CurrentStrokeCap && s !== 'river') { while (community.length < 5) community.push(DECK[off++]); break; }
   }
   if (folded) {
-    // === YJ FOLD SCORING (v23, replaces street-penalty tables) ===
-    // Folder: +1 bogey on golf scorecard, 0 honey gain.
-    // Non-folder: 0 par on golf scorecard, +previousAgreedTotal honey credit.
-    // `strokes` from playBettingRound is already the previousAgreedTotal
-    // (the level that was agreed BEFORE the proposal that triggered the fold).
-    // v40 attempted to make YJ fold = +2 but that increased call EV across
-    // the board and reduced fold rates (the opposite of intent). Reverted in
-    // v41; the fold cost is uniform +1 across both variants. The dominance-
-    // of-fold-over-lose-showdown pathology under YJ is better addressed by
-    // raising the loser-showdown cost, not the fold cost — pending decision.
+    // === YJ FOLD SCORING (v43 commitment-escalating) ===
+    // Base fold cost is +1 bogey. v43 adds an escalation: +floor(strokes/4)
+    // additional strokes when the previously-agreed pot is large. Mirrors
+    // the no-limit "pot-committed" dynamic without requiring chip stacks —
+    // the AI must consider that walking away from a big pot is genuinely
+    // expensive in golf terms, not just the honey forfeit. A folder bailing
+    // out of a 12-honey carry pot now eats +4 strokes (1 base + 3 escalation),
+    // restoring real bluff equity on hot pots and creating pot-control as a
+    // genuine skill axis.
+    //   strokes (=previousAgreedTotal) → fold strokes
+    //     0-3   → +1
+    //     4-7   → +2
+    //     8-11  → +3
+    //     12-15 → +4
+    //     16-19 → +5
+    //   etc.
+    // Non-folder still posts 0 par + previously-agreed honey credit (unchanged).
     const streetIdx = (community.length < 3) ? 0 : (community.length === 3) ? 1 : (community.length === 4) ? 2 : 3;
+    const escalation = Math.floor((strokes || 0) / 4);
+    const folderScore = 1 + escalation;
+    const bettorScore = 0;
     // Legacy table refs kept as no-ops so any debug overlay that reads them doesn't crash.
-    const folderScoreTable = [1, 1, 1, 1];
+    const folderScoreTable = [folderScore, folderScore, folderScore, folderScore];
     const bettorScoreTable = [0, 0, 0, 0];
-    const folderScore = folderScoreTable[streetIdx];
-    const bettorScore = bettorScoreTable[streetIdx];
     const aScore = folded === 'a' ? folderScore : bettorScore;
     const bScore = folded === 'b' ? folderScore : bettorScore;
     const aHoneyCredit = folded === 'a' ? 0 : strokes;
@@ -4136,6 +4184,7 @@ function startSolo(playerName, skill, tier, holes, cap) {
   setLoserBogey(!!(LabState && LabState.config && LabState.config.loserBogey));
   setDecisionDivisor(LabState && LabState.config && LabState.config.decisionDivisor);
   setHoneyMagnitude(LabState && LabState.config && LabState.config.honeyMagnitude);
+  setPotElasticK(LabState && LabState.config && LabState.config.potElasticK);
   const g = createLocalGame(playerName, aiName, 'solo');
   g.totalHoles = Math.max(1, Math.min(144, +holes || 18));
   g.strokeCap = cap;
@@ -4177,6 +4226,7 @@ function aiTakeTurn(g) {
   setLoserBogey(!!g.loserBogey);
   if (Number.isFinite(g.decisionDivisor)) setDecisionDivisor(g.decisionDivisor);
   if (Number.isFinite(g.honeyMagnitude)) setHoneyMagnitude(g.honeyMagnitude);
+  if (Number.isFinite(g.potElasticK)) setPotElasticK(g.potElasticK);
   const profile = g.aiProfile || makeProfileForSkill(0.40);
   // v23 decideFor signature:
   //   (cards, community, currentProposal, agreedTotal, isPending,
@@ -4240,6 +4290,7 @@ function createLocalGame(p1name, p2name, mode) {
     loserBogey: CurrentLoserBogey,
     decisionDivisor: CurrentDecisionDivisor,
     honeyMagnitude: CurrentHoneyMagnitude,
+    potElasticK: CurrentPotElasticK,
   };
 }
 
@@ -4803,21 +4854,20 @@ function resolveMPHole(g) {
   // so we can roll a NEW carry forward if THIS hole ties.
   let p1Golf = 0, p2Golf = 0, p1Honey = 0, p2Honey = 0, desc = '';
   if (c.folded) {
-    // YJ uniform fold rule (matches simulator playHole): folder posts +1 bogey,
-    // non-folder posts 0 par AND takes the PREVIOUSLY AGREED pot in honey.
-    // The currentProposal that triggered the fold is moot — it was never
-    // accepted. agreedTotal is the level both players had already agreed to
-    // before that proposal, so it's the correct honey credit. v40 attempted
-    // a variant-aware +2 under YJ; reverted in v41 because raising fold
-    // cost reduced fold rates rather than increasing them.
+    // v43 commitment-escalating fold (matches simulator playHole):
+    // folder posts +1 base + floor(previouslyAgreed/4) escalation. Walking
+    // away from a big pot now costs real golf strokes, restoring bluff equity
+    // on hot pots and pot-control as a skill axis. Non-folder still posts
+    // 0 par + previouslyAgreed honey credit.
     const folderSide = c.folded;
     const bettorSide = folderSide === 'p1' ? 'p2' : 'p1';
     const previouslyAgreed = c.agreedTotal;
-    if (folderSide === 'p1') { p1Golf = 1; p2Golf = 0; p2Honey = previouslyAgreed; }
-    else                     { p2Golf = 1; p1Golf = 0; p1Honey = previouslyAgreed; }
+    const foldStroke = 1 + Math.floor((previouslyAgreed || 0) / 4);
+    if (folderSide === 'p1') { p1Golf = foldStroke; p2Golf = 0; p2Honey = previouslyAgreed; }
+    else                     { p2Golf = foldStroke; p1Golf = 0; p1Honey = previouslyAgreed; }
     const folderName = folderSide === 'p1' ? g.p1.name : g.p2.name;
     const bettorName = bettorSide === 'p1' ? g.p1.name : g.p2.name;
-    desc = folderName + ' folded. ' + bettorName + ' takes the ' + previouslyAgreed + '-honey pot (the previously agreed total). ' + folderName + ' +1 bogey, ' + bettorName + ' 0 par.';
+    desc = folderName + ' folded. ' + bettorName + ' takes the ' + previouslyAgreed + '-honey pot (the previously agreed total). ' + folderName + ' +' + foldStroke + ' bogey (commitment-escalating), ' + bettorName + ' 0 par.';
     g.carryPot = 0;
   } else {
     while (c.community.length < 5) c.community.push(c.deck.pop());
@@ -6858,6 +6908,12 @@ const DEFAULT_SIM_CONFIG = {
   // Higher magnitude restores honey as a genuine skill axis. Range
   // recommended 1.0–4.0; values >4 risk honey dominating the scorecard.
   honeyMagnitude: 1,
+  // POT-ELASTIC CAP MULTIPLIER (v43). When > 0, streetCap can exceed the
+  // legacy progressive floor proportionally to current pot size. Default 3
+  // calibrates: opener=2 → preflop cap = 6 (4 honey of preflop room, was 0);
+  // carry pot of 8 → cap = 24 (massive late-street pressure). Hard ceiling
+  // of 3× the global cap prevents runaway. Set to 0 for legacy behavior.
+  potElasticK: 3,
   majorChampShare: 0.14,
   majorRankingShare: 0.24,
   majorSeasonShare: 0.26,
@@ -7747,6 +7803,7 @@ async function runLabSession(cfg, onProgress) {
   setLoserBogey(!!cfg.loserBogey);
   setDecisionDivisor(cfg.decisionDivisor);
   setHoneyMagnitude(cfg.honeyMagnitude);
+  setPotElasticK(cfg.potElasticK);
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -9005,16 +9062,24 @@ function _exportRunToCSVImpl(snap) {
   // impact on the scorecard relative to the round-length default. 1.0 = legacy.
   cfgRow('scoring.honeyMagnitude',
     Number.isFinite(+snapCfg.honeyMagnitude) ? +snapCfg.honeyMagnitude : 1);
-  // Fold-stroke cost: uniform +1 across both variants (v41 revert of v40
-  // attempt). Pending decision on whether to instead raise loser-showdown
-  // cost under YJ to address the fold-dominates-lose pathology.
-  cfgRow('scoring.foldStrokeCost', 1);
-  // v42: pot-odds-aware fold check restored. Stage-1 fold trigger compares
-  // adj to (reqEquity − foldThreshold). Stage-2 EV check still runs as a
-  // backup. profile.foldThreshold (slack from pot odds) is now load-bearing
-  // again — values < 0.05 = tighter than pure pot odds, > 0.05 = looser.
-  cfgRow('decision.foldRule', 'pot-odds + EV (v42)');
+  // v43: commitment-escalating fold cost. Base +1 stroke + floor(agreedTotal/4)
+  // escalation. Pot-committed dynamics restored without chip stacks.
+  cfgRow('scoring.foldStrokeBase', 1);
+  cfgRow('scoring.foldStrokeFormula', '1 + floor(agreedTotal/4)');
+  // v42: pot-odds-aware fold check. Stage-1 trigger compares adj to
+  // (reqEquity − foldThreshold). Stage-2 EV check (now using v43
+  // commitment-escalating fold cost) runs as a backup.
+  cfgRow('decision.foldRule', 'pot-odds + EV (v42 + v43 escalating)');
   cfgRow('decision.foldOptSlack', 0.05);
+  // v43: pot-elastic streetCap multiplier. effectiveCap = max(progressive,
+  // min(globalCap×3, k×agreedTotal)). k=3 default unlocks preflop play and
+  // restores overbet pressure on hot pots.
+  cfgRow('streetCap.potElasticK',
+    Number.isFinite(+snapCfg.potElasticK) ? +snapCfg.potElasticK : 3);
+  cfgRow('streetCap.formula', 'max(progressive, min(3×cap, k×agreedTotal))');
+  // v43: bet/raise granularity (was 3 tiers, now 5 — finer 3-bet/4-bet wars).
+  cfgRow('decision.betSizingTiers', 5);
+  cfgRow('decision.maxIterationsPerStreet', 16);
   // v40: tied-hole carry-forward is now always-on (was finals-only).
   cfgRow('scoring.carryAlwaysOn', true);
   cfgRow('skillMetricDefinition', 'average EV realization per decision (pure poker skill, not ROI)');
@@ -9916,6 +9981,7 @@ async function runSimulator(cfg, onProgress) {
   setLoserBogey(!!cfg.loserBogey);
   setDecisionDivisor(cfg.decisionDivisor);
   setHoneyMagnitude(cfg.honeyMagnitude);
+  setPotElasticK(cfg.potElasticK);
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -11185,6 +11251,7 @@ function init() {
   setLoserBogey(!!LabState.config.loserBogey);
   setDecisionDivisor(LabState.config.decisionDivisor);
   setHoneyMagnitude(LabState.config.honeyMagnitude);
+  setPotElasticK(LabState.config.potElasticK);
 
   window.addEventListener('hashchange', onHashChange);
   onHashChange();
