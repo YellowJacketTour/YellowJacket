@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.27-v40";
+const APP_VERSION = "2026.04.27-v42";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2131,11 +2131,10 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     const fe = foldEqFor(newLevel);
     return fe * agreedTotal + (1 - fe) * showEV(adjVal, newLevel);
   }
-  // v40 Path 3: under YJ variant (loserBogey=true), folding costs +2 strokes
-  // instead of +1. This restores asymmetry between fold and lose-showdown
-  // that the variant otherwise collapses.
-  const foldStrokeCost = loserBogey ? 2 : 1;
-  const evFoldAbs = -foldStrokeCost * divisor - agreedTotal;
+  // Fold cost is uniform +1 stroke + agreedTotal honey, matching the rulebook.
+  // v40 raised this to +2 under YJ; reverted in v41 because it lowered fold
+  // rates rather than raising them.
+  const evFoldAbs = -divisor - agreedTotal;
 
   // Build candidate set with adjTrue (oracle) for the metric.
   const candidates = [];
@@ -2215,21 +2214,44 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     return wrap({ action: 'check' });
   }
   // Pending proposal → fold / call / raise.
-  // Path 3b (v39): profile.foldThreshold restored as a tightness floor.
-  // Disciplined-tight archetype expression — players whose foldThreshold
-  // exceeds their noisy equity estimate fold even when EV math says call.
-  // foldOpt=0.05 means optimal players almost never trip this floor; profile
-  // jitter pushes some low-skill players up to ~0.20, where they fold
-  // visibly more often, becoming the tight-passive subtype. Raise/bet
-  // thresholds (lines 2145, 2161) already work this way for archetype
-  // expression on the aggressive side — this restores symmetry on the
-  // defensive side, which v23 had mistakenly removed.
-  if (Number.isFinite(profile.foldThreshold) && adj < profile.foldThreshold) {
+  //
+  // === FOLD CHECKS (v42 deep-rewrite) ===
+  // Two-stage fold logic. Either stage triggering causes a fold; both must
+  // pass for a call/raise to occur.
+  //
+  // STAGE 1 — POT-ODDS FOLD (restored from v22; the actual fold lever).
+  // The v23 rewrite eliminated this in favor of pure-EV math, which produced
+  // near-zero fold rates because YJ EV break-even sits at 12-22% equity —
+  // below where heads-up Hold'em hands typically land at the moment of
+  // facing a bet. Pot-odds folding is the historically calibrated lever
+  // that produced realistic action.
+  //
+  //   reqEquity = call_amount / pot_after_call  = (L - T) / (2L - T)
+  //
+  // profile.foldThreshold (default 0.05) is "slack" — distance below pot
+  // odds the AI will tolerate before folding:
+  //   slack = 0.05 (elite, tight)  → fold when adj < reqEquity − 0.05
+  //                                  (folds even slightly below pot odds)
+  //   slack = 0.20 (loose)          → fold only when adj < reqEquity − 0.20
+  //                                  (calling station — calls deep below odds)
+  // Profile jitter creates the archetype distribution. This is the v22
+  // semantics with a clean naming: foldOpt is the slack, not the threshold.
+  //
+  // STAGE 2 — EV-BASED FOLD (kept from v23, variant-aware via showEV).
+  // Catches large-pot / deep-stack scenarios where the per-stroke EV
+  // calculation diverges from raw pot odds. Rare relative to stage 1 but
+  // important for terminal-street decisions where the +1 stroke cost
+  // dominates the honey delta.
+  const callAmount = Math.max(0, currentProposal - agreedTotal);
+  const potAfterCall = Math.max(1, 2 * currentProposal - agreedTotal);
+  const reqEquity = callAmount / potAfterCall;
+  const slack = Number.isFinite(profile.foldThreshold) ? profile.foldThreshold : 0.05;
+  if (callAmount > 0 && adj < reqEquity - slack) {
     return wrap({ action: 'fold' });
   }
   // EV-based fold (variant-aware via showEV; noisy via adj instead of adjTrue).
   const evCallNoisy = showEV(adj, currentProposal);
-  const evFoldNoisy = -foldStrokeCost * divisor - agreedTotal;
+  const evFoldNoisy = -divisor - agreedTotal;
   if (evCallNoisy < evFoldNoisy) return wrap({ action: 'fold' });
   if (adj > profile.raiseThreshold && remaining > 0) {
     // v24: additive room-based raise sizing.
@@ -2469,24 +2491,19 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     if (strokes >= CurrentStrokeCap && s !== 'river') { while (community.length < 5) community.push(DECK[off++]); break; }
   }
   if (folded) {
-    // === YJ FOLD SCORING (v23 + v40 variant-aware update) ===
-    // Folder: +1 (Bumblebee) or +2 (Yellow Jacket) on golf scorecard, 0 honey gain.
+    // === YJ FOLD SCORING (v23, replaces street-penalty tables) ===
+    // Folder: +1 bogey on golf scorecard, 0 honey gain.
     // Non-folder: 0 par on golf scorecard, +previousAgreedTotal honey credit.
     // `strokes` from playBettingRound is already the previousAgreedTotal
     // (the level that was agreed BEFORE the proposal that triggered the fold).
-    //
-    // v40 Path 3: under Yellow Jacket variant (loserBogey=true), folder
-    // posts +2 instead of +1. Without this asymmetry, fold and lose-showdown
-    // both cost +1 stroke under YJ, which means folding strictly dominates
-    // losing the showdown (folding is ALWAYS cheaper in honey since it
-    // forfeits agreedTotal rather than currentProposal). That collapses the
-    // bluff-catching dimension. Making fold cost +2 under YJ restores the
-    // tension: calling marginal hands now offers genuine option value
-    // (you might win) at meaningful additional risk over folding.
+    // v40 attempted to make YJ fold = +2 but that increased call EV across
+    // the board and reduced fold rates (the opposite of intent). Reverted in
+    // v41; the fold cost is uniform +1 across both variants. The dominance-
+    // of-fold-over-lose-showdown pathology under YJ is better addressed by
+    // raising the loser-showdown cost, not the fold cost — pending decision.
     const streetIdx = (community.length < 3) ? 0 : (community.length === 3) ? 1 : (community.length === 4) ? 2 : 3;
-    const yjFoldStroke = CurrentLoserBogey ? 2 : 1;
     // Legacy table refs kept as no-ops so any debug overlay that reads them doesn't crash.
-    const folderScoreTable = [yjFoldStroke, yjFoldStroke, yjFoldStroke, yjFoldStroke];
+    const folderScoreTable = [1, 1, 1, 1];
     const bettorScoreTable = [0, 0, 0, 0];
     const folderScore = folderScoreTable[streetIdx];
     const bettorScore = bettorScoreTable[streetIdx];
@@ -3262,7 +3279,7 @@ const BuzzKnowledge = {
     { cat: 'rules', q: 'How does a fold work?', a: 'When you fold to a proposal, you lose ONLY the previously agreed total in honey (the level both players had agreed to BEFORE the new proposal). You also take a +1 bogey on the scorecard. The non-folder takes 0 par AND receives that previous agreed total in honey. Same rule on every street — there is no street-based fold penalty table.' },
     { cat: 'rules', q: 'How does betting work?', a: 'Agreed-total wagering. Every hole opens at 2 honey. A "bet" or "raise" is a PROPOSAL to set a new total agreed pot size (capped by the stroke cap). A "call" is acceptance — the pot then stands at the proposed total. No summing, no doubling, no matched contributions. The pot at any moment is the LAST agreed total only.' },
     { cat: 'rules', q: 'What happens on a tied hole?', a: 'Both players score 0 (par) and the wagered-strokes pot accumulates into a carry pot for the next decisive hole. Multiple consecutive ties stack; the winner of the next decisive hole sweeps the entire accumulated carry.' },
-    { cat: 'rules', q: 'What happens on a fold?', a: 'The folder takes a small positive scorecard penalty scaled by street: Tea Box +2, Drive/Hazard +1, Putt 0. The bettor scores 0 to −2 AND takes the wagered-strokes pot as a honey credit — forcing a late-street fold is doubly valuable.' },
+    { cat: 'rules', q: 'What happens on a fold?', a: 'The folder takes +1 bogey on the scorecard regardless of street, and loses the previously agreed pot to the bettor. The bettor takes 0 par on the scorecard and gains the previously agreed pot in honey. The fold rule is uniform across all streets — Tea Box, Drive, Hazard, and Putt all impose the same +1 stroke. (An older v18 design used a street-dependent table; that has been retired since v23.)' },
     { cat: 'rules', q: 'How many strokes can be bet per hole?', a: 'The event\'s stroke-cap controls the maximum total strokes per hole, partitioned across streets (25% by Tea Box, 50% by Drive, 75% by Hazard, 100% by Putt). Per-event caps: regular 6, major 10, main 6, main finals 10.' },
     { cat: 'rules', q: 'How do sudden-death playoffs work?', a: 'If round totals are tied after the full event length (9-hole knockouts, 18-hole later rounds, 72-hole finals), players continue one hole at a time. First to end a hole ahead wins. Up to 30 playoff holes before a fair-coin tiebreaker.' },
     { cat: 'rules', q: 'What counts as the official tournament score?', a: 'The 72-hole Grand Finals total decides the championship. Bracket-round scores accumulate into careerScore for the Career Total chart but do not affect the official champion number.' },
@@ -4786,23 +4803,21 @@ function resolveMPHole(g) {
   // so we can roll a NEW carry forward if THIS hole ties.
   let p1Golf = 0, p2Golf = 0, p1Honey = 0, p2Honey = 0, desc = '';
   if (c.folded) {
-    // v40 fold rule (variant-aware): folder posts +1 (Bumblebee) or +2
-    // (Yellow Jacket) bogey; non-folder posts 0 par AND takes the PREVIOUSLY
-    // AGREED pot in honey. The currentProposal that triggered the fold is
-    // moot — it was never accepted. agreedTotal is the level both players
-    // had already agreed to before that proposal, so it's the correct
-    // honey credit. The variant-aware fold cost mirrors playHole: under YJ,
-    // fold = +2 to break the "fold strictly dominates losing showdown"
-    // pathology and restore bluff-catching tension.
+    // YJ uniform fold rule (matches simulator playHole): folder posts +1 bogey,
+    // non-folder posts 0 par AND takes the PREVIOUSLY AGREED pot in honey.
+    // The currentProposal that triggered the fold is moot — it was never
+    // accepted. agreedTotal is the level both players had already agreed to
+    // before that proposal, so it's the correct honey credit. v40 attempted
+    // a variant-aware +2 under YJ; reverted in v41 because raising fold
+    // cost reduced fold rates rather than increasing them.
     const folderSide = c.folded;
     const bettorSide = folderSide === 'p1' ? 'p2' : 'p1';
     const previouslyAgreed = c.agreedTotal;
-    const foldStroke = g.loserBogey ? 2 : 1;
-    if (folderSide === 'p1') { p1Golf = foldStroke; p2Golf = 0; p2Honey = previouslyAgreed; }
-    else                     { p2Golf = foldStroke; p1Golf = 0; p1Honey = previouslyAgreed; }
+    if (folderSide === 'p1') { p1Golf = 1; p2Golf = 0; p2Honey = previouslyAgreed; }
+    else                     { p2Golf = 1; p1Golf = 0; p1Honey = previouslyAgreed; }
     const folderName = folderSide === 'p1' ? g.p1.name : g.p2.name;
     const bettorName = bettorSide === 'p1' ? g.p1.name : g.p2.name;
-    desc = folderName + ' folded. ' + bettorName + ' takes the ' + previouslyAgreed + '-honey pot (the previously agreed total). ' + folderName + ' +' + foldStroke + ' bogey, ' + bettorName + ' 0 par.';
+    desc = folderName + ' folded. ' + bettorName + ' takes the ' + previouslyAgreed + '-honey pot (the previously agreed total). ' + folderName + ' +1 bogey, ' + bettorName + ' 0 par.';
     g.carryPot = 0;
   } else {
     while (c.community.length < 5) c.community.push(c.deck.pop());
@@ -8990,9 +9005,16 @@ function _exportRunToCSVImpl(snap) {
   // impact on the scorecard relative to the round-length default. 1.0 = legacy.
   cfgRow('scoring.honeyMagnitude',
     Number.isFinite(+snapCfg.honeyMagnitude) ? +snapCfg.honeyMagnitude : 1);
-  // v40: fold-stroke cost (variant-aware). Yellow Jacket variant raises fold
-  // to +2 strokes to break the "fold dominates losing showdown" pathology.
-  cfgRow('scoring.foldStrokeCost', snapCfg.loserBogey ? 2 : 1);
+  // Fold-stroke cost: uniform +1 across both variants (v41 revert of v40
+  // attempt). Pending decision on whether to instead raise loser-showdown
+  // cost under YJ to address the fold-dominates-lose pathology.
+  cfgRow('scoring.foldStrokeCost', 1);
+  // v42: pot-odds-aware fold check restored. Stage-1 fold trigger compares
+  // adj to (reqEquity − foldThreshold). Stage-2 EV check still runs as a
+  // backup. profile.foldThreshold (slack from pot odds) is now load-bearing
+  // again — values < 0.05 = tighter than pure pot odds, > 0.05 = looser.
+  cfgRow('decision.foldRule', 'pot-odds + EV (v42)');
+  cfgRow('decision.foldOptSlack', 0.05);
   // v40: tied-hole carry-forward is now always-on (was finals-only).
   cfgRow('scoring.carryAlwaysOn', true);
   cfgRow('skillMetricDefinition', 'average EV realization per decision (pure poker skill, not ROI)');
