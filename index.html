@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.27-v43";
+const APP_VERSION = "2026.04.27-v44";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2230,7 +2230,11 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
       }
       evChosen = best ? best.ev : betEV(adjTrue, +result.amount || agreedTotal);
     }
-    return Object.assign({ evChosen, evOptimal }, result);
+    // v44: expose noisy `adj` (perceived equity at decision time) so the
+    // collector can build an equity-bucket × action distribution. This is the
+    // core game-theoretic signal for diagnosing whether players are folding
+    // the right hands at the right equities.
+    return Object.assign({ evChosen, evOptimal, decisionAdj: adj }, result);
   }
 
   // === DECISION LOGIC (v23) ===
@@ -2453,7 +2457,7 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     const d = decideFor(cards, community, currentProposal, agreedTotal, isPending, profile, actorHand, tex, gameContext);
     recordEV(actor, d);
     if (typeof LabState !== 'undefined' && LabState.instrumentation && LabState.instrumentation.collector) {
-      LabState.instrumentation.collector(street, d.action);
+      LabState.instrumentation.collector(street, d.action, d.decisionAdj);
     }
     if (d.action === 'fold') {
       folded = actor;
@@ -2552,6 +2556,11 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     const escalation = Math.floor((strokes || 0) / 4);
     const folderScore = 1 + escalation;
     const bettorScore = 0;
+    // v44 instrumentation: record fold cost + pot bucket at fold.
+    if (typeof LabState !== 'undefined' && LabState.instrumentation) {
+      if (LabState.instrumentation.foldCostCollector) LabState.instrumentation.foldCostCollector(folderScore);
+      if (LabState.instrumentation.potBucketCollector) LabState.instrumentation.potBucketCollector('fold', strokes);
+    }
     // Legacy table refs kept as no-ops so any debug overlay that reads them doesn't crash.
     const folderScoreTable = [folderScore, folderScore, folderScore, folderScore];
     const bettorScoreTable = [0, 0, 0, 0];
@@ -2572,6 +2581,10 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   // `strokes` becomes a honey credit for the winner; on a tie the pot carries forward
   // (always — carryOverEnabled is a permanent invariant).
   if (cmp === 0) {
+    // v44 instrumentation: record tie + pot at tie (this is the carry pot for next hole)
+    if (typeof LabState !== 'undefined' && LabState.instrumentation && LabState.instrumentation.potBucketCollector) {
+      LabState.instrumentation.potBucketCollector('tie', strokes);
+    }
     SimPerf.add('showdown', sdT);
     SimPerf.add('dealHole', t0);
     return {
@@ -2599,6 +2612,10 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   }
   const aHoneyCredit = cmp > 0 ? strokes : 0;
   const bHoneyCredit = cmp > 0 ? 0 : strokes;
+  // v44 instrumentation: record decisive showdown + pot at showdown
+  if (typeof LabState !== 'undefined' && LabState.instrumentation && LabState.instrumentation.potBucketCollector) {
+    LabState.instrumentation.potBucketCollector('showdown', strokes);
+  }
   SimPerf.add('showdown', sdT);
   SimPerf.add('dealHole', t0);
   return { folded: null, aScore, bScore, aHand: aH, bHand: bH, strokes, aHoneyCredit, bHoneyCredit, carryPot: 0 };
@@ -7001,6 +7018,36 @@ const BackgroundSim = {
         flop:    { check:0, bet:0, call:0, raise:0, fold:0 },
         turn:    { check:0, bet:0, call:0, raise:0, fold:0 },
         river:   { check:0, bet:0, call:0, raise:0, fold:0 },
+        // v44 instrumentation: fold-cost histogram (stroke cost: 0..9, 9+).
+        // Empirically reveals how often the commitment-escalating fold formula
+        // is producing each stroke level — the distribution shows whether
+        // small-pot folds (+1) or hot-pot folds (+3..+5) dominate the tax.
+        foldCostHist: [0,0,0,0,0,0,0,0,0,0],
+        // v44 instrumentation: pot-size buckets at each resolution event.
+        // Buckets: [<4, 4-7, 8-11, 12-15, 16+]. Distinguishes whether folds
+        // happen on small-stake spots vs committed-pot spots, and whether
+        // showdowns/ties are happening at ordinary or carry-inflated pot sizes.
+        potBucketsAtFold:     [0,0,0,0,0],
+        potBucketsAtShowdown: [0,0,0,0,0],
+        potBucketsAtTie:      [0,0,0,0,0],
+        // v44 instrumentation: count of resolution event types per hole.
+        // foldCount + showdownCount + tieCount = total holes simulated.
+        foldCount: 0,
+        showdownCount: 0,
+        tieCount: 0,
+        // v44 instrumentation: equity-bucket × action matrix (5×5).
+        // Rows are adj equity buckets [0-0.2, 0.2-0.4, 0.4-0.6, 0.6-0.8, 0.8+].
+        // Cols are actions [check, bet, call, raise, fold].
+        // Reveals whether players are folding the right hands and calling
+        // with the right hands at each equity level — the core game-theoretic
+        // signal that aggregate skillSpearman cannot disambiguate.
+        equityBucketActions: [
+          { check:0, bet:0, call:0, raise:0, fold:0 },
+          { check:0, bet:0, call:0, raise:0, fold:0 },
+          { check:0, bet:0, call:0, raise:0, fold:0 },
+          { check:0, bet:0, call:0, raise:0, fold:0 },
+          { check:0, bet:0, call:0, raise:0, fold:0 },
+        ],
       },
       rng: this.currentCfg.seed ? mulberry32(this.currentCfg.seed >>> 0) : null,
       startedAt: performance.now(),
@@ -7063,8 +7110,32 @@ const BackgroundSim = {
     const actionStats = this.state.actionStats;
     const priorRandom = Math.random;
     if (this.state.rng) Math.random = this.state.rng;
-    LabState.instrumentation.collector = (street, action) => {
+    LabState.instrumentation.collector = (street, action, adj) => {
       if (actionStats[street] && actionStats[street][action] != null) actionStats[street][action]++;
+      if (Number.isFinite(adj) && actionStats.equityBucketActions) {
+        const b = Math.min(4, Math.max(0, Math.floor(adj * 5)));
+        const row = actionStats.equityBucketActions[b];
+        if (row && row[action] != null) row[action]++;
+      }
+    };
+    LabState.instrumentation.foldCostCollector = (cost) => {
+      if (!Number.isFinite(cost) || cost < 0) return;
+      const idx = Math.min(9, Math.floor(cost));
+      if (actionStats.foldCostHist) actionStats.foldCostHist[idx]++;
+    };
+    LabState.instrumentation.potBucketCollector = (event, pot) => {
+      if (!Number.isFinite(pot) || !actionStats.potBucketsAtFold) return;
+      const idx = pot < 4 ? 0 : pot < 8 ? 1 : pot < 12 ? 2 : pot < 16 ? 3 : 4;
+      if (event === 'fold') {
+        actionStats.foldCount++;
+        actionStats.potBucketsAtFold[idx]++;
+      } else if (event === 'showdown') {
+        actionStats.showdownCount++;
+        actionStats.potBucketsAtShowdown[idx]++;
+      } else if (event === 'tie') {
+        actionStats.tieCount++;
+        actionStats.potBucketsAtTie[idx]++;
+      }
     };
     try {
       const ev = runTourEventLab(item.type, item.year, item.name, TourState.pool, cfg);
@@ -7080,6 +7151,10 @@ const BackgroundSim = {
       }
     } finally {
       LabState.instrumentation.collector = null;
+    LabState.instrumentation.foldCostCollector = null;
+    LabState.instrumentation.potBucketCollector = null;
+      LabState.instrumentation.foldCostCollector = null;
+      LabState.instrumentation.potBucketCollector = null;
       Math.random = priorRandom;
     }
     this.state.index++;
@@ -7146,6 +7221,8 @@ const BackgroundSim = {
   cleanup() {
     clearTimeout(this.timer);
     LabState.instrumentation.collector = null;
+    LabState.instrumentation.foldCostCollector = null;
+    LabState.instrumentation.potBucketCollector = null;
     this.isRunning = false;
     this.isPaused = false;
     this.cancelRequested = false;
@@ -7810,9 +7887,48 @@ async function runLabSession(cfg, onProgress) {
     flop:    { check:0, bet:0, call:0, raise:0, fold:0 },
     turn:    { check:0, bet:0, call:0, raise:0, fold:0 },
     river:   { check:0, bet:0, call:0, raise:0, fold:0 },
+    // v44 instrumentation
+    foldCostHist: [0,0,0,0,0,0,0,0,0,0],
+    potBucketsAtFold:     [0,0,0,0,0],
+    potBucketsAtShowdown: [0,0,0,0,0],
+    potBucketsAtTie:      [0,0,0,0,0],
+    foldCount: 0,
+    showdownCount: 0,
+    tieCount: 0,
+    equityBucketActions: [
+      { check:0, bet:0, call:0, raise:0, fold:0 },
+      { check:0, bet:0, call:0, raise:0, fold:0 },
+      { check:0, bet:0, call:0, raise:0, fold:0 },
+      { check:0, bet:0, call:0, raise:0, fold:0 },
+      { check:0, bet:0, call:0, raise:0, fold:0 },
+    ],
   };
-  LabState.instrumentation.collector = (street, action) => {
+  LabState.instrumentation.collector = (street, action, adj) => {
     if (actionStats[street] && actionStats[street][action] != null) actionStats[street][action]++;
+    if (Number.isFinite(adj) && actionStats.equityBucketActions) {
+      const b = Math.min(4, Math.max(0, Math.floor(adj * 5)));
+      const row = actionStats.equityBucketActions[b];
+      if (row && row[action] != null) row[action]++;
+    }
+  };
+  LabState.instrumentation.foldCostCollector = (cost) => {
+    if (!Number.isFinite(cost) || cost < 0) return;
+    const idx = Math.min(9, Math.floor(cost));
+    actionStats.foldCostHist[idx]++;
+  };
+  LabState.instrumentation.potBucketCollector = (event, pot) => {
+    if (!Number.isFinite(pot)) return;
+    const idx = pot < 4 ? 0 : pot < 8 ? 1 : pot < 12 ? 2 : pot < 16 ? 3 : 4;
+    if (event === 'fold') {
+      actionStats.foldCount++;
+      actionStats.potBucketsAtFold[idx]++;
+    } else if (event === 'showdown') {
+      actionStats.showdownCount++;
+      actionStats.potBucketsAtShowdown[idx]++;
+    } else if (event === 'tie') {
+      actionStats.tieCount++;
+      actionStats.potBucketsAtTie[idx]++;
+    }
   };
   // Perf instrumentation: enabled for this run only. We estimate the event count so
   // SimPerf can preallocate its per-event timing array without growing mid-run.
@@ -7857,6 +7973,8 @@ async function runLabSession(cfg, onProgress) {
     });
   } finally {
     LabState.instrumentation.collector = null;
+    LabState.instrumentation.foldCostCollector = null;
+    LabState.instrumentation.potBucketCollector = null;
   }
   const elapsedMs = performance.now() - t0;
   const metricsT0 = performance.now();
@@ -7902,6 +8020,17 @@ function computeLabMetrics(pool, events, actionStats, cfg) {
     skillWinRate: computeSkillWinRateCurve(pool, 20),
     bracketSurvival: computeBracketSurvivalByTier(pool),
     actionRate: computeActionRateRatios(actionStats),
+    // v44 instrumentation passthrough — diagnostic histograms.
+    foldCostHist: actionStats.foldCostHist || null,
+    potBucketsAtFold: actionStats.potBucketsAtFold || null,
+    potBucketsAtShowdown: actionStats.potBucketsAtShowdown || null,
+    potBucketsAtTie: actionStats.potBucketsAtTie || null,
+    resolutionCounts: {
+      fold: actionStats.foldCount || 0,
+      showdown: actionStats.showdownCount || 0,
+      tie: actionStats.tieCount || 0,
+    },
+    equityBucketActions: actionStats.equityBucketActions || null,
     h2hMatrix: computeH2HMatrixByQuartile(pool, events),
     scoreTrajectory: computeScoreTrajectory(events, cfg.seasons),
     champScores: events.map(e => e.champScore),
@@ -9307,6 +9436,68 @@ function _exportRunToCSVImpl(snap) {
     rows.push(['source','count','rate']);
     Object.keys(q.fieldSource).forEach(k => rows.push([k, q.fieldSource[k], q.fieldSourceRate[k].toFixed(4)]));
   }
+
+  // === v44 INSTRUMENTATION TELEMETRY ===
+  // The action-rate ratios per street (already computed above as m.actionRate)
+  // are the headline action signal. Below we expose the v44 deeper diagnostic
+  // distributions that reveal WHY the headline numbers look the way they do.
+  if (m.actionRate) {
+    rows.push([]);
+    rows.push(['--- actionRate by street ---']);
+    rows.push(['street','check','bet','call','raise','fold','total']);
+    ['preflop','flop','turn','river'].forEach(s => {
+      const r = m.actionRate[s];
+      if (r) rows.push([s, fx(r.check, 4), fx(r.bet, 4), fx(r.call, 4), fx(r.raise, 4), fx(r.fold, 4), r.total]);
+    });
+  }
+  if (m.resolutionCounts) {
+    rows.push([]);
+    rows.push(['--- holeResolution counts ---']);
+    rows.push(['resolutionType','count','rate']);
+    const total = (m.resolutionCounts.fold || 0) + (m.resolutionCounts.showdown || 0) + (m.resolutionCounts.tie || 0);
+    const rate = (n) => total > 0 ? (n / total).toFixed(4) : '0';
+    rows.push(['fold', m.resolutionCounts.fold, rate(m.resolutionCounts.fold)]);
+    rows.push(['showdown', m.resolutionCounts.showdown, rate(m.resolutionCounts.showdown)]);
+    rows.push(['tie', m.resolutionCounts.tie, rate(m.resolutionCounts.tie)]);
+    rows.push(['totalHoles', total, '1.0000']);
+  }
+  if (m.foldCostHist) {
+    rows.push([]);
+    rows.push(['--- foldCostHistogram ---']);
+    rows.push(['strokeCost','count']);
+    const totalFolds = m.foldCostHist.reduce((a, b) => a + b, 0);
+    rows.push(['totalFolds', totalFolds]);
+    m.foldCostHist.forEach((cnt, i) => {
+      const label = i === 9 ? '9+' : String(i);
+      const rate = totalFolds > 0 ? (cnt / totalFolds).toFixed(4) : '0';
+      rows.push(['+' + label, cnt, rate]);
+    });
+  }
+  if (m.potBucketsAtFold || m.potBucketsAtShowdown || m.potBucketsAtTie) {
+    rows.push([]);
+    rows.push(['--- potSizeAtResolution ---']);
+    rows.push(['bucket','foldCount','showdownCount','tieCount']);
+    const labels = ['<4', '4-7', '8-11', '12-15', '16+'];
+    for (let i = 0; i < 5; i++) {
+      rows.push([
+        labels[i],
+        (m.potBucketsAtFold && m.potBucketsAtFold[i]) || 0,
+        (m.potBucketsAtShowdown && m.potBucketsAtShowdown[i]) || 0,
+        (m.potBucketsAtTie && m.potBucketsAtTie[i]) || 0,
+      ]);
+    }
+  }
+  if (m.equityBucketActions) {
+    rows.push([]);
+    rows.push(['--- equityBucketActions ---']);
+    rows.push(['adjBucket','check','bet','call','raise','fold','total','foldRate']);
+    const labels = ['0.0-0.2','0.2-0.4','0.4-0.6','0.6-0.8','0.8-1.0'];
+    m.equityBucketActions.forEach((row, i) => {
+      const total = (row.check + row.bet + row.call + row.raise + row.fold) || 0;
+      const foldRate = total > 0 ? (row.fold / total).toFixed(4) : '0';
+      rows.push([labels[i], row.check, row.bet, row.call, row.raise, row.fold, total, foldRate]);
+    });
+  }
   // Build the Blob from an ARRAY of line-strings rather than a single concatenated
   // mega-string. Browsers have per-string length limits (Chrome ~1GB, Safari ~512MB
   // allocated in smaller chunks) — V8 also copy-grows string concat for large arrays
@@ -9988,9 +10179,48 @@ async function runSimulator(cfg, onProgress) {
     flop:    { check:0, bet:0, call:0, raise:0, fold:0 },
     turn:    { check:0, bet:0, call:0, raise:0, fold:0 },
     river:   { check:0, bet:0, call:0, raise:0, fold:0 },
+    // v44 instrumentation
+    foldCostHist: [0,0,0,0,0,0,0,0,0,0],
+    potBucketsAtFold:     [0,0,0,0,0],
+    potBucketsAtShowdown: [0,0,0,0,0],
+    potBucketsAtTie:      [0,0,0,0,0],
+    foldCount: 0,
+    showdownCount: 0,
+    tieCount: 0,
+    equityBucketActions: [
+      { check:0, bet:0, call:0, raise:0, fold:0 },
+      { check:0, bet:0, call:0, raise:0, fold:0 },
+      { check:0, bet:0, call:0, raise:0, fold:0 },
+      { check:0, bet:0, call:0, raise:0, fold:0 },
+      { check:0, bet:0, call:0, raise:0, fold:0 },
+    ],
   };
-  LabState.instrumentation.collector = (street, action) => {
+  LabState.instrumentation.collector = (street, action, adj) => {
     if (actionStats[street] && actionStats[street][action] != null) actionStats[street][action]++;
+    if (Number.isFinite(adj) && actionStats.equityBucketActions) {
+      const b = Math.min(4, Math.max(0, Math.floor(adj * 5)));
+      const row = actionStats.equityBucketActions[b];
+      if (row && row[action] != null) row[action]++;
+    }
+  };
+  LabState.instrumentation.foldCostCollector = (cost) => {
+    if (!Number.isFinite(cost) || cost < 0) return;
+    const idx = Math.min(9, Math.floor(cost));
+    actionStats.foldCostHist[idx]++;
+  };
+  LabState.instrumentation.potBucketCollector = (event, pot) => {
+    if (!Number.isFinite(pot)) return;
+    const idx = pot < 4 ? 0 : pot < 8 ? 1 : pot < 12 ? 2 : pot < 16 ? 3 : 4;
+    if (event === 'fold') {
+      actionStats.foldCount++;
+      actionStats.potBucketsAtFold[idx]++;
+    } else if (event === 'showdown') {
+      actionStats.showdownCount++;
+      actionStats.potBucketsAtShowdown[idx]++;
+    } else if (event === 'tie') {
+      actionStats.tieCount++;
+      actionStats.potBucketsAtTie[idx]++;
+    }
   };
   const t0 = performance.now();
   const startYear = TourState.currentSeason + 1;
@@ -10032,6 +10262,8 @@ async function runSimulator(cfg, onProgress) {
     });
   } finally {
     LabState.instrumentation.collector = null;
+    LabState.instrumentation.foldCostCollector = null;
+    LabState.instrumentation.potBucketCollector = null;
   }
   saveState();
   const elapsedMs = performance.now() - t0;
