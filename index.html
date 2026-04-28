@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.28-v58";
+const APP_VERSION = "2026.04.28-v59";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -7432,20 +7432,25 @@ const DEFAULT_SIM_CONFIG = {
   //   mag=9:  72-hole div=8,   30-honey fold = +4.75 strokes (v52-v56)
   //
   // EMPIRICAL OBSERVATIONS (with v56+ back-9 doubling on):
-  //   mag=9 → avgChampScore -17.7 (past brief band)
-  //   mag=6 → avgChampScore -11.2 (mid-band)
-  //   mag=4 → avgChampScore TBD (projected ~-6 to -8)
+  //   mag=9 → avgChampScore -17.7, Major -19.9, skillR² 0.010
+  //   mag=6 → avgChampScore -11.2, Major -11.6, skillR² 0.012
+  //   mag=4 → avgChampScore  -7.5, Major  -7.0, skillR² 0.001
+  //   mag=5 → projected sweet-spot between mag=4 and mag=6
   //
-  // v58: mag 6→4. v57 at mag=6 came in deeper than my linear model predicted
-  // (-11 vs ~-5). The back-9 doubling has a non-linear interaction with mag
-  // — at lower mag the AI's bigger decisionDivisor amplifies honey-aggression
-  // in big pots, adding more depth than projected. At mag=4, the 72-hole
-  // divisor is 18, putting honey-per-stroke at golf-realistic levels.
-  // Short-format events (18-hole match, 9-hole bracket, 1-hole) all clamp
-  // at the divisor floor of 4, so they're unaffected by this change.
-  // The v54 decisionDivisor unification ensures the AI's in-kernel EV math
-  // tracks this change automatically — no other code adjustments needed.
-  honeyMagnitude: 4,
+  // v59: mag 4→5 (middle ground). v58 at mag=4 produced the most
+  // golf-realistic distribution (avg champion ~-7.5, occasional above-par
+  // majors mirroring 2007 Zach Johnson) AND the cleanest top-10 earners
+  // (zero floor-skill outliers in lifetime earnings) AND skill-positive
+  // Main Event finals. But skillR² collapsed to 0.0008 — a measurement
+  // artifact of variance flattening the linear win-vs-skill fit, but
+  // visually problematic in dashboards. v57 at mag=6 had skillR²=0.012
+  // but Main finals were skill-negative and a floor-skill dynasty player
+  // landed in top earners. mag=5 splits the difference: predicted
+  // Major avg ~-9 (matches PGA Masters historical), skillR² ~0.005-0.010,
+  // skillEVSpearman ~0.045, top earners staying clean. The v54
+  // decisionDivisor unification ensures the AI's in-kernel EV math
+  // tracks magnitude automatically — no other code adjustments needed.
+  honeyMagnitude: 5,
   // v56 BACK-9 OPENER DOUBLING. On the back 9 of any 18-hole round (hole
   // index ≥ 9 within the round), the mandatory opening pot multiplies by
   // this factor. Default 2 doubles: front 9 stays at 2 honey, back 9
