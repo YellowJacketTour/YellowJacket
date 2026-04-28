@@ -884,7 +884,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.28-v67";
+const APP_VERSION = "2026.04.28-v68";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2585,6 +2585,17 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   const potAfterCall = Math.max(1, 2 * currentProposal - agreedTotal);
   const reqEquity = callAmount / potAfterCall;
   const slack = Number.isFinite(profile.foldThreshold) ? profile.foldThreshold : 0.05;
+  // v68 HARD LOW-EQUITY FOLD FLOOR — fires before the slack-based check so
+  // genuinely hopeless spots (adj < 0.05) get aggressive folding regardless
+  // of slack/pot-odds math. The slack-based trigger lives at negative adj at
+  // YJ's flat divisor=9 (structural limit), so without this floor the v66/v67
+  // sweeps showed only 13-14% fold rate at adj 0.00-0.05 — too light for
+  // genuinely hopeless equity. With foldOpt=0.20 + this floor, predicted v68
+  // fold rates: 0.00-0.05 → 80-90%, 0.05-0.10 → 10-15%, 0.10+ unchanged.
+  const HARD_FOLD_FLOOR = 0.05;
+  if (callAmount > 0 && adjRead < HARD_FOLD_FLOOR) {
+    return wrap({ action: 'fold' });
+  }
   // v49: use adjRead (reading-discounted equity) for fold decisions. Skilled
   // readers fold more vs aggressive opponents because they correctly perceive
   // narrowed strong ranges. Weak readers ignore the signal and call/get spewy.
@@ -2692,17 +2703,20 @@ function makeProfileForSkill(targetSkill, cfg) {
   // with, and (c) opens the bluff-catching range (0.4–0.6 equity) that
   // currently never folds because pots stay too small to threaten pot odds.
   const betOpt = 0.45;
-  // v67: foldOpt 0.25 → 0.15. v59 set foldOpt=0.25 calibrated against div=4.
-  // v66's flat divisor table raised div=4 → div=9 for 18-hole rounds, which
-  // shifted reqEquity ≈ 0.083 → ≈ 0.102. With slack=0.25, the trigger sat at
-  // negative adj for both versions, so folds came almost entirely from the
-  // pot-odds stage-1 check, producing fold rate of only 14% at adj 0.00–0.05
-  // in the v66 sweep — too light for genuinely hopeless spots.
-  // Lowering slack to 0.15 lets the EV-based trigger fire at adj < ~0 (still
-  // structural-floor for typical pots, but the stage-1 check has more
-  // headroom and fires more aggressively at adj < ~0.10). Predicted v67
-  // fold rates: 0.00–0.05 → 50–70%, 0.05–0.10 → 25–35%, 0.10+ unchanged.
-  const foldOpt = 0.15;
+  // v68: foldOpt 0.15 → 0.20 (split-the-difference recalibration).
+  // v67's foldOpt=0.15 over-corrected — fold rate at 0.10-0.20 equity buckets
+  // jumped to 10-13% (calling-thin territory in YJ, should stay <5%) while the
+  // 0.00-0.05 bucket only marginally improved from 14% → 13.5%. The slack
+  // reduction widened the stage-1 pot-odds check's range, polluting moderate
+  // equity with unwanted folds. v68 splits the difference at 0.20 AND adds a
+  // hard low-equity floor (see HARD_FOLD_FLOOR below) so extreme low equity
+  // gets aggressive folding without compromising moderate-equity calls.
+  const foldOpt = 0.20;
+  // v68 NOTE: a HARD LOW-EQUITY FOLD FLOOR (0.05) is implemented directly in
+  // decideFor's fold logic, before the slack-based check. It fires whenever
+  // the actor faces an open proposal AND adj < 0.05, regardless of slack/EV.
+  // This handles genuinely hopeless spots that the slack trigger could not hit
+  // at YJ's flat divisor=9. See decideFor for the implementation.
   const raiseOpt = 0.75;
   // v49 MULTI-DIMENSIONAL PROFILES — three orthogonal traits beyond the
   // skill axis. Two skill-0.95 players now have DIFFERENT profiles in these
@@ -5293,7 +5307,7 @@ Views.rules = function() {
     '"adj" = adjusted equity, the bot\'s estimated probability (0–1) that its current hand will win at showdown against the opponent\'s estimated range. Updates every street as more board cards reveal. ' +
     '"divisor" = the round-end honey divisor (see "Per-round score"); v66 flat table: 1/4/9/36 for 1/9/18/72-hole rounds. ' +
     '"showdownGolfCost(adj)" = expected golf-stroke penalty if you reach showdown — a positive number representing the average bogey/par cost weighted by the chance you lose; smaller as adj rises. ' +
-    '"foldOpt" = the equity-slack threshold at which folding becomes optimal (v67 = 0.15, recalibrated from v59 = 0.25 to match v66\'s flat divisor table). The bot folds when adj < reqEquity − foldOpt. ' +
+    '"foldOpt" = the equity-slack threshold at which folding becomes optimal (v68 = 0.20, recalibrated from v67\'s 0.15 which over-folded the 0.10-0.20 equity range). The bot folds when adj < reqEquity − foldOpt. v68 also adds a HARD LOW-EQUITY FOLD FLOOR at adj=0.05 — fires before the slack check so genuinely hopeless spots get aggressive folding regardless of pot odds. ' +
     '"betOpt" = the equity threshold above which betting for value is optimal (v59 = 0.45). ' +
     '"raiseOpt" = the equity threshold above which 3-betting/raising is optimal (v59 = 0.75). ' +
     '"foldEquity" = estimated probability the opponent will fold to a given proposed new agreed total. ' +
@@ -5301,7 +5315,7 @@ Views.rules = function() {
     'ev_fold = −divisor − previousAgreedTotal (you forfeit one stroke equivalent + the agreed pot). ' +
     'ev_check_or_call = (2·adj − 1) × pot − showdownGolfCost(adj) (your share of the pot minus expected showdown cost). ' +
     'ev_bet_or_raise(newTotal) = foldEquity · evWinByFold(newTotal) + (1 − foldEquity) · evShowdownAtNewTotal — evaluated for each legal new total within the street\'s stroke-cap unlock. ' +
-    'PROFILE OPTIMA (v67 calibration). foldOpt 0.15 (recalibrated from v59\'s 0.25 to match the v66 divisor change), betOpt 0.45, raiseOpt 0.75. These are NOT classic poker thresholds; they reflect optimal aggression when the pot itself improves your scorecard. ' +
+    'PROFILE OPTIMA (v68 calibration). foldOpt 0.20 + hard low-equity fold floor 0.05, betOpt 0.45, raiseOpt 0.75. These are NOT classic poker thresholds; they reflect optimal aggression when the pot itself improves your scorecard. ' +
     'INVERTED foldOpt POLARITY (the v51 fix). In YJ, HIGH foldOpt = SKILLED play (rarely fold). The reasoning: folding caps your downside at +1 bogey + lost honey, but showdown realizes −1 to −5 strokes whenever you have any non-trivial equity. Because the loser-bogey rule already caps showdown losses, conceding equity is structurally expensive. Versions before v51 had foldOpt = 0.05, which made AI fold tightly like classic poker — anti-YJ behavior.'
   ));
   // === Aggregate-stroke-play lore — describes the future-target Honey-Stroke
@@ -5608,7 +5622,7 @@ Views.decisiontree = function() {
       '**Fold** — concede the hole. You post +1 bogey on the scorecard, the opponent takes the previously-agreed pot (2 honey at this stage) as honey credit. Cards are NEVER revealed on a fold.'
     ],
     rationale: [
-      'A♠ K♠ is a top-decile starting hand. With 65% equity heads-up against a random hand, **adj** sits well above the bet threshold (foldOpt=0.15, betOpt=0.45 in YJ-tuned profiles).',
+      'A♠ K♠ is a top-decile starting hand. With 65% equity heads-up against a random hand, **adj** sits well above the bet threshold (foldOpt=0.20, betOpt=0.45 in YJ-tuned profiles).',
       'In YJ, foldOpt has **inverted polarity** vs classic poker: high foldOpt = SKILLED play (rarely fold). Reason: folding caps your downside at +1 bogey, but showdown realizes -1 to -5 strokes when you have any equity at all. Conceding equity is structurally expensive.',
       'Don\'t over-bet here. Premium hands extract value at **showdown**, not by forcing folds — a fold caps your reward at par + previously-agreed honey. The richer line is a small bet that gets called, then escalation when the board pairs your kicker.'
     ]
@@ -10418,7 +10432,8 @@ function _exportRunToCSVImpl(snap) {
   // (reqEquity − foldThreshold). Stage-2 EV check (now using v43
   // commitment-escalating fold cost) runs as a backup.
   cfgRow('decision.foldRule', 'pot-odds + EV (v42 base, v51 polarity-corrected)');
-  cfgRow('decision.foldOptSlack', 0.15);
+  cfgRow('decision.foldOptSlack', 0.20);
+  cfgRow('decision.hardFoldFloor', 0.05);
   // v43: pot-elastic streetCap multiplier. effectiveCap = max(progressive,
   // min(globalCap×3, k×agreedTotal)). k=3 default unlocks preflop play and
   // restores overbet pressure on hot pots.
