@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.28-v55";
+const APP_VERSION = "2026.04.28-v56";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1319,6 +1319,17 @@ function setStrokeCap(n) { CurrentStrokeCap = Math.max(1, Math.min(10, (+n) || 3
 // changes don't alter an in-progress game.
 let CurrentLoserBogey = false;
 function setLoserBogey(b) { CurrentLoserBogey = !!b; }
+// v56 BACK-9 OPENER DOUBLING. On the back 9 of any round (hole index ≥ 9),
+// the mandatory starting pot is multiplied by this factor. Default 2 doubles
+// the opener: front 9 stays at 2 honey, back 9 becomes 4 honey. Sunday-back-9
+// pressure baked into structure. Set to 1 to disable. 9-hole bracket matches
+// never reach the back 9, so they stay flat. Playoff holes (any hole >= 9)
+// also get doubled — extra-pressure tiebreakers.
+let CurrentBackNineMultiplier = 2;
+function setBackNineMultiplier(n) {
+  const v = +n;
+  CurrentBackNineMultiplier = (Number.isFinite(v) && v > 0) ? v : 2;
+}
 // DECISION DIVISOR (v39 Path 1): per-decision EV math uses a separate, smaller
 // divisor than end-of-round honey normalization. Decouples in-kernel fold cost
 // from the round-length stroke conversion. The original v23 math used the
@@ -2799,7 +2810,11 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   // tied holes (carry only flows when carryOverEnabled — finals path only).
   // The mandatory 2 prevents check-fests and gives every hole real economic
   // stakes from the start, without requiring a "blind" mechanic.
-  let strokes = 2 + (carryPot || 0);
+  // v56: opener honey is set per hole by playMatch (back-9 doubling). Falls
+  // back to 2 honey if no context is provided (manual play, tests, edge cases).
+  const openerHoney = (gameContext && Number.isFinite(+gameContext.openerHoney))
+    ? +gameContext.openerHoney : 2;
+  let strokes = openerHoney + (carryPot || 0);
   let folded = null;
   const streets = ['preflop','flop','turn','river'];
   // v46 c-bet support: track who took the last aggressive action preflop so
@@ -3076,9 +3091,17 @@ function playMatch(pA, pB, numHoles, opts) {
     }
     updatePlayerHoleStats(pA, r, 'a'); updatePlayerHoleStats(pB, r, 'b');
   };
+  // v56 BACK-9 OPENER. h is the round-internal hole index (0-based). On the
+  // back 9 (h >= 9) the mandatory pot multiplies by CurrentBackNineMultiplier.
+  // 18-hole rounds: holes 10-18 (h=9..17) double. 9-hole bracket matches
+  // never reach h=9, so they stay flat. Playoff holes always count as back 9
+  // (they always start at h >= 9 within the playoff loop logic below).
+  const baseOpener = 2;
+  const back9Mult = +CurrentBackNineMultiplier > 0 ? +CurrentBackNineMultiplier : 1;
   for (let h = 0; h < numHoles; h++) {
     const holeNumber = h + 1;
     const gameContext = buildGameContext(holeNumber);
+    gameContext.openerHoney = baseOpener * (h >= 9 ? back9Mult : 1);
     const r = playHole(pA, pB, dealer, carryEnabled ? carryPot : 0, gameContext);
     applyHole(r);
     dealer = dealer === 'a' ? 'b' : 'a';
@@ -3098,6 +3121,10 @@ function playMatch(pA, pB, numHoles, opts) {
     while (aTotal === bTotal && playoffCount < 30) {
       const holeNumber = numHoles + playoffCount + 1;
       const gameContext = buildGameContext(holeNumber);
+      // v56: playoff/sudden-death holes always run at the back-9 opener level.
+      // They're high-pressure tiebreakers; consistent with the iconic
+      // "extra-holes-on-Sunday-after-the-back-9" golf moment.
+      gameContext.openerHoney = baseOpener * back9Mult;
       const r = playHole(pA, pB, dealer, carryEnabled ? carryPot : 0, gameContext);
       applyHole(r);
       dealer = dealer === 'a' ? 'b' : 'a';
@@ -4664,6 +4691,7 @@ function startSolo(playerName, skill, tier, holes, cap) {
   setDecisionDivisor(LabState && LabState.config && LabState.config.decisionDivisor);
   setHoneyMagnitude(LabState && LabState.config && LabState.config.honeyMagnitude);
   setPotElasticK(LabState && LabState.config && LabState.config.potElasticK);
+  setBackNineMultiplier(LabState && LabState.config && LabState.config.backNineOpenerMultiplier);
   const g = createLocalGame(playerName, aiName, 'solo');
   g.totalHoles = Math.max(1, Math.min(144, +holes || 18));
   g.strokeCap = cap;
@@ -7412,6 +7440,13 @@ const DEFAULT_SIM_CONFIG = {
   // bet sizing, this is the final calibration layer for skilled-player
   // expression in long-format championships.
   honeyMagnitude: 9,
+  // v56 BACK-9 OPENER DOUBLING. On the back 9 of any 18-hole round (hole
+  // index ≥ 9 within the round), the mandatory opening pot multiplies by
+  // this factor. Default 2 doubles: front 9 stays at 2 honey, back 9
+  // becomes 4 honey. Models golf-major Sunday-back-9 pressure. 9-hole
+  // bracket matches stay flat (never reach hole 10). Playoff/sudden-death
+  // holes always run at the doubled rate. Set to 1 to disable.
+  backNineOpenerMultiplier: 2,
   // POT-ELASTIC CAP MULTIPLIER (v43). When > 0, streetCap can exceed the
   // legacy progressive floor proportionally to current pot size. Default 3
   // calibrates: opener=2 → preflop cap = 6 (4 honey of preflop room, was 0);
@@ -8425,6 +8460,7 @@ async function runLabSession(cfg, onProgress) {
   setDecisionDivisor(cfg.decisionDivisor);
   setHoneyMagnitude(cfg.honeyMagnitude);
   setPotElasticK(cfg.potElasticK);
+  setBackNineMultiplier(cfg.backNineOpenerMultiplier);
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -9757,6 +9793,10 @@ function _exportRunToCSVImpl(snap) {
   // impact on the scorecard relative to the round-length default. 1.0 = legacy.
   cfgRow('scoring.honeyMagnitude',
     Number.isFinite(+snapCfg.honeyMagnitude) ? +snapCfg.honeyMagnitude : 1);
+  // v56: back-9 opener doubling. Mandatory pot ×N for back 9 of every 18-hole
+  // round. Default 2 = doubled. 1 = flat (legacy).
+  cfgRow('scoring.backNineOpenerMultiplier',
+    Number.isFinite(+snapCfg.backNineOpenerMultiplier) ? +snapCfg.backNineOpenerMultiplier : 2);
   // v43: commitment-escalating fold cost. Base +1 stroke + floor(agreedTotal/4)
   // escalation. Pot-committed dynamics restored without chip stacks.
   cfgRow('scoring.foldStrokeBase', 1);
@@ -10767,6 +10807,7 @@ async function runSimulator(cfg, onProgress) {
   setDecisionDivisor(cfg.decisionDivisor);
   setHoneyMagnitude(cfg.honeyMagnitude);
   setPotElasticK(cfg.potElasticK);
+  setBackNineMultiplier(cfg.backNineOpenerMultiplier);
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -12618,6 +12659,7 @@ function init() {
   setDecisionDivisor(LabState.config.decisionDivisor);
   setHoneyMagnitude(LabState.config.honeyMagnitude);
   setPotElasticK(LabState.config.potElasticK);
+  setBackNineMultiplier(LabState.config.backNineOpenerMultiplier);
 
   window.addEventListener('hashchange', onHashChange);
   onHashChange();
