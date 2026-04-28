@@ -884,7 +884,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.28-v60";
+const APP_VERSION = "2026.04.28-v66";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1427,17 +1427,18 @@ const WIN_PROB = [0.05, 0.38, 0.72, 0.87, 0.92, 0.96, 0.985, 0.999, 1.0, 1.0];
 // fallback for any code path that doesn't carry context. The actual
 // round-score formula in playMatch / runFinals always reads the dynamic
 // divisor via honeyDivisorFor(numHoles).
-// HONEY MAGNITUDE (v40 Path 2) — scales honey-to-stroke conversion at end of
-// round. Default 1.0 = original behavior (1 stroke = roundLength honey). At
-// 2.0, honey is twice as impactful (1 stroke = roundLength/2 honey), making
-// the honey layer meaningful enough to compete with the scorecard for skill
-// expression. The brief originally claimed honey was the "skilled adjustment
-// layer" but at magnitude=1 a 72-hole event caps skilled honey advantage at
-// ~5 strokes — washed out by a single bad showdown swing of -5..+2.
+// v66 HONEY MAGNITUDE — DEPRECATED, NEUTRALIZED.
+// In v40-v59, honeyMagnitude was a tunable scalar that amplified honey-to-stroke
+// conversion. v66 replaces this with a flat integer divisor table (see
+// honeyDivisorFor) anchored to golf-native 9 (HU 18-hole). The magnitude
+// concept no longer exists. CurrentHoneyMagnitude is pinned at 1 and
+// setHoneyMagnitude is a no-op kept for backward compat with any saved-state
+// or legacy-restore paths. The divisor IS the conversion rate; there is
+// nothing to tune.
 let CurrentHoneyMagnitude = 1;
-function setHoneyMagnitude(n) {
-  const v = +n;
-  CurrentHoneyMagnitude = (Number.isFinite(v) && v > 0) ? v : 1;
+function setHoneyMagnitude(/* n */) {
+  // Intentional no-op (v66). Magnitude scalar removed; divisor table is canonical.
+  CurrentHoneyMagnitude = 1;
 }
 // v55 FIELD-SIZE SCALING — derive sensible field sizes from a target pool
 // size. Returns the field-shape config that scales proportionally with pool
@@ -1491,26 +1492,84 @@ function trueFoldCostBin(cost) {
   return 9;
 }
 
+// v62 EQUITY-BUCKET RESOLUTION — the v44 5-bucket scheme (uniform 0.20 width)
+// hid the action because all interesting fold decisions live in 0.0-0.2. With
+// v59 calibration the actual fold trigger sits at adj ≈ 0.10-0.12, so the
+// 0.20-wide bucket smears the threshold into one aggregated rate. This 7-bucket
+// non-uniform scheme puts resolution where decisions live (0.0-0.2 split into
+// 4 narrow buckets) and keeps coarse buckets above 0.2 where folds are zero.
+const EQUITY_BUCKET_LABELS = ['0.00-0.05','0.05-0.10','0.10-0.15','0.15-0.20','0.20-0.40','0.40-0.70','0.70-1.00'];
+function equityBucketIndex(adj) {
+  if (!Number.isFinite(adj)) return -1;
+  if (adj < 0.05) return 0;
+  if (adj < 0.10) return 1;
+  if (adj < 0.15) return 2;
+  if (adj < 0.20) return 3;
+  if (adj < 0.40) return 4;
+  if (adj < 0.70) return 5;
+  return 6;
+}
+function newEquityBucketActions() {
+  return EQUITY_BUCKET_LABELS.map(() => ({ check:0, bet:0, call:0, raise:0, fold:0 }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BET-TIER VOCABULARY (v64+)
+//
+// WSOP wagering diversity comes from named SIZING TIERS, each communicating a
+// different strategic intention: min-raise, 3-bet, 4-bet, shove. The dollar
+// amounts are derivative; the tier label is what players reason about.
+//
+// YJ adopts the same primitive in pot-fraction units. Every proposal classifies
+// into one of five tiers based on its size relative to the current pot and the
+// street's cap ceiling:
+//
+//   Probe    — pot grows by < 50%       (information bet, cheap test)
+//   Press    — pot grows by 50% to 100% (standard sizing for moderate edges)
+//   Pot      — pot grows by 100% to 200% (full pot commitment)
+//   Polarize — pot grows by > 200% but < cap (nuts-or-bluff polarization)
+//   Shove    — at or near the street's cap ceiling
+//
+// This vocabulary gives YJ the same strategic lexicon as poker without
+// changing the underlying honey unit or the cap structure. Bayesian bluff
+// reads, sizing tells, and AI decision profiles can all key off the tier
+// label rather than raw honey numbers.
+//
+// Returns one of: 'probe', 'press', 'pot', 'polarize', 'shove'
+const BET_TIER_LABELS = ['probe', 'press', 'pot', 'polarize', 'shove'];
+function betTierForProposal(currentAgreed, proposedTotal, streetCap) {
+  const cap = +streetCap || 0;
+  const cur = Math.max(1, +currentAgreed || 1);
+  const prop = +proposedTotal || cur;
+  if (cap > 0 && prop >= cap - 0.01) return 'shove';
+  const growth = (prop - cur) / cur;
+  if (growth < 0.50) return 'probe';
+  if (growth < 1.00) return 'press';
+  if (growth < 2.00) return 'pot';
+  return 'polarize';
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// v66 DIVINE CALIBRATION — flat integer divisors anchored to golf-native 9.
+// The 18-hole HU divisor is 9 (one side of a round). Major Putt cap = 9 = exactly
+// one stroke per max-pot win. Self-similar at every level. No magnitude scalar:
+// the divisor IS the conversion rate. Per-pair stroke variance scales naturally
+// with round length (longer formats suppress per-honey impact).
+//
+//   1-hole quick match  → divisor 1   (single-hand drama, full impact)
+//   9-hole bracket      → divisor 4   (compressed for short-format drama)
+//   18-hole round       → divisor 9   (golf-native anchor — half-round unit)
+//   72-hole final       → divisor 36  (4× anchor — long format suppresses honey)
+//
+// Replaces the v40-v59 honeyMagnitude-scaled divisor with a hardcoded flat table.
+// CurrentHoneyMagnitude is retained as a no-op (always 1) for backward compat
+// with any code that still reads it; it has zero effect on the divisor.
 function honeyDivisorFor(numHoles) {
   const n = +numHoles || 0;
-  let base;
-  if (n >= 72) base = 72;
-  else if (n >= 18) base = 18;
-  else if (n >= 9) base = 9;
-  else base = 1;
-  // Apply honey-magnitude scaling. Higher magnitude → smaller divisor → honey
-  // is worth more strokes per unit. Both end-of-round scoring and decideFor's
-  // EV math read the divisor through this function (or its mirrored fallback),
-  // so player perception and actual scoring stay aligned.
-  const mult = (CurrentHoneyMagnitude > 0) ? CurrentHoneyMagnitude : 1;
-  // v52 DIVISOR FLOOR: clamp the returned divisor to a minimum of 4 so short
-  // events at high magnitude don't collapse into honey-dominated scoring.
-  // Without this, mag=9 + 9-hole bracket = divisor 1, meaning 1 honey = 1
-  // stroke and a 30-honey pot is worth 30 strokes — completely breaking
-  // bracket play. With the floor, bracket/sudden-death events cap at
-  // 4 honey = 1 stroke regardless of magnitude. 72-hole championships still
-  // see the full magnitude effect (mag=9 → divisor=8).
-  return Math.max(4, base / mult);
+  if (n >= 72) return 36;
+  if (n >= 18) return 9;
+  if (n >= 9)  return 4;
+  return 1;
 }
 // honeyNormalizationDivisor = 72 (4×18, like 4 rounds of golf / majors).
 // Golf dominates; honey is the light smoothing drizzle.
@@ -1849,6 +1908,70 @@ function golfScoreFromHandValue(hv) {
   // High Card
   return (k1 >= 11 ? 1 : 2);                  // High Card: J-high+ premium
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROBABILITY-CALIBRATED SHOWDOWN MATRIX (v64+)
+//
+// The legacy golfScoreFromHandValue is a pure 1-arg function that scores a hand
+// in isolation. For the modern probability-grounded scoring layer we evaluate
+// the entire heads-up SHOWDOWN FRAME — both hands together — and produce the
+// pair (winner_score, loser_score) that best reflects the rarity, the gap,
+// and the dramatic content of the specific frame.
+//
+// The matrix preserves the legacy 13-class output as the BASE, then layers two
+// frame-aware adjustments on top:
+//
+//   1. "Respected loss" — under Yellow Jacket variant, a loser whose hand class
+//      is a straight or better posts their own hand-class score instead of the
+//      flat +1 bogey. The bogey rule still fires for the vast majority of
+//      losses (the modal pair-vs-high-card / pair-vs-pair frame), but a flush
+//      losing to a full house, or a straight losing to a flush, posts a
+//      respectable −1 or −2 instead of the flat +1. This matches the natural
+//      golf feeling that "you played a real hand, you don't deserve a bogey."
+//
+//   2. "Cooler bonus" — when BOTH hands are full house or better and the gap
+//      between them is narrow (set-over-set, full-over-full, quads-over-quads),
+//      the winner gets an additional −1 stroke. This rewards the rare frames
+//      where two strong hands collide. Frequency: under 0.05% of showdowns.
+//
+// Both adjustments preserve integer per-hole scoring (no decimals on the
+// scorecard) and keep the score range bounded (−6..+2 worst case for cooler
+// winner; −5..+2 for everyone else).
+//
+// Behind cfg.scoring.useShowdownMatrix flag (default: true). When false, the
+// legacy single-arg scoring is used (preserves v59 calibration for A/B sweeps).
+//
+// Returns: { winner, loser }
+function golfScoresFromShowdown(winnerHv, loserHv, useLoserBogey) {
+  const wCat = winnerHv >>> 24;
+  const lCat = loserHv >>> 24;
+  const winnerBase = golfScoreFromHandValue(winnerHv);
+  const loserBase  = golfScoreFromHandValue(loserHv);
+
+  let winner = winnerBase;
+  let loser;
+
+  if (useLoserBogey) {
+    // Yellow Jacket variant default: loser posts +1 bogey UNLESS they had a
+    // respected hand (straight or better, category 4+). Respected losses
+    // post the loser's own hand-class score — softer than the flat bogey.
+    loser = (lCat >= 4) ? loserBase : 1;
+  } else {
+    // Bumblebee variant: each player posts own hand-class score, always.
+    loser = loserBase;
+  }
+
+  // Cooler bonus: both hands at full house (cat 6) or better AND gap ≤ 1
+  // category. Awards an additional −1 stroke to the winner. Frequency floor:
+  // requires both players to have ≥ full house simultaneously, which is well
+  // under 0.1% of showdowns. The bonus floors at −6 to keep variance bounded.
+  if (wCat >= 6 && lCat >= 6 && (wCat - lCat) <= 1) {
+    winner = Math.max(-6, winner - 1);
+  }
+
+  return { winner: winner, loser: loser };
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const PREFLOP_EQUITY = {
   'AA':0.8559,'KK':0.8293,'QQ':0.7946,'JJ':0.7785,'TT':0.7478,'99':0.7267,'88':0.6898,'77':0.6619,'66':0.6338,'55':0.6007,'44':0.5685,'33':0.5444,'22':0.5082,
@@ -2518,8 +2641,8 @@ function sampleTargetSkill(cfg) {
 //   EV_call(a,L) = (1−a)(1 + L/d) − a(L/d)
 //   Break-even   a* = (L − T) / (d + 2L)
 //
-// At decisionDivisor=9, T=2, L=4:  a* = 2/17 ≈ 11.8%
-// At round-end div=14.4 (mag=5),  a* = 2/22.4 ≈ 8.9%
+// At decisionDivisor=9, T=2, L=4:  a* = 2/17 ≈ 11.8%   (v66 18-hole HU)
+// At decisionDivisor=36, T=2, L=4: a* = 2/44 ≈ 4.5%    (v66 72-hole final)
 //
 // So YJ-optimal is "fold only when equity < 8-12%" — far below classic poker's
 // ~33% pot-odds threshold. The fold rule fires when adj < reqEquity − slack,
@@ -2918,13 +3041,32 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   //   true  ("Bogey Loss"): winner scores own hand, loser posts +1 bogey
   //          regardless of hand. Mirrors the fold rule for non-winners.
   // Tie path above is unaffected (both score 0 par either way).
+  //
+  // v64: When cfg.scoring.useShowdownMatrix is enabled (default), per-hole
+  // scoring is computed via golfScoresFromShowdown — the probability-calibrated
+  // frame-aware function that adds two adjustments to the legacy class-based
+  // base: respected-loss (loser posts own hand if they had a straight+) and
+  // cooler bonus (winner gets −1 extra when both have full house+ in a tight
+  // gap). When false, falls back to legacy single-arg golfScoreFromHandValue.
   let aScore, bScore;
-  if (CurrentLoserBogey) {
-    if (cmp > 0) { aScore = golfScoreFromHandValue(aH); bScore = 1; }
-    else         { bScore = golfScoreFromHandValue(bH); aScore = 1; }
+  const scoringCfg = (typeof LabState !== 'undefined' && LabState.config && LabState.config.scoring) || {};
+  const useMatrix = scoringCfg.useShowdownMatrix !== false;
+  if (useMatrix) {
+    if (cmp > 0) {
+      const r = golfScoresFromShowdown(aH, bH, CurrentLoserBogey);
+      aScore = r.winner; bScore = r.loser;
+    } else {
+      const r = golfScoresFromShowdown(bH, aH, CurrentLoserBogey);
+      bScore = r.winner; aScore = r.loser;
+    }
   } else {
-    aScore = golfScoreFromHandValue(aH);
-    bScore = golfScoreFromHandValue(bH);
+    if (CurrentLoserBogey) {
+      if (cmp > 0) { aScore = golfScoreFromHandValue(aH); bScore = 1; }
+      else         { bScore = golfScoreFromHandValue(bH); aScore = 1; }
+    } else {
+      aScore = golfScoreFromHandValue(aH);
+      bScore = golfScoreFromHandValue(bH);
+    }
   }
   const aHoneyCredit = cmp > 0 ? strokes : 0;
   const bHoneyCredit = cmp > 0 ? 0 : strokes;
@@ -4280,10 +4422,21 @@ Views.codex = function() {
   view.appendChild(intro);
 
   // ---- The Honey-Stroke Scoring Law ----
+  // Section 1 is the long-form summary. The Rulebook is the canonical source
+  // for every per-rule wording (mandatory pot, agreed-total wagering, fold
+  // rule, tied-hole carry, stroke cap, variant law). This section gives the
+  // reader a complete mental model and the hand→score reference, then points
+  // to the Rulebook for the rule cards themselves.
   const law = section('1 · The Honey-Stroke Scoring Law',
-    p('Every hole of the Yellow Jacket Tour is a single hand of heads-up Texas Hold\'em with two layers of consequences:'),
-    h3('Layer 1: The Scorecard'),
-    p('Your hand category at showdown sets a bounded golf score for the hole. The mapping is fixed and well-known:'),
+    p('Every hole of the Yellow Jacket Tour is a single hand of heads-up Texas Hold\'em scored onto a golf scorecard. Two ledgers run in parallel all round: a SCORECARD (bounded integer −5..+2 from your hand class at showdown, or +1 bogey on a fold/loss, or 0 par on a tie) and a HONEY ledger (raw integer credits equal to the agreed pot won). At round end, total net honey is divided by the round-length divisor exactly once and subtracted from the total scorecard: finalRoundScore = totalGolfScorecard − (netHoney / divisor). Lower total wins.'),
+    p('The Rulebook is the canonical source for every per-rule wording — mandatory opener, agreed-total wagering, fold mechanics, tied-hole carry, per-event stroke caps, variant law. This section provides the long-form mental model and the hand→score reference; visit the Rulebook for the precise rule cards.'),
+
+    h3('Honey is the per-hole wager unit — closer to a skin than a chip'),
+    p('Honey is the Yellow Jacket Tour\'s per-hole wager unit. It is integer-valued, indivisible, and zero-sum: at hole resolution, the agreed-total honey transfers to the winner (or rolls forward on a tie). Honey is NOT a personal stack that depletes — there is no draw-from-pile mechanic, no in-round depletion, and no in-round bust-out. Both players can wager up to the per-event cap on every hole regardless of how the round has gone. The closer analog: honey is like a SKIN in skins golf (a per-hole wager unit, not a stack), or a BIG-BLIND-MULTIPLE in poker (a unit of measure, not an allocation).'),
+    p('WHERE YJ DIFFERS FROM WSOP: WSOP chips function as a stack you draw from; running out eliminates you mid-tournament. YJ has no mid-round elimination — the cut line and bracket-match loss are golf\'s structural elimination points (36-hole cut, 54-hole cut, match end), scheduled boundaries rather than resource exhaustion. The CASH architecture matches WSOP exactly (buy-in funds prize pool, finish position determines payout); the in-event wagering primitive is golf-native (per-hole skins via honey) rather than poker-native (depleting chip stacks).'),
+
+    h3('The Scorecard — hand category at showdown sets the per-hole golf score'),
+    p('Each hand class maps to a fixed bounded golf score (range −5..+2). The mapping is the same in both variants. The probability-calibrated showdown matrix (v64+) layers two frame-aware adjustments on top of this base — see the Rulebook for the full specification.'),
     tbl(
       ['Hand category', 'Golf name', 'Score'],
       [
@@ -4302,36 +4455,24 @@ Views.codex = function() {
         ['High Card (weak)', 'Double Bogey', '+2'],
       ]
     ),
-    h3('Layer 2: The Honey Pot — Agreed-Total Wagering'),
-    p('Every hole begins with a mandatory starting pot of 2 honey. There are no blinds. From there, betting is by AGREED TOTAL, not by matched chips: a "bet" or "raise" is a proposal to set a NEW agreed pot size for the hole. A "call" is acceptance of the current proposal — the pot now stands at that level. There is no summing, no doubling, no matched contributions. The pot is always the LAST AGREED TOTAL.'),
-    p('Example: hole opens at 2. You raise to 5. Opponent calls — pot is now 5 (not 7, not 10). On the flop you raise to 9. Opponent calls — pot is now 9. River check-check — pot stays at 9. Showdown winner takes 9 honey.'),
-    h3('Layer 3: Folds — Lose The Previous Agreement, Take One Bogey'),
-    p('When you fold to a proposal, you lose ONLY the PREVIOUSLY AGREED total in honey (the level both players had agreed to before the new proposal). You also take a +1 bogey on the golf scorecard. The non-folder takes 0 (par) on the golf scorecard AND receives the previously agreed total in honey.'),
-    p('Example: pot is agreed at 5. Opponent raises to 8. You fold. You lose 5 honey to opponent and add +1 bogey to your scorecard. Opponent gains 5 honey and takes par (0). The proposal of 8 is moot — only the prior agreed total of 5 transfers. This is the same fold rule on every street; there is no street-based penalty table.'),
-    h3('Per-Round Score (dynamic by round length)'),
-    p('finalRoundScore = totalGolfScorecard − (netHoney / divisor). The divisor matches the round length:'),
+
+    h3('The Honey Pot — agreed-total wagering, mandatory openers'),
+    p('Every hole opens with a mandatory pot already in place: 2 honey on the front 9 (holes 1–9 of any 18-hole round) and ' + (2 * (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2)) + ' honey on the back 9 (holes 10–18) at the v59 default backNineOpenerMultiplier = ' + (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2) + '. From there, all wagering is by AGREED TOTAL: a bet or raise PROPOSES a new total pot size for the hole; a call ACCEPTS that proposal. The pot is always exactly the most recently agreed total — never a sum of contributions, never doubled, never matched. See the Rulebook "Agreed-total wagering" card for the worked example and full action menu.'),
+
+    h3('Folds — concession poker, no card reveal'),
+    p('Folding to a proposal forfeits the PREVIOUSLY agreed total in honey (the value both players had already accepted, NOT the new unaccepted proposal) and posts +1 bogey on the scorecard. The non-folder takes 0 par and gains the previously agreed pot in honey. Cards are NEVER revealed on a fold. The fold rule is uniform across every street; what makes late-street folds more valuable is that the previously agreed pot has had more chances to climb.'),
+
+    h3('Per-round score — flat divisor table anchored to golf-native 9'),
+    p('The round-length divisor maps round size to scorecard normalization. v66 uses a flat integer table: 1-hole quick match → 1; 9-hole bracket → 4; 18-hole round → **9** (golf-native anchor — one side of a round); 72-hole final → 36. There is no magnitude scalar. The divisor IS the conversion rate.'),
+    p('The Major Putt cap of ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 9) + ' honey aligns exactly with the 18-hole divisor of 9: a max-pot Major win contributes exactly one stroke to the round score. Self-similar at every level. Main finals at 2× anchor (cap ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 18) + ' honey, divisor 36) preserves the 0.5 stroke per max-pot ratio — long format suppresses per-honey impact, mirroring how PGA majors smooth single-hand variance across 72 holes.'),
+
+    h3('Variant — Yellow Jacket vs Bumblebee'),
+    p('The two variants share every rule EXCEPT how a decisive-showdown loser is scored. This is the only difference.'),
     ul([
-      '72-hole finals → divisor 72',
-      '18-hole rounds → divisor 18',
-      '9-hole bracket matches → divisor 9',
-      '1-hole quick matches → divisor 1 (full-value honey)',
-    ]),
-    p('Honey is always the light drizzle on top of the dominant golf scorecard. Lower total wins.'),
-    h3('Permanent Invariants'),
-    ul([
-      'Mandatory starting pot = 2 honey per hole. Every hole opens with the pot already at 2 honey before any betting decision is made. There are no blinds or antes.',
-      'Honey divisor scales by round length: 72-hole rounds use divisor 72, 18-hole rounds use 18, 9-hole rounds use 9, 1-hole quick matches use 1 (full-value honey). The divisor is set by the round\'s total hole count, not by the event tier.',
-      'Last-agreed-total wagering: a bet or raise sets a NEW agreed total pot size; a call accepts that total. The pot is always exactly the most recently agreed total — never a sum of contributions, never doubled, never matched.',
-      'Tied-hole carry: when a hole ends in a tied showdown (both players make the same hand value), both players score 0 (par) for the hole and the entire pot rolls forward as the starting honey for the NEXT hole in the same match. Carry compounds across consecutive ties until one player wins a decisive hole. Carries stay within a single match.',
-      'Uniform fold rule on every street: the folder loses the previously agreed pot in honey and posts +1 bogey on the scorecard. The non-folder takes 0 (par) on the scorecard and gains the previously agreed pot in honey. There is no street-based fold-penalty table.',
-    ]),
-    h3('Variant: Yellow Jacket vs Bumblebee'),
-    p('The decisive-showdown loser is scored differently between the two variants. This is the ONLY rule that differs.'),
-    ul([
-      'YELLOW JACKET (competitive tour): the decisive-showdown loser posts a fixed +1 bogey regardless of hand strength. Mirrors the fold rule. Sharper skill expression; champion scores typically +12 to +28.',
-      'BUMBLEBEE (casual league): the decisive-showdown loser scores their own hand\'s golf value (-5..+2) — flush-loser still posts -1 birdie. Preserves "your hand always counts" texture; champion scores typically -10 to -18.',
-      'Both variants share: per-hole engine, mandatory pot, agreed-total wagering, stroke caps, fold rule, tie carry, divisor, tournament formats, field selection, payout structure, economics. Only the loser-score differs.',
-      'The variant choice is not a calibration knob; it\'s a design dial between "competitive sharpness" and "casual texture." Pick the one that matches your audience.',
+      'YELLOW JACKET (competitive tour): the decisive-showdown loser posts a fixed +1 bogey regardless of hand strength. Mirrors the fold rule for any non-winning resolution. Sharper skill expression; champion scores typically +12 to +28.',
+      'BUMBLEBEE (casual league): the decisive-showdown loser scores their own hand\'s golf value (−5..+2) — flush-loser still posts −1 birdie. Preserves "your hand always counts" texture; champion scores typically −10 to −18 (golf-realistic below-par totals).',
+      'Both variants share: per-hole engine, mandatory pot (front-9 and back-9 openers), agreed-total wagering, stroke caps with progressive unlock, the uniform fold rule, tied-hole carry, the round-length divisor and magnitude scalar, tournament formats, field selection, payout structure, and economics. Only the decisive-showdown loser score differs.',
+      'Variant is not a calibration knob; it is a design dial between "competitive sharpness" and "casual texture." Pick the one that matches your audience.',
     ])
   );
   view.appendChild(law);
@@ -4363,10 +4504,10 @@ Views.codex = function() {
       'WEAK HANDS HAVE ASYMMETRIC DOWNSIDE PROTECTION. Folding a weak high card costs you +1 bogey. Reaching showdown with the same hand and losing also costs you +1 (Yellow Jacket) or up to +2 (Bumblebee, your own weak hand value). Folding can be the cheaper escape route — especially in Yellow Jacket, where the showdown loss already caps at +1. Skilled weak-hand play looks like: fold to large bets when the previously-agreed pot is small, call to large bets when the previously-agreed pot is already large (the saving from folding shrinks as the agreed total grows).',
       'IMPLICATION FOR AGGRESSION. Classic-poker intuition says "premium hand → bet big → opponent folds → you win the pot." In Yellow Jacket, that pattern caps your reward at the previously-agreed honey + 0 par. The richer reward path is "premium hand → bet to a level the opponent CALLS → showdown → realize -3 to -5 plus the agreed honey." Skilled players bet for value (extraction), not for fold equity (denial).',
     ]),
-    h3('Per-event stroke caps and progressive street caps'),
-    p('Each event sets a maximum agreed pot size for the hole — the stroke cap. Default per-event caps: Regular ' + (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6) + ' honey, Major ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10) + ' honey, Main early rounds ' + (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' honey, Main 72-hole finals ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10) + ' honey. Within each hole, the cap unlocks progressively by street: Tea Box 25%, Drive 50%, Hazard 75%, Putt 100%. So in a Major (cap 10), a Tea Box bet cannot propose more than 3 honey total; by the Putt the full 10 is available. This forces escalation to feel like real no-limit poker rather than a single-cap free-for-all.'),
-    h3('Tied-hole carry arithmetic'),
-    p('When a hole ties at showdown, the entire pot rolls into the NEXT hole as starting honey. The next hole opens at (2 mandatory + carry) instead of just 2. Multiple consecutive ties stack: tie-of-tie produces a starting pot equal to the prior tied pot. Whoever wins the next decisive hole sweeps the entire stack at once. If you suspect a tied river is coming, a small bet that builds a small pot may be worth more than a large bet that you fold to — because the small carry survives into the next hole, while a fold loses the agreed total outright.'),
+    h3('Per-event stroke caps — strategic implications'),
+    p('Stroke caps and the 25/50/75/100 progressive street unlock are documented in the Rulebook ("Per-event stroke caps and progressive street unlock") with worked examples for Regular and Major caps. Strategic note: the progressive unlock means committed value bets must be staged across streets — you cannot reach a Major\'s 10-honey ceiling on Tea Box. This forces information-revealing escalation, which is one of the main skill levers in YJ. Watch how an opponent paces their Tea-Box / Drive proposals: aggressive early proposals at the unlock ceiling signal commitment to a strong hand; passive early streets followed by a Putt-cap shove often signals a missed draw turning bluff.'),
+    h3('Tied-hole carry — strategic implications'),
+    p('Tied-hole stacking math is documented in the Rulebook ("Tied holes carry forward — and stack across consecutive ties") with a three-hole worked example. Strategic implications: (1) tied holes are a free option for whoever wins the NEXT decisive hole, not for the player who built the prior pot. With suspected board-runout ties (paired boards, four-card straights/flushes on the board), a small bet that survives a tie outperforms a large bet that gets folded to — the small carry compounds; the fold loses the agreed total outright. (2) After two or more consecutive ties, the next decisive hole becomes a high-leverage spot — both players are now competing for an inflated stack, so equity edges that would normally call for moderate bets justify aggressive proposals.'),
     h3('Major qualifier path'),
     p('Top finishers in each major earn a free Main Event seat (the satellite mechanic). Current defaults: top ' + (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 28) + ' qualifiers per major × ' + (cfg.majors || 4) + ' majors = up to ' + ((cfg.majors || 4) * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 28)) + ' free seats per Main. Each seat is worth ' + fmtMoney(cfg.buyInMain || 10000) + ' (the direct buy-in price). Deep major performance compounds — a single major run can pay for a Main seat.'),
     h3('Long-run skill signal'),
@@ -4388,7 +4529,7 @@ Views.codex = function() {
       ['Event', 'Buy-in', 'Field size'],
       [
         ['Regular',    fmtMoney(cfg.buyInRegular != null ? cfg.buyInRegular : 100), fmtNum(cfg.regularField != null ? cfg.regularField : 512)],
-        ['Major',      fmtMoney(cfg.buyInMajor   != null ? cfg.buyInMajor   : 1000), fmtNum(cfg.majorField   != null ? cfg.majorField   : 1024)],
+        ['Major',      fmtMoney(cfg.buyInMajor   != null ? cfg.buyInMajor   : 1000), fmtNum(cfg.majorField   != null ? cfg.majorField   : 256)],
         ['Main Event', fmtMoney(cfg.buyInMain    != null ? cfg.buyInMain    : 10000), fmtNum(cfg.mainField    != null ? cfg.mainField    : 128)],
       ]
     ),
@@ -4410,17 +4551,18 @@ Views.codex = function() {
 
   // ---- The Phases of a Hole ----
   const phases = section('6 · The Phases of a Hole',
-    p('Every hole has five named phases. Internal logic still uses standard poker street names; the display is themed throughout the UI.'),
+    p('Every hole has five named phases. Internal logic still uses standard poker street names; the display is themed throughout the UI. Stroke-cap unlocks at each phase are documented in the Rulebook ("Per-event stroke caps and progressive street unlock").'),
     tbl(
-      ['Phase', 'Poker street', 'What happens'],
+      ['Phase', 'Poker street', 'What happens', 'Stroke-cap unlock'],
       [
-        ['Tea Box', 'Pre-flop', 'Hole cards dealt; blind posted; first round of betting.'],
-        ['Drive', 'Flop', 'Three community cards revealed; second round of betting.'],
-        ['Hazard', 'Turn', 'Fourth community card; third round of betting.'],
-        ['Putt', 'River', 'Fifth and final community card; final round of betting.'],
-        ['The Cup', 'Showdown', 'Cards revealed; hole resolves; honey + scorecard credited.'],
+        ['Tea Box', 'Pre-flop', 'Hole cards dealt; mandatory opener already posted (2 honey on holes 1–9, ' + (2 * (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2)) + ' honey on holes 10–18 of an 18-hole round); first round of betting.', '25%'],
+        ['Drive', 'Flop', 'Three community cards revealed; second round of betting.', '50%'],
+        ['Hazard', 'Turn', 'Fourth community card; third round of betting.', '75%'],
+        ['Putt', 'River', 'Fifth and final community card; final round of betting.', '100%'],
+        ['The Cup', 'Showdown', 'Cards revealed (only on a decisive showdown — folds never reveal cards); hole resolves; honey + scorecard credited per the variant rule (Yellow Jacket: loser +1 bogey; Bumblebee: loser scores own hand).', '—'],
       ]
-    )
+    ),
+    p('For caps of 3 or less the progressive unlock is disabled and the full cap is available from Tea Box (a 25% step would round to <1 honey and break wagerability).')
   );
   view.appendChild(phases);
 
@@ -5044,19 +5186,76 @@ Views.rules = function() {
     return d;
   }
   core.appendChild(rule('The lore — honey, the hive, and the sting',
-    'Every wager pours a drop of honey into the pot. Win the hand and the honey is yours; tie and it carries forward, sweetening the next pot. A bluff is a sting: a yellow jacket\'s feint that dares the opponent to stay. A successful sting takes the honey untouched. A called sting draws blood from your own stack. Bumble bees gather quietly; yellow jackets sting to claim the hive.'
+    'Every wager pours a drop of honey into the pot. Win the hand and the honey is yours; tie and it carries forward, sweetening the next pot. A bluff is a sting: a yellow jacket\'s feint that dares the opponent to stay. A successful sting takes the honey untouched. A called sting draws blood from your own stack. Bumble bees gather quietly; yellow jackets sting to claim the hive. (See Codex Section 5 for the full lore including Legendary Under-Par Doubles.)'
   ));
-  core.appendChild(rule('Per-round score (dynamic divisor by round length)',
-    'finalRoundScore = totalGolfScorecard − (netHoney / divisor). The divisor matches the round length: 72-hole rounds use 72, 18-hole rounds use 18, 9-hole bracket matches use 9, and 1-hole quick matches use 1 (full-value honey). The divisor is set by the round\'s hole count — not by the event tier — so a 4-round 72-hole aggregate event normalizes honey across all 72 holes at divisor 72, while a 9-hole bracket match normalizes at divisor 9. Lower total wins the round.'
+  core.appendChild(rule('Honey is the per-hole wager unit — closer to a skin than a chip',
+    'WHAT HONEY IS. Honey is the Yellow Jacket Tour\'s per-hole wager unit. It is integer-valued, indivisible, and zero-sum: at hole resolution, the agreed-total honey transfers from loser to winner (or rolls forward on a tie). Honey accumulates into a per-round ledger that converts to scorecard strokes at round end via the divisor. ' +
+    'HONEY IS NOT A CHIP STACK. There is no personal honey stack that depletes. Players never "have" honey before a hole opens — the hole opens with the mandatory opener already in the pot, and players agree on additional wager from there. There is no draw-from-personal-pile mechanic, no in-round depletion, and consequently NO IN-ROUND BUST-OUT. Both players can wager up to the per-event cap on every hole regardless of how the round has gone so far. The closer analog: honey is like a SKIN in skins golf — a per-hole wager unit, not a stack — or a BIG-BLIND-MULTIPLE in poker, a unit of measure rather than a personal allocation. ' +
+    'WHY HONEY DIFFERS FROM WSOP CHIPS. WSOP chips function as a stack you draw from; running out of chips eliminates you mid-tournament. YJ has no mid-round elimination — the cut line and bracket-match-loss are golf\'s structural elimination points, scheduled at 36 holes / 54 holes / match end, not triggered by running out of any in-game resource. Honey is the wagering primitive; it never plays the role of a depleting stack. ' +
+    'HONEY IS NOT CASH. Honey has no monetary value outside the event. It cannot be exchanged for dollars, transferred between events, or carried home. The buy-in funds the cash prize pool; honey only tracks per-hole wagering during play. The two layers connect at event boundaries (cash buy-in to enter, cash prize at finish) — never inside a hole.'
   ));
-  core.appendChild(rule('Mandatory starting pot (no blinds, no antes)',
-    'Every hole opens with the agreed pot already set to 2 honey before any betting decision is made. Both players are equally committed to that 2 from the first action — there are no blinds, no antes, no positional cost. If the hole carries forward from a prior tied hole, the carry adds to that 2 (so a hole following a 6-honey tie opens at 2 + 6 = 8 honey).'
+  core.appendChild(rule('Bankroll, buy-ins, and prize flow — cash architecture outside the event',
+    'BANKROLL. A player\'s bankroll is their personal pool of cash (or branded YJ credit) used to fund event buy-ins. The bankroll lives entirely outside any individual event — it grows when the player cashes; it shrinks when buy-ins are paid. Bankroll persists across the entire career. ' +
+    'BUY-IN. Each event has a fixed cash buy-in: Regular ' + fmtMoney(cfg.buyInRegular || 100) + ', Major ' + fmtMoney(cfg.buyInMajor || 1000) + ', Main ' + fmtMoney(cfg.buyInMain || 10000) + ' at v59 defaults. Buy-ins are paid from bankroll at registration. The buy-in flows into the event\'s gross prize pool minus rake (' + (((cfg.rakePercent || 0.03) * 100).toFixed(1)) + '% by default). Champion exemptions and satellite qualifiers may waive the cash buy-in but still seat a player in the event. ' +
+    'IN-EVENT PLAY. Once seated, the player plays the event in honey only. No cash changes hands during play. Honey wagering across all holes is purely zero-sum within the event. Players are NOT eliminated by running out of any in-game resource — eliminations happen at structural cut-line and match-loss boundaries (36-hole cut, 54-hole cut, bracket match loss). ' +
+    'PRIZE PAYOUT. Top 15% of the field cashes (floor 2, cap 64). Each finishing position earns a fixed share of the post-rake prize pool, decaying geometrically across positions (default decay factor ' + (cfg.payoutDecay || 0.74) + '). Cash prize lands in bankroll at event end. Honey ledger has no role in determining cash payout — only the finish position derived from final round score matters. ' +
+    'WHY THE CASH LAYER MIRRORS WSOP. WSOP\'s cash architecture (buy-in funds prize pool, finish position determines payout) is identical to YJ\'s. Where YJ differs is in what happens DURING the event: WSOP uses chip stacks that can deplete to zero (bust-out); YJ uses per-hole wager units (honey) and structural cuts (golf-native elimination). The CASH loop is preserved; the in-event wagering primitive differs.'
   ));
-  core.appendChild(rule('Agreed-total wagering (NOT matched contributions)',
-    'A bet or raise PROPOSES a new total pot size for the hole; a call ACCEPTS that proposal. The pot is always exactly the most recently agreed total — never a sum of contributions. Example: hole opens at 2. You raise to 5. Opponent calls — pot is now 5 (not 7, not 10). On the flop you raise to 9. Opponent calls — pot is 9. River check-check — pot stays at 9. There is no doubling, no matching, no per-player commitment tracking.'
+  core.appendChild(rule('Per-round score — two ledgers, one normalization at round end',
+    'TWO LEDGERS, KEPT SEPARATE ALL ROUND. Every hole produces two outputs stored independently: ' +
+    '(a) a SCORECARD entry — a bounded integer in the range −5..+2 from your hand class at showdown, or +1 bogey on a fold or YJ-variant decisive loss, or 0 par on a tie or as the non-folder; ' +
+    'and (b) a HONEY entry — an integer credit equal to the agreed pot won (or 0 if you lost or folded). Honey is NEVER converted to scorecard strokes mid-round. Both ledgers accumulate across every hole of the round in their own units. ' +
+    'ONE NORMALIZATION AT ROUND END. When the round closes, total net honey across all holes is divided by the round-length divisor exactly once and subtracted from the total scorecard: finalRoundScore = totalGolfScorecard − (netHoney / divisor). Lower total wins the round. ' +
+    'V66 DIVISOR TABLE — FLAT INTEGERS, ANCHORED TO GOLF-NATIVE 9. The 18-hole HU divisor is 9 (one side of a round). Every other divisor is a clean integer: ' +
+    '1-hole quick match → 1; 9-hole bracket → 4; 18-hole round → 9; 72-hole final → 36. ' +
+    'There is no magnitude scalar; the divisor IS the conversion rate. A Major Putt cap of 9 honey aligns with the divisor exactly — a max-pot Major win contributes one stroke to the round score. Self-similar throughout. ' +
+    'WHY THIS DESIGN. Holding raw honey until round end keeps every per-hole scorecard entry an integer (no fractional strokes mid-round). The divisor 9 anchor matches golf\'s natural unit (holes-per-side); long rounds (72-hole at divisor 36) suppress per-honey impact, mirroring how PGA majors smooth single-hand variance across long format. Short rounds (1-hole at divisor 1) amplify drama for sudden-death playoffs.'
   ));
-  core.appendChild(rule('Tied holes carry forward',
-    'When both players reach showdown with the same hand value, both score 0 (par) on the scorecard and the entire pot rolls forward as the starting honey for the NEXT hole in the same match. The next hole opens at (2 mandatory + carry) honey. Multiple consecutive ties stack: tie-of-tie compounds the carry. Whichever player wins the next decisive hole sweeps the full accumulated stack as a honey credit. Carries stay within a single match — they do not persist across match boundaries.'
+  core.appendChild(rule('Mandatory starting pot (no blinds, no antes; back-9 doubling)',
+    'FRONT 9 (holes 1–9 of any 18-hole round): every hole opens with the agreed pot already set to 2 honey before any betting decision is made. Both players are equally committed to that 2 from the first action — there are no blinds, no antes, no positional cost. ' +
+    'BACK 9 (holes 10–18 of any 18-hole round): the mandatory opener doubles. With the v59 default backNineOpenerMultiplier = ' + (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2) + ', the back-9 opener is 2 × ' + (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2) + ' = ' + (2 * (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2)) + ' honey. This guarantees pot pressure on the closing stretch and is the only position-based variation in the YJ engine — heads-up positions do not rotate. Short-format rounds (9-hole brackets, 1-hole quick matches) do not have a back 9 and use the unscaled 2-honey opener throughout. ' +
+    'CARRY-FORWARD ADDS ON TOP. If a hole inherits a tied-hole carry from the previous hole, the carry adds to whatever opener is in force. Example: a hole following a 6-honey tied hole-9 opens at (back-9 opener) ' + (2 * (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2)) + ' + 6 = ' + (2 * (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2) + 6) + ' honey on hole 10.'
+  ));
+  core.appendChild(rule('Agreed-total wagering — the YJ wagering primitive',
+    'DEFINITION. We call this AGREED-TOTAL WAGERING to distinguish it from classic poker\'s matched-contribution model. Under agreed-total rules, the pot at any moment is exactly equal to the single most-recently accepted proposal — it is never a sum of per-player contributions, never doubled by a call, never tracked separately for each player. There are no chips, no stacks, no blinds in the matched-contribution sense; the opener is a fixed mandatory pot value (see "Mandatory starting pot"). ' +
+    'THE THREE ACTIONS. ' +
+    '(1) BET / RAISE = propose a new agreed total for the hole. The new value must be strictly greater than the current agreed total and within the street\'s stroke-cap unlock. ' +
+    '(2) CALL = accept the opponent\'s open proposal. The proposed value becomes the new agreed total. ' +
+    '(3) CHECK = decline to propose; the agreed total stays where it is and play moves to the next street (or showdown if the river is over). ' +
+    'A FOLD here is a fourth action available only when there is an open un-accepted proposal: it ends the hole at the previously-agreed total (see "Folds — uniform on every street"). ' +
+    'WORKED EXAMPLE. Hole opens at 2 honey (mandatory). You raise to 5. Opponent calls — agreed total = 5 (not 7, not 10). On the flop you raise to 9. Opponent calls — agreed total = 9. Hazard street, both check — agreed total stays at 9. River, you raise to 12. Opponent calls — agreed total = 12. At showdown the winner takes 12 honey. Total contributions never enter the math; only the most recent accepted proposal does. ' +
+    'WHY IT MATTERS. This primitive is what makes YJ\'s honey ledger clean enough to convert to strokes via a single round-end division. Matched-contribution poker would force per-player tracking and prevent the "pot = scorecard credit" identity that drives YJ scoring.'
+  ));
+  core.appendChild(rule('Tied holes carry forward — and stack across consecutive ties',
+    'TIE RESOLUTION. When both players reach showdown with the same hand value (e.g. both make the same straight from the board), both score 0 par on the scorecard and the entire pot rolls forward as the starting honey for the NEXT hole in the same match. The next hole opens at (mandatory opener + carry) honey. ' +
+    'STACKING. Multiple consecutive ties stack — the carry compounds. Whichever player wins the next DECISIVE hole sweeps the full accumulated stack as a single honey credit. ' +
+    'WORKED EXAMPLE (front 9, mandatory opener = 2 honey). ' +
+    'Hole 1 opens at 2, climbs to 5 via betting, ties at showdown → carry = 5. ' +
+    'Hole 2 opens at 2 + 5 = 7, climbs to 8 via betting, ties at showdown → carry = 8. ' +
+    'Hole 3 opens at 2 + 8 = 10, climbs to 12 via betting, decisive showdown — Player A wins. ' +
+    'Player A receives 12 honey (the agreed total at the end of hole 3, which already incorporated the stacked carry). The 2+5+8 from earlier holes never accumulates separately; it lives inside the hole-3 agreed total via the carry-forward opener. ' +
+    'BOUNDARIES. Carries stay within a single match. They do not persist across match boundaries (a new heads-up pairing starts fresh) or across rounds in aggregate stroke play (each new round\'s first hole opens at the unscaled mandatory). ' +
+    'STRATEGIC NOTE. Tied-hole stacking is a free option for the next hole\'s decisive winner — large carries reward whoever has the stronger holding on the next decisive hole, not the player who built the prior pot. With suspected board-runout ties (e.g. paired boards), a small bet that survives a tie is often higher EV than a large bet that gets folded to.'
+  ));
+  core.appendChild(rule('Bet-tier vocabulary — wagering diversity without chip stacks',
+    'PROBLEM TO SOLVE. WSOP wagering feels rich because every bet has a NAMED INTENT — min-raise, 3-bet, 4-bet, shove — that communicates strategic meaning beyond the dollar amount. YJ\'s integer honey wagers risk feeling flat (4 honey vs 5 honey vs 6 honey are categorically indistinguishable to a viewer). The fix is not finer increments or larger numbers; the fix is a NAMED TIER VOCABULARY mirroring the poker lexicon. ' +
+    'THE FIVE TIERS. Every proposal classifies by pot growth relative to the current agreed total: ' +
+    'PROBE — pot grows by less than 50% (information bet, range probe, cheap test); ' +
+    'PRESS — pot grows 50% to 100% (standard sizing for a moderate edge, the workhorse bet); ' +
+    'POT — pot grows 100% to 200% (full pot commitment, "I\'m engaged"); ' +
+    'POLARIZE — pot grows more than 200% but stays under the street cap (nuts-or-bluff polarization); ' +
+    'SHOVE — proposal at or near the street\'s ceiling (final commitment, no further escalation legal). ' +
+    'AVAILABLE TIERS BY STREET. The cap unlock structure (25/50/75/100% of the per-event cap by Tea Box / Drive / Hazard / Putt) determines which tiers are LEGAL at each street: Tea Box typically only allows Probe and Press; Drive opens Pot; Hazard opens Polarize; Putt opens Shove. Each street unlocks a new tier — that\'s the escalation primitive. The decision space genuinely expands as the hand develops, exactly as in poker where 4-bet wars only happen when stacks are deep. ' +
+    'WHY THIS DELIVERS DIVERSITY. Five named categories with structurally distinct strategic meanings is the same depth WSOP delivers (the min-raise / 2.5× / 3-bet / 4-bet / shove ladder). Players reason in tier-language ("Polarize the Putt," "Probe the Hazard"), commentators narrate in tier-language, AI decision profiles can be tier-conditioned (a "polarizing player" persona, a "probe-heavy player" persona). The integer honey amounts remain — they\'re just labels for what\'s happening at the strategic layer. ' +
+    'NOT A NEW UNIT. Honey is still the per-hole wager unit. Tiers are a CLASSIFICATION on top of honey amounts — every honey wager fits exactly one tier based on its pot-fraction. Implemented via the betTierForProposal() helper.'
+  ));
+  core.appendChild(rule('Probability-calibrated showdown matrix (v64)',
+    'WHAT IT IS. Per-hole scoring is computed via a frame-aware function that takes BOTH players\' hand values at showdown and returns a calibrated (winner_score, loser_score) pair. The base scores match the legacy 13-class hand-class lookup; the matrix adds two probability-grounded adjustments on top. ' +
+    'ADJUSTMENT 1: RESPECTED LOSS. Under the Yellow Jacket variant, a loser whose final hand is a STRAIGHT OR BETTER (category ≥ 4) posts their own hand-class score instead of the flat +1 bogey. A flush losing to a full house posts -1 (or -2 if T-high+) instead of +1 — the player is honored for having played a real hand. The bogey rule still fires for the modal frame (one-pair vs high-card / pair-vs-pair losses, ~70% of decisive showdowns), so the average loser score barely shifts; only respectable hands escape the flat bogey. ' +
+    'ADJUSTMENT 2: COOLER BONUS. When BOTH players hold full house or better (category ≥ 6) and the gap between them is at most one category, the winner receives an additional -1 stroke. Set-over-set, full-over-full, and quads-over-quads all qualify. Frequency floor: simultaneous full-house+ from both players is well under 0.1% of showdowns, so the bonus is genuinely rare and earns a "lore moment" status when it fires. ' +
+    'WHY THE MATRIX. The legacy class-only function scored hands in isolation, ignoring the SHOWDOWN FRAME. A flush losing to a full house and a flush losing to a straight produced the same loser score under the bogey rule (+1 each). The matrix recognizes that the first frame deserves the loser its respect, while the second is the textbook bogey loss. Probability-calibrated scoring rewards the rarity and quality of every distinct frame, not just the player\'s hand in a vacuum. ' +
+    'INTEGER PRESERVATION. All matrix outputs remain integer per-hole stroke values. The scorecard never shows decimals. Range: -6 (cooler winner) to +2 (weak high-card loser under bumblebee). ' +
+    'TOGGLE. cfg.scoring.useShowdownMatrix (default true). Set to false to fall back to legacy class-only scoring — useful for A/B sweep comparisons against the v59 calibration baseline.'
   ));
   core.appendChild(rule('Game variants — Yellow Jacket vs Bumblebee (v32)',
     'The game ships as TWO variants that share every rule except how a decisive-showdown loser is scored. Switchable in the simulator config panel via the "Variant" dropdown. ' +
@@ -5075,10 +5274,29 @@ Views.rules = function() {
     'BOTTOM LINE: in Yellow Jacket, bet for value (extraction), not for fold equity (denial). Classic-poker pressure plays under-reward you here.'
   ));
   core.appendChild(rule('Per-event stroke caps and progressive street unlock',
-    'Each event sets a maximum agreed pot size for any single hole — the stroke cap. Default per-event caps: Regular ' + (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6) + ' honey, Major ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10) + ' honey, Main early rounds ' + (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' honey, Main 72-hole finals ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10) + ' honey. Within each hole, the cap unlocks progressively by street: 25% available by Tea Box (preflop), 50% by Drive (flop), 75% by Hazard (turn), 100% by Putt (river). For caps of 3 or less the progressive unlock is disabled and the full cap is available from Tea Box. This forces pot escalation to mirror real no-limit Hold\'em rather than a single-cap free-for-all on the first street.'
+    'STROKE CAP. Each event sets a maximum agreed pot size for any single hole — the stroke cap. v66 defaults, anchored to the divisor 9: Regular ' + (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6) + ' honey, Major ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 9) + ' honey (= divisor → 1 stroke per max pot), Main early rounds ' + (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 8) + ' honey, Main 72-hole finals ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 18) + ' honey (= 2× anchor → apex drama tier). ' +
+    'PROGRESSIVE UNLOCK. Within each hole the cap unlocks by street: 25% available by Tea Box (preflop), 50% by Drive (flop), 75% by Hazard (turn), 100% by Putt (river). Integer rounding via ceil. ' +
+    'WORKED EXAMPLE — Major (cap 9). Tea Box: max agreed total 3 (25% of 9 = 2.25, ceil to 3). Drive: max 5 (50% = 4.5, ceil to 5). Hazard: max 7. Putt: max 9. So an early-street raise to 8 is illegal on Tea Box but legal on Hazard. ' +
+    'WORKED EXAMPLE — Main finals (cap 18). Tea Box: max 5. Drive: max 9. Hazard: max 14. Putt: max 18 = 2 strokes per max pot. ' +
+    'SHORT-CAP EXEMPTION. For caps of 3 or less the progressive unlock is disabled and the full cap is available from Tea Box (a 25% unlock would round to <1 honey and break wagerability). ' +
+    'WHY IT EXISTS. Forcing pot escalation across streets mirrors real no-limit Hold\'em — players have to commit to escalation in stages, which surfaces information about hand strength along the way. A single-cap free-for-all on Tea Box would collapse all betting decisions into one street.'
   ));
   core.appendChild(rule('AI decision logic (pure Honey-Stroke EV)',
-    'AI opponents evaluate each decision using YJ-aware EV math, not classic poker pot odds. They compute their adjusted equity (`adj`) on every street, then directly compare expected value across the available actions: ev_fold = −divisor − previousAgreedTotal honey; ev_check/call = (2·adj − 1) × pot − showdownGolfCost(adj); ev_bet/raise = foldEquity·evWinByFold + (1 − foldEquity)·evShowdown for each candidate new agreed total. The bot picks the action with the highest EV, perturbed by player-specific decision noise (low-skill players inject more randomness; elites act closer to optimal). YJ profile optima are tuned to foldOpt 0.25, betOpt 0.45, raiseOpt 0.75 — these are NOT classic poker thresholds; they reflect the optimal aggression level when the pot itself directly improves your scorecard. NOTE the inverted foldOpt polarity: in YJ, HIGH foldOpt = SKILLED play (fold rarely, only when adj falls well below required equity), because folding caps your hand at +1 bogey while showdown can realize -1 to -5 strokes when you have any equity at all.'
+    'OVERVIEW. AI opponents evaluate each decision using YJ-aware EV math, not classic poker pot odds. They compute their adjusted equity on every street, then directly compare expected value across all available actions and pick the highest-EV action (perturbed by player-specific decision noise — low-skill players inject more randomness, elites act closer to optimal). ' +
+    'GLOSSARY. ' +
+    '"adj" = adjusted equity, the bot\'s estimated probability (0–1) that its current hand will win at showdown against the opponent\'s estimated range. Updates every street as more board cards reveal. ' +
+    '"divisor" = the round-end honey divisor (see "Per-round score"); v66 flat table: 1/4/9/36 for 1/9/18/72-hole rounds. ' +
+    '"showdownGolfCost(adj)" = expected golf-stroke penalty if you reach showdown — a positive number representing the average bogey/par cost weighted by the chance you lose; smaller as adj rises. ' +
+    '"foldOpt" = the equity-slack threshold at which folding becomes optimal (v59 = 0.25). The bot folds when adj < reqEquity − foldOpt. ' +
+    '"betOpt" = the equity threshold above which betting for value is optimal (v59 = 0.45). ' +
+    '"raiseOpt" = the equity threshold above which 3-betting/raising is optimal (v59 = 0.75). ' +
+    '"foldEquity" = estimated probability the opponent will fold to a given proposed new agreed total. ' +
+    'EV FORMULAS (in golf-stroke units; higher EV = better). ' +
+    'ev_fold = −divisor − previousAgreedTotal (you forfeit one stroke equivalent + the agreed pot). ' +
+    'ev_check_or_call = (2·adj − 1) × pot − showdownGolfCost(adj) (your share of the pot minus expected showdown cost). ' +
+    'ev_bet_or_raise(newTotal) = foldEquity · evWinByFold(newTotal) + (1 − foldEquity) · evShowdownAtNewTotal — evaluated for each legal new total within the street\'s stroke-cap unlock. ' +
+    'PROFILE OPTIMA (v59 final calibration). foldOpt 0.25, betOpt 0.45, raiseOpt 0.75. These are NOT classic poker thresholds; they reflect optimal aggression when the pot itself improves your scorecard. ' +
+    'INVERTED foldOpt POLARITY (the v51 fix). In YJ, HIGH foldOpt = SKILLED play (rarely fold). The reasoning: folding caps your downside at +1 bogey + lost honey, but showdown realizes −1 to −5 strokes whenever you have any non-trivial equity. Because the loser-bogey rule already caps showdown losses, conceding equity is structurally expensive. Versions before v51 had foldOpt = 0.05, which made AI fold tightly like classic poker — anti-YJ behavior.'
   ));
   // === Aggregate-stroke-play lore — describes the future-target Honey-Stroke
   // format. This text ships with the Rules tab regardless of whether the engine
@@ -5295,7 +5513,6 @@ function dtRich(s) {
 Views.decisiontree = function() {
   const view = $('[data-view="decisiontree"]'); clear(view);
   const cfg = (LabState && LabState.config) || {};
-  const mag = cfg.honeyMagnitude != null ? cfg.honeyMagnitude : 5;
   const backNineMult = cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2;
 
   // Local helpers (mirrors the pattern in Views.codex / Views.rules).
@@ -5343,7 +5560,13 @@ Views.decisiontree = function() {
   // ===== Intro =====
   const intro = section('Walking the Course',
     p('A Yellow Jacket hole is a heads-up Texas Hold\'em hand re-skinned as a single hole of golf. Five named stages — Tea Box, Drive, Hazard, Putt, The Cup — map directly to preflop, flop, turn, river, and showdown. Below, each stage shows the cards you typically see, the actions available to you, and the YJ-aware decision logic that distinguishes Yellow Jacket strategy from classic poker.'),
-    p('The core insight: in Yellow Jacket, the pot itself improves your scorecard (winning honey is divided by the round-length divisor and subtracted from your golf total). That changes the math at every street — folding is more expensive than poker intuition suggests, and calling thin equities is more profitable than it looks.')
+    p('The core insight: in Yellow Jacket, the pot itself improves your scorecard (winning honey is divided by the round-length divisor and subtracted from your golf total). That changes the math at every street — folding is more expensive than poker intuition suggests, and calling thin equities is more profitable than it looks.'),
+    p('Three insights drive every YJ decision and recur in the rationale boxes below:'),
+    el('ul', { class: 'ui-sans', style: 'font-size: 13px; line-height: 1.7; color: var(--text-primary); margin-top: 6px; padding-left: 22px;' },
+      el('li', null, '(1) Folding is structurally expensive. The loser-bogey rule already caps showdown losses at +1, so folding gives up equity without saving strokes. This is why YJ\'s foldOpt has INVERTED polarity vs classic poker: HIGH foldOpt = SKILLED play (rarely fold).'),
+      el('li', null, '(2) Premium hands extract value at SHOWDOWN, not by forcing folds. A fold caps your reward at par + previously-agreed honey; reaching showdown with a strong hand realizes the −1 to −5 golf value AND collects the new agreed pot. Bet for value, not for fold equity.'),
+      el('li', null, '(3) The divisor bounds thin-equity calls. Losing a pot costs (pot / divisor) strokes — at v66 18-hole divisor 9, losing a 9-honey Major-cap pot costs exactly 1 stroke. Calling slightly behind is cheaper than poker pot-odds math suggests because the per-pot stroke ceiling is bounded.')
+    )
   );
   view.appendChild(intro);
 
@@ -5463,7 +5686,7 @@ Views.decisiontree = function() {
       '**Hero** golf score: −2 (T-high or better flush, premium bucket). **Hero** honey: + entire agreed pot at end of Putt.',
       '**Villain** golf score in **Yellow Jacket**: +1 (fixed loser bogey). In **Bumblebee**: 0 (their pocket queens become a one-pair-J+ kicker hand worth 0 par at showdown, since the K-high board makes their queens second pair).',
       'Tied showdowns: both score 0 par and the entire pot rolls forward to the next hole as starting honey. Multiple consecutive ties stack — whoever wins the next decisive hole sweeps the entire stack at once.',
-      'Round-end: total golf score across all 18 (or 72) holes minus net honey divided by the round-length divisor (72/18/9/1) gives the final round score. The honey magnitude scalar (current default **' + mag + '**) further tunes the divisor: `honeyDivisorFor(n) = max(4, base/magnitude)`, so a higher magnitude amplifies the per-honey scoring impact.'
+      'Round-end: total golf score across all 18 (or 72) holes minus net honey divided by the round-length divisor gives the final round score. v66 flat divisor table: 1 / 4 / 9 / 36 for 1 / 9 / 18 / 72-hole rounds. The 18-hole HU divisor of **9** is golf-native (one side of a round); the Major Putt cap of 9 honey aligns exactly, producing one stroke per max-pot win. Self-similar at every tier.'
     ]
   }));
 
@@ -5769,9 +5992,20 @@ function resolveMPHole(g) {
       // changes don't perturb an in-progress match.
       const p1Wins = cmp > 0;
       const winnerHand = p1Wins ? p1H : p2H;
-      const winnerGolf = golfScoreFromHandValue(winnerHand);
       const loserHand  = p1Wins ? p2H : p1H;
-      const loserGolf  = g.loserBogey ? 1 : golfScoreFromHandValue(loserHand);
+      // v64: probability-calibrated showdown matrix. Frame-aware scoring with
+      // respected-loss + cooler-bonus adjustments. Falls back to legacy
+      // single-arg golfScoreFromHandValue when matrix is disabled in cfg.
+      const useMatrix = (typeof LabState !== 'undefined' && LabState.config
+        && LabState.config.scoring && LabState.config.scoring.useShowdownMatrix !== false);
+      let winnerGolf, loserGolf;
+      if (useMatrix) {
+        const r = golfScoresFromShowdown(winnerHand, loserHand, !!g.loserBogey);
+        winnerGolf = r.winner; loserGolf = r.loser;
+      } else {
+        winnerGolf = golfScoreFromHandValue(winnerHand);
+        loserGolf  = g.loserBogey ? 1 : golfScoreFromHandValue(loserHand);
+      }
       const winName  = p1Wins ? g.p1.name : g.p2.name;
       const loseName = p1Wins ? g.p2.name : g.p1.name;
       const pot = c.agreedTotal;
@@ -7751,10 +7985,15 @@ const DEFAULT_SIM_CONFIG = {
   mainDirectEntryShare: 0.65,
   // Match structure
   earlyRoundHoles: 9, lateRoundHoles: 18, finalsHoles: 72, strokeCap: 3,
-  regularStrokeCap: 6,
-  majorStrokeCap: 10,
-  mainStrokeCap: 6,
-  mainFinalsStrokeCap: 10,
+  // v66 DIVINE CAPS — anchored to the divisor 9. Major Putt cap = 9 = exactly
+  // one stroke per max-pot win at 18-hole divisor 9. Main finals at 2× anchor
+  // (18 honey = 2 strokes per max-pot win at 36-hole divisor; per-hole impact
+  // 0.5 strokes — long format suppresses honey naturally). Regular at 2/3 of
+  // anchor; Main early between Regular and Major.
+  regularStrokeCap: 6,         // 2/3 of anchor — Regular tier
+  majorStrokeCap: 9,           // anchor — Major tier (= divisor)
+  mainStrokeCap: 8,            // 8/9 of anchor — Main early matches
+  mainFinalsStrokeCap: 18,     // 2× anchor — Main finals (apex)
   // Honey-Stroke is the sole scoring law. carryOverEnabled (true) and honeyDivisor (1)
   // are permanent invariants on SCORING_STYLES['honey-stroke'] — not user-tunable.
   scoringStyle: 'honey-stroke',
@@ -7795,36 +8034,25 @@ const DEFAULT_SIM_CONFIG = {
   // recovers the v37/v38 "almost never fold" behavior; dropping to 6 makes
   // folds aggressive (think pot-committed-only-when-strong play).
   decisionDivisor: 9,
-  // HONEY MAGNITUDE — global scalar that boosts honey impact on the scorecard.
-  // magnitude=N means honeyDivisorFor returns base/N (clamped to floor 4),
-  // so 1 stroke = (roundLength/N) honey at round end.
-  //   mag=1:  72-hole div=72,  30-honey fold = +1.42 strokes (legacy)
-  //   mag=2:  72-hole div=36,  30-honey fold = +1.83 strokes (v46-v50)
-  //   mag=4:  72-hole div=18,  30-honey fold = +2.67 strokes (v58)
-  //   mag=5:  72-hole div=14.4, 30-honey fold = +3.08 strokes (v51)
-  //   mag=6:  72-hole div=12,  30-honey fold = +3.50 strokes (v57)
-  //   mag=9:  72-hole div=8,   30-honey fold = +4.75 strokes (v52-v56)
-  //
-  // EMPIRICAL OBSERVATIONS (with v56+ back-9 doubling on):
-  //   mag=9 → avgChampScore -17.7, Major -19.9, skillR² 0.010
-  //   mag=6 → avgChampScore -11.2, Major -11.6, skillR² 0.012
-  //   mag=4 → avgChampScore  -7.5, Major  -7.0, skillR² 0.001
-  //   mag=5 → projected sweet-spot between mag=4 and mag=6
-  //
-  // v59: mag 4→5 (middle ground). v58 at mag=4 produced the most
-  // golf-realistic distribution (avg champion ~-7.5, occasional above-par
-  // majors mirroring 2007 Zach Johnson) AND the cleanest top-10 earners
-  // (zero floor-skill outliers in lifetime earnings) AND skill-positive
-  // Main Event finals. But skillR² collapsed to 0.0008 — a measurement
-  // artifact of variance flattening the linear win-vs-skill fit, but
-  // visually problematic in dashboards. v57 at mag=6 had skillR²=0.012
-  // but Main finals were skill-negative and a floor-skill dynasty player
-  // landed in top earners. mag=5 splits the difference: predicted
-  // Major avg ~-9 (matches PGA Masters historical), skillR² ~0.005-0.010,
-  // skillEVSpearman ~0.045, top earners staying clean. The v54
-  // decisionDivisor unification ensures the AI's in-kernel EV math
-  // tracks magnitude automatically — no other code adjustments needed.
-  honeyMagnitude: 5,
+  // v66 — honeyMagnitude REMOVED. The flat divisor table in honeyDivisorFor
+  // (1 / 4 / 9 / 36 for 1 / 9 / 18 / 72-hole rounds) is canonical. There is
+  // no longer a magnitude scalar. The 18-hole HU divisor of 9 is golf-native
+  // (one side of a round); Major Putt cap = divisor = 9 honey = exactly one
+  // stroke per max-pot win. Self-similar throughout. honeyMagnitude in saved
+  // configs is ignored (setHoneyMagnitude is a no-op).
+  // v64 PROBABILITY-CALIBRATED SHOWDOWN MATRIX. When true (default), per-hole
+  // scoring uses golfScoresFromShowdown — a frame-aware function that takes
+  // both winner's and loser's hand values and applies two adjustments on top
+  // of the legacy class-based base score: (1) respected-loss — under YJ
+  // variant, a loser whose hand is a straight or better posts their own
+  // hand-class score instead of +1 bogey; (2) cooler bonus — when both
+  // players hold full house+ in a tight gap, winner gets an additional
+  // -1 stroke. Both adjustments preserve integer per-hole scores. Set to
+  // false to fall back to legacy class-only scoring (preserves v59
+  // calibration for A/B sweeps).
+  scoring: {
+    useShowdownMatrix: true,
+  },
   // v56 BACK-9 OPENER DOUBLING. On the back 9 of any 18-hole round (hole
   // index ≥ 9 within the round), the mandatory opening pot multiplies by
   // this factor. Default 2 doubles: front 9 stays at 2 honey, back 9
@@ -7947,19 +8175,14 @@ const BackgroundSim = {
         foldCount: 0,
         showdownCount: 0,
         tieCount: 0,
-        // v44 instrumentation: equity-bucket × action matrix (5×5).
-        // Rows are adj equity buckets [0-0.2, 0.2-0.4, 0.4-0.6, 0.6-0.8, 0.8+].
-        // Cols are actions [check, bet, call, raise, fold].
-        // Reveals whether players are folding the right hands and calling
-        // with the right hands at each equity level — the core game-theoretic
-        // signal that aggregate skillSpearman cannot disambiguate.
-        equityBucketActions: [
-          { check:0, bet:0, call:0, raise:0, fold:0 },
-          { check:0, bet:0, call:0, raise:0, fold:0 },
-          { check:0, bet:0, call:0, raise:0, fold:0 },
-          { check:0, bet:0, call:0, raise:0, fold:0 },
-          { check:0, bet:0, call:0, raise:0, fold:0 },
-        ],
+        // v44 instrumentation, v62 refined to 7 non-uniform buckets — see
+        // EQUITY_BUCKET_LABELS / equityBucketIndex. Cols are actions
+        // [check, bet, call, raise, fold]. Reveals whether players are folding
+        // the right hands and calling with the right hands at each equity level
+        // — the core game-theoretic signal that aggregate skillSpearman cannot
+        // disambiguate. Narrow buckets in 0.0-0.2 expose the actual fold-trigger
+        // threshold (adj ≈ 0.10-0.12 in v59 calibration).
+        equityBucketActions: newEquityBucketActions(),
         // v50 (C) instrumentation: bluff-read stats by readingDepth bucket.
         // Buckets: [0-0.25, 0.25-0.5, 0.5-0.75, 0.75-1.0].
         // Each bucket counts fold-eligible decisions where opp aggressed and
@@ -8037,8 +8260,8 @@ const BackgroundSim = {
     LabState.instrumentation.collector = (street, action, adj) => {
       if (actionStats[street] && actionStats[street][action] != null) actionStats[street][action]++;
       if (Number.isFinite(adj) && actionStats.equityBucketActions) {
-        const b = Math.min(4, Math.max(0, Math.floor(adj * 5)));
-        const row = actionStats.equityBucketActions[b];
+        const b = equityBucketIndex(adj);
+        const row = b >= 0 ? actionStats.equityBucketActions[b] : null;
         if (row && row[action] != null) row[action]++;
       }
     };
@@ -8860,13 +9083,7 @@ async function runLabSession(cfg, onProgress) {
     foldCount: 0,
     showdownCount: 0,
     tieCount: 0,
-    equityBucketActions: [
-      { check:0, bet:0, call:0, raise:0, fold:0 },
-      { check:0, bet:0, call:0, raise:0, fold:0 },
-      { check:0, bet:0, call:0, raise:0, fold:0 },
-      { check:0, bet:0, call:0, raise:0, fold:0 },
-      { check:0, bet:0, call:0, raise:0, fold:0 },
-    ],
+    equityBucketActions: newEquityBucketActions(),
     bluffReadStats: [
       { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
       { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
@@ -8877,8 +9094,8 @@ async function runLabSession(cfg, onProgress) {
   LabState.instrumentation.collector = (street, action, adj) => {
     if (actionStats[street] && actionStats[street][action] != null) actionStats[street][action]++;
     if (Number.isFinite(adj) && actionStats.equityBucketActions) {
-      const b = Math.min(4, Math.max(0, Math.floor(adj * 5)));
-      const row = actionStats.equityBucketActions[b];
+      const b = equityBucketIndex(adj);
+      const row = b >= 0 ? actionStats.equityBucketActions[b] : null;
       if (row && row[action] != null) row[action]++;
     }
   };
@@ -10174,10 +10391,11 @@ function _exportRunToCSVImpl(snap) {
   // the disciplined heads-up Hold'em range.
   cfgRow('scoring.decisionDivisor',
     Number.isFinite(+snapCfg.decisionDivisor) ? +snapCfg.decisionDivisor : 9);
-  // v40: honey-magnitude scalar applied inside honeyDivisorFor — boosts honey
-  // impact on the scorecard relative to the round-length default. 1.0 = legacy.
-  cfgRow('scoring.honeyMagnitude',
-    Number.isFinite(+snapCfg.honeyMagnitude) ? +snapCfg.honeyMagnitude : 1);
+  // v66: honeyMagnitude REMOVED. Flat divisor table (1/4/9/36 for round lengths
+  // 1/9/18/72) is canonical. The field is exported as 1 (the no-op constant)
+  // for any downstream tools that still expect the column.
+  cfgRow('scoring.honeyMagnitude', 1);
+  cfgRow('scoring.divisorTable', '1=1, 9=4, 18=9, 72=36 (HU)');
   // v56: back-9 opener doubling. Mandatory pot ×N for back 9 of every 18-hole
   // round. Default 2 = doubled. 1 = flat (legacy).
   cfgRow('scoring.backNineOpenerMultiplier',
@@ -10484,7 +10702,7 @@ function _exportRunToCSVImpl(snap) {
     rows.push([]);
     rows.push(['--- equityBucketActions ---']);
     rows.push(['adjBucket','check','bet','call','raise','fold','total','foldRate']);
-    const labels = ['0.0-0.2','0.2-0.4','0.4-0.6','0.6-0.8','0.8-1.0'];
+    const labels = EQUITY_BUCKET_LABELS;
     m.equityBucketActions.forEach((row, i) => {
       const total = (row.check + row.bet + row.call + row.raise + row.fold) || 0;
       const foldRate = total > 0 ? (row.fold / total).toFixed(4) : '0';
@@ -11056,7 +11274,7 @@ function renderConfigPanel(panel, mode) {
       majors: 4, regulars: 12, mains: 1,
       majorField: 96, regularField: 128, mainField: 256,
       exemptionYears: 3,
-      regularStrokeCap: 6, majorStrokeCap: 10, mainStrokeCap: 6, mainFinalsStrokeCap: 10,
+      regularStrokeCap: 6, majorStrokeCap: 9, mainStrokeCap: 8, mainFinalsStrokeCap: 18,
       buyInMajor: 2500, buyInRegular: 333, buyInMain: 1000,
       sponsorPurseMajor: 0, sponsorPurseRegular: 0, sponsorPurseMain: 0,
       rakePercent: 0.03, payoutDecay: 0.70,
@@ -11207,13 +11425,7 @@ async function runSimulator(cfg, onProgress) {
     foldCount: 0,
     showdownCount: 0,
     tieCount: 0,
-    equityBucketActions: [
-      { check:0, bet:0, call:0, raise:0, fold:0 },
-      { check:0, bet:0, call:0, raise:0, fold:0 },
-      { check:0, bet:0, call:0, raise:0, fold:0 },
-      { check:0, bet:0, call:0, raise:0, fold:0 },
-      { check:0, bet:0, call:0, raise:0, fold:0 },
-    ],
+    equityBucketActions: newEquityBucketActions(),
     bluffReadStats: [
       { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
       { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
@@ -11224,8 +11436,8 @@ async function runSimulator(cfg, onProgress) {
   LabState.instrumentation.collector = (street, action, adj) => {
     if (actionStats[street] && actionStats[street][action] != null) actionStats[street][action]++;
     if (Number.isFinite(adj) && actionStats.equityBucketActions) {
-      const b = Math.min(4, Math.max(0, Math.floor(adj * 5)));
-      const row = actionStats.equityBucketActions[b];
+      const b = equityBucketIndex(adj);
+      const row = b >= 0 ? actionStats.equityBucketActions[b] : null;
       if (row && row[action] != null) row[action]++;
     }
   };
@@ -12065,9 +12277,9 @@ function renderActiveRun(root, r) {
     cv4b = el('canvas', { width: '520', height: '240' });
     gridAI.appendChild(makeChartCard(
       'Fold Rate by Equity Bucket',
-      '% of fold-eligible decisions where AI folded · by perceived equity',
+      '% of fold-eligible decisions where AI folded · 7 non-uniform buckets',
       cv4b,
-      'YJ-correct: high fold rate at 0-20% equity, near-zero everywhere else. Folds at 40%+ are leaks (the v18-v50 inversion bug looked like this).'));
+      'YJ-correct: fold concentrates below adj 0.10-0.12 (the v59 break-even) and decays sharply through 0.20. Buckets 0.20+ should be near-zero — folds there are leaks (the v18-v50 inversion bug looked like this).'));
   }
   // Resolution mix donut — fold/showdown/tie share. Tells you whether the AI
   // is folding too much (healthy YJ should be ~20% fold, ~75% showdown, ~5% tie).
@@ -12335,7 +12547,7 @@ function renderActiveRun(root, r) {
     // single most diagnostic plot for verifying YJ-correct fold polarity.
     if (cv4b) {
       safeDraw(cv4b, 'equityBucketFoldRate', () => {
-        const labels = ['0.0-0.2','0.2-0.4','0.4-0.6','0.6-0.8','0.8-1.0'];
+        const labels = EQUITY_BUCKET_LABELS;
         const rates = m.equityBucketActions.map(row => {
           const total = (row.check || 0) + (row.bet || 0) + (row.call || 0) + (row.raise || 0) + (row.fold || 0);
           return total > 0 ? (row.fold || 0) / total : 0;
@@ -12349,14 +12561,14 @@ function renderActiveRun(root, r) {
         const plotW = w - 2 * pad, plotH = h - 2 * pad;
         const colW = plotW / rates.length;
         const barW = Math.min(76, colW * 0.55);
+        // v62: With 7 buckets, indices 0-3 are the 0.0-0.2 zone (fold-correct
+        // territory in YJ); indices 4-6 are 0.2+ where folds are leaks.
         rates.forEach((r, i) => {
           const cx = pad + colW * (i + 0.5);
           const y = h - pad - (r / yMax) * plotH;
-          // YJ-correct: red (warning) only at 0.0-0.2 (where folding is right),
-          // orange/red for the higher buckets (where folding is a leak).
-          ctx.fillStyle = i === 0 ? C.pos : (r > 0.01 ? C.neg : C.pos);
+          ctx.fillStyle = (i <= 3) ? C.pos : (r > 0.01 ? C.neg : C.pos);
           ctx.fillRect(cx - barW / 2, y, barW, h - pad - y);
-          ctx.fillStyle = C.text; ctx.font = '11px monospace';
+          ctx.fillStyle = C.text; ctx.font = '10px monospace';
           const lbl = (r * 100).toFixed(2) + '%';
           ctx.fillText(lbl, cx - ctx.measureText(lbl).width / 2, y - 4);
         });
@@ -13018,8 +13230,14 @@ function init() {
       majorField: 256, regularField: 512, mainField: 128,
       mainQualifiersPerMajor: 28,
       mainDirectEntryShare: 0.65,
-      honeyMagnitude: 5,
+      // v66 caps anchored to divisor 9: Major Putt = divisor = 1 stroke per max pot.
+      regularStrokeCap: 6,
+      majorStrokeCap: 9,
+      mainStrokeCap: 8,
+      mainFinalsStrokeCap: 18,
+      // honeyMagnitude removed in v66 (flat divisor table is canonical)
       backNineOpenerMultiplier: 2,
+      scoring: { useShowdownMatrix: true },
       payoutDecay: 0.74,
       buyInRegular: 100, buyInMajor: 1000, buyInMain: 10000,
       rakePercent: 0.03,
