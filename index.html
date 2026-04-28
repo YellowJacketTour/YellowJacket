@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.28-v56";
+const APP_VERSION = "2026.04.28-v57";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -7427,19 +7427,22 @@ const DEFAULT_SIM_CONFIG = {
   //   mag=1:  72-hole div=72,  30-honey fold = +1.42 strokes (legacy)
   //   mag=2:  72-hole div=36,  30-honey fold = +1.83 strokes (v46-v50)
   //   mag=5:  72-hole div=14.4, 30-honey fold = +3.08 strokes (v51)
-  //   mag=9:  72-hole div=8,   30-honey fold = +4.75 strokes (v52 "back nine")
+  //   mag=6:  72-hole div=12,  30-honey fold = +3.50 strokes (v57)
+  //   mag=7:  72-hole div=10.3, 30-honey fold = +3.91 strokes
+  //   mag=9:  72-hole div=8,   30-honey fold = +4.75 strokes (v52-v56)
   //
-  // v52: mag 5→9 ("back nine"). At mag=9, every 8 honey = 1 stroke in a
-  // 72-hole event. A typical 4-12 honey pot moves your scorecard by ~1
-  // stroke; a monster 30-honey pot swings ~5 strokes. WSOP-style "this hand
-  // mattered" applied to a golf scorecard. The honeyDivisorFor floor of 4
-  // protects short-format events (9-hole brackets, sudden-death) from
-  // collapsing into pure honey contests — see honeyDivisorFor for details.
-  // Pulls champion scores deeper into the negative tail without breaking
-  // bracket play. Combined with v51's fold-polarity fix and skill-aware
-  // bet sizing, this is the final calibration layer for skilled-player
-  // expression in long-format championships.
-  honeyMagnitude: 9,
+  // v57: mag 9→6. At mag=9 with back-9 doubling, scores ran past the brief
+  // target band (avgChampScore -17.7, Major avg -19.9 — deeper than the
+  // best Masters in history). The over-amplified honey was also drowning
+  // per-decision skill signal (skillR² collapsed from 0.05 to 0.01,
+  // skillEVSpearman from 0.10 to 0.04). At mag=6, projected Major avg lands
+  // at ≈-9, matching real PGA Masters historical avg champion of -9.5.
+  // Pooled avg ≈-5 sits at the upper boundary of the brief target -5 to -15
+  // band, leaving headroom for tail events to deepen further without
+  // crossing into unrealistic territory. Combined with v56 back-9 doubling
+  // (which adds ~3-4 stroke depth on its own), this is the calibration
+  // landing zone — Augusta-realistic Major scores, dramatic but grounded.
+  honeyMagnitude: 6,
   // v56 BACK-9 OPENER DOUBLING. On the back 9 of any 18-hole round (hole
   // index ≥ 9 within the round), the mandatory opening pot multiplies by
   // this factor. Default 2 doubles: front 9 stays at 2 honey, back 9
