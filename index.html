@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.27-v53";
+const APP_VERSION = "2026.04.27-v54";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1426,6 +1426,34 @@ function setHoneyMagnitude(n) {
   const v = +n;
   CurrentHoneyMagnitude = (Number.isFinite(v) && v > 0) ? v : 1;
 }
+// v54 TRUE FOLD COST BIN — maps a stroke-equivalent fold cost to a histogram
+// bucket. Higher resolution at the low end (most folds) and coarser bins at
+// the high end (rare big-pot folds). Returns 0..9.
+//   Bin 0: [1.00, 1.25)  — cheap small-pot folds (correct YJ fold)
+//   Bin 1: [1.25, 1.50)
+//   Bin 2: [1.50, 1.75)
+//   Bin 3: [1.75, 2.00)
+//   Bin 4: [2.00, 2.50)
+//   Bin 5: [2.50, 3.00)
+//   Bin 6: [3.00, 4.00)
+//   Bin 7: [4.00, 5.00)
+//   Bin 8: [5.00, 7.00)
+//   Bin 9: [7.00, ∞)    — extreme; only seen in short events at high mag
+const TRUE_FOLD_COST_LABELS = ['1.00-1.25','1.25-1.50','1.50-1.75','1.75-2.00','2.00-2.50','2.50-3.00','3.00-4.00','4.00-5.00','5.00-7.00','7.00+'];
+function trueFoldCostBin(cost) {
+  if (!Number.isFinite(cost) || cost < 0) return 0;
+  if (cost < 1.25) return 0;
+  if (cost < 1.50) return 1;
+  if (cost < 1.75) return 2;
+  if (cost < 2.00) return 3;
+  if (cost < 2.50) return 4;
+  if (cost < 3.00) return 5;
+  if (cost < 4.00) return 6;
+  if (cost < 5.00) return 7;
+  if (cost < 7.00) return 8;
+  return 9;
+}
+
 function honeyDivisorFor(numHoles) {
   const n = +numHoles || 0;
   let base;
@@ -2791,9 +2819,21 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     const streetIdx = (community.length < 3) ? 0 : (community.length === 3) ? 1 : (community.length === 4) ? 2 : 3;
     const folderScore = 1;
     const bettorScore = 0;
-    // v44 instrumentation: record fold cost + pot bucket at fold.
+    // v54 TRUE FOLD COST instrumentation. The fold-cost histogram now tracks
+    // the actual stroke-equivalent total cost paid by the folder:
+    //   trueFoldCost = folderScore + agreedTotal / round-end-divisor
+    // This is what the round-end actually charges. Previous version only
+    // tracked the +1 bogey component, which was always 1.0 (decoration).
+    // The honey component varies dramatically with pot size and event format
+    // — a small pre-flop fold costs ~1.05 strokes; a maxed-out 30-pot fold
+    // in a short bracket event costs 8.5+ strokes.
     if (typeof LabState !== 'undefined' && LabState.instrumentation) {
-      if (LabState.instrumentation.foldCostCollector) LabState.instrumentation.foldCostCollector(folderScore);
+      if (LabState.instrumentation.foldCostCollector) {
+        const eventDivisor = (gameContext && +gameContext.honeyDivisor) ||
+          honeyDivisorFor((gameContext && +gameContext.totalHoles) || 18);
+        const trueCost = folderScore + (strokes / Math.max(0.01, eventDivisor));
+        LabState.instrumentation.foldCostCollector(trueCost, strokes, eventDivisor);
+      }
       if (LabState.instrumentation.potBucketCollector) LabState.instrumentation.potBucketCollector('fold', strokes);
     }
     // Legacy table refs kept as no-ops so any debug overlay that reads them doesn't crash.
@@ -2969,7 +3009,17 @@ function playMatch(pA, pB, numHoles, opts) {
       mode: baseGameContext && baseGameContext.mode ? baseGameContext.mode : 'match',
       holeNumber: baseHoleNumber + holeNumber - 1,
       totalHoles,
-      honeyDivisor: divisor,                  // threaded into decideFor
+      honeyDivisor: divisor,                  // round-end conversion rate
+      // v54 DECISION DIVISOR UNIFICATION. The AI's in-kernel EV math now uses
+      // the same divisor that the round-end will actually charge. Previously
+      // CurrentDecisionDivisor (=9) was used everywhere, which made the AI
+      // think honey was worth less than it actually was in short-format
+      // events — at mag=9, 9-hole brackets clamp divisor to 4, so AI's
+      // perception (1 stroke = 9 honey) was 2.25× off from reality
+      // (1 stroke = 4 honey). This caused noisy variance in the finals
+      // signal at mag=9. Tying decisionDivisor to round-end fixes that.
+      // The divisor is the same value used at end-of-round scoring.
+      decisionDivisor: divisor,
       isFinals: !!(baseGameContext && baseGameContext.isFinals),
       oppHistory,                              // v50 (C): per-match read state
     });
@@ -7516,8 +7566,11 @@ const BackgroundSim = {
       }
     };
     LabState.instrumentation.foldCostCollector = (cost) => {
+      // v54: cost is now stroke-equivalent total (1 + agreedTotal/divisor),
+      // not just the +1 bogey. Bin via trueFoldCostBin (0.25-stroke resolution
+      // at low end, coarser at high end).
       if (!Number.isFinite(cost) || cost < 0) return;
-      const idx = Math.min(9, Math.floor(cost));
+      const idx = trueFoldCostBin(cost);
       if (actionStats.foldCostHist) actionStats.foldCostHist[idx]++;
     };
     LabState.instrumentation.potBucketCollector = (event, pot) => {
@@ -8340,8 +8393,9 @@ async function runLabSession(cfg, onProgress) {
     }
   };
   LabState.instrumentation.foldCostCollector = (cost) => {
+    // v54: cost is stroke-equivalent total (1 + agreedTotal/divisor).
     if (!Number.isFinite(cost) || cost < 0) return;
-    const idx = Math.min(9, Math.floor(cost));
+    const idx = trueFoldCostBin(cost);
     actionStats.foldCostHist[idx]++;
   };
   LabState.instrumentation.potBucketCollector = (event, pot) => {
@@ -9906,14 +9960,16 @@ function _exportRunToCSVImpl(snap) {
   }
   if (m.foldCostHist) {
     rows.push([]);
-    rows.push(['--- foldCostHistogram ---']);
-    rows.push(['strokeCost','count']);
+    rows.push(['--- trueFoldCostHistogram (stroke-equivalent total) ---']);
+    rows.push(['# v54: cost = +1 stroke (bogey) + agreedTotal / round-end-divisor']);
+    rows.push(['costBin','count','rate']);
     const totalFolds = m.foldCostHist.reduce((a, b) => a + b, 0);
     rows.push(['totalFolds', totalFolds]);
     m.foldCostHist.forEach((cnt, i) => {
-      const label = i === 9 ? '9+' : String(i);
+      const label = (typeof TRUE_FOLD_COST_LABELS !== 'undefined' && TRUE_FOLD_COST_LABELS[i])
+        ? TRUE_FOLD_COST_LABELS[i] : String(i);
       const rate = totalFolds > 0 ? (cnt / totalFolds).toFixed(4) : '0';
-      rows.push(['+' + label, cnt, rate]);
+      rows.push([label, cnt, rate]);
     });
   }
   if (m.potBucketsAtFold || m.potBucketsAtShowdown || m.potBucketsAtTie) {
@@ -10679,8 +10735,9 @@ async function runSimulator(cfg, onProgress) {
     }
   };
   LabState.instrumentation.foldCostCollector = (cost) => {
+    // v54: cost is stroke-equivalent total (1 + agreedTotal/divisor).
     if (!Number.isFinite(cost) || cost < 0) return;
-    const idx = Math.min(9, Math.floor(cost));
+    const idx = trueFoldCostBin(cost);
     actionStats.foldCostHist[idx]++;
   };
   LabState.instrumentation.potBucketCollector = (event, pot) => {
@@ -11538,15 +11595,18 @@ function renderActiveRun(root, r) {
       cvPotRes,
       'Folds should cluster in small pots (<8). Big-pot folds mean AI is paying maximum honey loss instead of seeing showdown.'));
   }
-  // Fold-cost histogram — under YJ flat-fold-cost it should be 100% at +1.
+  // v54 TRUE FOLD COST histogram — stroke-equivalent total cost paid by the
+  // folder. Includes both the +1 bogey AND the honey forfeit converted via
+  // round-end divisor. Replaces the v44 golf-only histogram, which was a
+  // tautology (always 100% at +1 since v46's flat formula).
   let cvFoldCost = null;
   if (m.foldCostHist && m.foldCostHist.some(c => c > 0)) {
     cvFoldCost = el('canvas', { width: '520', height: '240' });
     gridAI.appendChild(makeChartCard(
-      'Fold Cost Histogram',
-      'Stroke cost per fold · bins +0..+9',
+      'True Fold Cost · stroke-equivalent',
+      'Total cost paid = 1 stroke (bogey) + agreedTotal / round-end-divisor',
       cvFoldCost,
-      'v46+ uses flat +1 fold cost. If anything is non-zero outside +1, an old commitment-escalating formula has crept back in.'));
+      'Cheap folds (1.00–1.50) = small-pot tactical bails. Expensive folds (3.00+) = the AI paid maximum honey before bailing — a leak. Healthy YJ skews left.'));
   }
   // Bluff-read suppression by readingDepth bucket (v50 C diagnostic).
   let cvBluffRead = null;
@@ -11843,12 +11903,15 @@ function renderActiveRun(root, r) {
       });
     }
     if (cvFoldCost) {
-      safeDraw(cvFoldCost, 'foldCostHist', () => {
+      safeDraw(cvFoldCost, 'trueFoldCostHist', () => {
         const items = (m.foldCostHist || []).map((v, i) => ({
-          label: '+' + (i === 9 ? '9+' : i),
+          label: TRUE_FOLD_COST_LABELS[i] || String(i),
           value: +v || 0,
         }));
-        drawSimpleBars(cvFoldCost, items, { xLabel: 'Stroke cost', yLabel: 'Folds' });
+        drawSimpleBars(cvFoldCost, items, {
+          xLabel: 'Stroke-equivalent total cost',
+          yLabel: 'Folds',
+        });
       });
     }
     if (cvBluffRead) {
