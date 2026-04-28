@@ -837,6 +837,7 @@
       <a href="#solo" data-route="solo"><span class="ico">🐝</span> Single Player</a>
       <a href="#multiplayer" data-route="multiplayer"><span class="ico">🎮</span> Multiplayer</a>
       <a href="#rules" data-route="rules"><span class="ico">📘</span> Rulebook</a>
+      <a href="#decisiontree" data-route="decisiontree"><span class="ico">🌳</span> Decision Tree</a>
       <a href="#codex" data-route="codex"><span class="ico">📖</span> Codex</a>
     </nav>
 
@@ -860,6 +861,7 @@
     <div class="view" data-view="buzz"></div>
     <div class="view" data-view="solo"></div>
     <div class="view" data-view="multiplayer"></div>
+    <div class="view" data-view="decisiontree"></div>
     <div class="view" data-view="codex"></div>
   </main>
 </div>
@@ -882,7 +884,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.28-v59";
+const APP_VERSION = "2026.04.28-v60";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3941,7 +3943,7 @@ function onHashChange() {
     location.replace(location.pathname + location.search + '#simulator?mode=' + mode + extra);
     return;
   }
-  const valid = ['dashboard','simulator','events','players','hof','analytics','compare','rules','buzz','solo','multiplayer','codex'];
+  const valid = ['dashboard','simulator','events','players','hof','analytics','compare','rules','buzz','solo','multiplayer','decisiontree','codex'];
   const name = valid.indexOf(parsed.view) !== -1 ? parsed.view : 'dashboard';
   if (name === 'players' && !parsed.params.profileId) PlayersState.profileId = null;
   if (document.startViewTransition) {
@@ -4342,7 +4344,7 @@ Views.codex = function() {
     h3('Aggregate Stroke Play (PGA Masters feel)'),
     p('Every player in the field plays 4 rounds × 18 holes = 72 total holes. Each round you are paired with a fresh opponent (rotating-partner stroke play). Per-hole zero-sum honey credits accumulate within each pairing; at the end of 72 holes, total net honey across all four rounds is divided by 72 (the round length, not 18) and subtracted from your total scorecard. The player with the lowest net total wins. Optional cuts at the 36-hole and 54-hole marks trim the field. Lower per-event variance, stronger long-run skill signal than bracket play.'),
     h3('The Main Event'),
-    p('Single championship per season. The default Main field is ' + fmtNum(cfg.mainField || 128) + ' players (Players-Championship-style invitational rather than mass-WSOP). Field composition is 70% via the satellite ladder and 30% direct entry (champion exemptions plus top season-points players); see Section 8 for the ladder mechanics. In bracket-knockout format, the Main runs as a standard bracket ending in a 72-hole heads-up final. In aggregate format, the Main runs as 72-hole aggregate stroke play across the entire field. Either way, the Main always settles on 72 holes.'),
+    p('Single championship per season. The default Main field is ' + fmtNum(cfg.mainField || 128) + ' players (Players-Championship-style invitational rather than mass-WSOP). Field composition is ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65)) * 100).toFixed(0) + '% via the satellite ladder and ' + ((cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65) * 100).toFixed(0) + '% direct entry (champion exemptions plus top season-points players); see Section 8 for the ladder mechanics. In bracket-knockout format, the Main runs as a standard bracket ending in a 72-hole heads-up final. In aggregate format, the Main runs as 72-hole aggregate stroke play across the entire field. Either way, the Main always settles on 72 holes.'),
     h3('Playoffs'),
     p('Sudden-death only when needed. If two or more players are tied for first after the event\'s scheduled holes, a short 2–4 hole aggregate playoff resolves the tie. No mandatory 1v1 final is forced when the natural result is unambiguous.')
   );
@@ -4366,7 +4368,7 @@ Views.codex = function() {
     h3('Tied-hole carry arithmetic'),
     p('When a hole ties at showdown, the entire pot rolls into the NEXT hole as starting honey. The next hole opens at (2 mandatory + carry) instead of just 2. Multiple consecutive ties stack: tie-of-tie produces a starting pot equal to the prior tied pot. Whoever wins the next decisive hole sweeps the entire stack at once. If you suspect a tied river is coming, a small bet that builds a small pot may be worth more than a large bet that you fold to — because the small carry survives into the next hole, while a fold loses the agreed total outright.'),
     h3('Major qualifier path'),
-    p('Top finishers in each major earn a free Main Event seat (the satellite mechanic). Current defaults: top ' + (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 512) + ' qualifiers per major × ' + (cfg.majors || 4) + ' majors = up to ' + ((cfg.majors || 4) * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 512)) + ' free seats per Main. Each seat is worth ' + fmtMoney(cfg.buyInMain || 10000) + ' (the direct buy-in price). Deep major performance compounds — a single major run can pay for a Main seat.'),
+    p('Top finishers in each major earn a free Main Event seat (the satellite mechanic). Current defaults: top ' + (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 28) + ' qualifiers per major × ' + (cfg.majors || 4) + ' majors = up to ' + ((cfg.majors || 4) * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 28)) + ' free seats per Main. Each seat is worth ' + fmtMoney(cfg.buyInMain || 10000) + ' (the direct buy-in price). Deep major performance compounds — a single major run can pay for a Main seat.'),
     h3('Long-run skill signal'),
     p('Heads-up poker tournaments produce high single-event variance even for the best players. The simulator\'s linear skillR² is naturally modest (0.05–0.45 range) because one Main lottery win can dominate a career. The sharper signals to track:'),
     ul([
@@ -4385,7 +4387,7 @@ Views.codex = function() {
     tbl(
       ['Event', 'Buy-in', 'Field size'],
       [
-        ['Regular',    fmtMoney(cfg.buyInRegular != null ? cfg.buyInRegular : 100), fmtNum(cfg.regularField != null ? cfg.regularField : 2048)],
+        ['Regular',    fmtMoney(cfg.buyInRegular != null ? cfg.buyInRegular : 100), fmtNum(cfg.regularField != null ? cfg.regularField : 512)],
         ['Major',      fmtMoney(cfg.buyInMajor   != null ? cfg.buyInMajor   : 1000), fmtNum(cfg.majorField   != null ? cfg.majorField   : 1024)],
         ['Main Event', fmtMoney(cfg.buyInMain    != null ? cfg.buyInMain    : 10000), fmtNum(cfg.mainField    != null ? cfg.mainField    : 128)],
       ]
@@ -4501,15 +4503,15 @@ Views.codex = function() {
     tbl(
       ['Event Tier', 'Direct Buy-in', 'Satellite Tier(s)', 'Field Size'],
       [
-        ['Regular',    fmtMoney(cfg.buyInRegular || 100), fmtMoney(cfg.satelliteTierRegular || 15) + ' satellite (Tier 1)', fmtNum(cfg.regularField || 2048)],
-        ['Major',      fmtMoney(cfg.buyInMajor   || 1000), fmtMoney(cfg.satelliteTierMajor || 150) + ' satellite (Tier 2)', fmtNum(cfg.majorField || 1024)],
+        ['Regular',    fmtMoney(cfg.buyInRegular || 100), fmtMoney(cfg.satelliteTierRegular || 15) + ' satellite (Tier 1)', fmtNum(cfg.regularField || 512)],
+        ['Major',      fmtMoney(cfg.buyInMajor   || 1000), fmtMoney(cfg.satelliteTierMajor || 150) + ' satellite (Tier 2)', fmtNum(cfg.majorField || 256)],
         ['Main Event', fmtMoney(cfg.buyInMain    || 10000), (Array.isArray(cfg.satelliteTierMain) ? cfg.satelliteTierMain.map(fmtMoney).join(' → ') : '$500 → $1,500 → $4,000 → $5,000') + ' (Tier 3 ladder)', fmtNum(cfg.mainField || 128)],
       ]
     ),
     h3('Rake Mechanics'),
     p('Rake = ' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '% of every direct buy-in. The satellite ladder generates additional rake at every tier: a player who climbs from Tier 1 → Tier 2 → Tier 3 → Main has paid into multiple separate rake events, so the Tour collects more total revenue from satellite climbers than from a single direct buy-in of equivalent face value. This is the intentional design — the ladder funds the Tour foundation while keeping the headline Main buy-in accessible to anyone who plays the qualifier path.'),
     h3('Main Event Field Composition'),
-    p('The Main field (default ' + fmtNum(cfg.mainField || 128) + ' seats) is composed ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30)) * 100).toFixed(0) + '% via the satellite ladder and ' + ((cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30) * 100).toFixed(0) + '% via direct entry. Direct seats prioritize champion exemptions (past Main winners within the ' + (cfg.exemptionYears || 3) + '-year window) and then top season-points players. Satellite seats prioritize current-year major qualifiers (top ' + fmtNum(cfg.mainQualifiersPerMajor || 512) + ' from each major), then active cashers across regulars and majors. Any remaining seats fill from open random buy-in.'),
+    p('The Main field (default ' + fmtNum(cfg.mainField || 128) + ' seats) is composed ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65)) * 100).toFixed(0) + '% via the satellite ladder and ' + ((cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65) * 100).toFixed(0) + '% via direct entry. Direct seats prioritize champion exemptions (past Main winners within the ' + (cfg.exemptionYears || 3) + '-year window) and then top season-points players. Satellite seats prioritize current-year major qualifiers (top ' + fmtNum(cfg.mainQualifiersPerMajor || 28) + ' from each major), then active cashers across regulars and majors. Any remaining seats fill from open random buy-in.'),
     h3('Progressive Satellite Requirement'),
     p('A player must cash in a lower-tier event to unlock the next satellite tier. In the offline simulator this is implemented through the existing event types: cashing in regulars during the season counts as Tier-1 progression; cashing in majors counts as Tier-2/3 progression; the mainQualifierUntil flag (top finishers of this year\'s majors) is the top gate. The satellite priority order is: major qualifiers → active cashers → open entry.'),
     h3('Why This Maximizes Rake While Keeping the Game Fair'),
@@ -4987,7 +4989,7 @@ Views.rules = function() {
   cfgStrip.appendChild(snap('Regular cap', (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6), 'max agreed pot'));
   cfgStrip.appendChild(snap('Major cap', (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10), 'max agreed pot'));
   cfgStrip.appendChild(snap('Main cap', (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' / ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10), 'early · 72-hole finals'));
-  cfgStrip.appendChild(snap('Major field', (cfg.majorField != null ? cfg.majorField : 1024), 'players per major'));
+  cfgStrip.appendChild(snap('Major field', (cfg.majorField != null ? cfg.majorField : 256), 'players per major'));
   cfgStrip.appendChild(snap('Main field',  (cfg.mainField  != null ? cfg.mainField  : 128),  'players per main'));
   cfgStrip.appendChild(snap('Exemption', (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' yrs', 'past champs play free'));
   cfgStrip.appendChild(snap('Season schedule', (cfg.majors != null ? cfg.majors : 12) + ' / ' + (cfg.regulars != null ? cfg.regulars : 40) + ' / ' + (cfg.mains != null ? cfg.mains : 1), 'majors · regulars · main'));
@@ -5076,7 +5078,7 @@ Views.rules = function() {
     'Each event sets a maximum agreed pot size for any single hole — the stroke cap. Default per-event caps: Regular ' + (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6) + ' honey, Major ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 10) + ' honey, Main early rounds ' + (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 6) + ' honey, Main 72-hole finals ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 10) + ' honey. Within each hole, the cap unlocks progressively by street: 25% available by Tea Box (preflop), 50% by Drive (flop), 75% by Hazard (turn), 100% by Putt (river). For caps of 3 or less the progressive unlock is disabled and the full cap is available from Tea Box. This forces pot escalation to mirror real no-limit Hold\'em rather than a single-cap free-for-all on the first street.'
   ));
   core.appendChild(rule('AI decision logic (pure Honey-Stroke EV)',
-    'AI opponents evaluate each decision using YJ-aware EV math, not classic poker pot odds. They compute their adjusted equity (`adj`) on every street, then directly compare expected value across the available actions: ev_fold = −divisor − previousAgreedTotal honey; ev_check/call = (2·adj − 1) × pot − showdownGolfCost(adj); ev_bet/raise = foldEquity·evWinByFold + (1 − foldEquity)·evShowdown for each candidate new agreed total. The bot picks the action with the highest EV, perturbed by player-specific decision noise (low-skill players inject more randomness; elites act closer to optimal). YJ profile optima are tuned to foldOpt 0.05, betOpt 0.55, raiseOpt 0.75 — these are NOT classic poker thresholds; they reflect the optimal aggression level when the pot itself directly improves your scorecard.'
+    'AI opponents evaluate each decision using YJ-aware EV math, not classic poker pot odds. They compute their adjusted equity (`adj`) on every street, then directly compare expected value across the available actions: ev_fold = −divisor − previousAgreedTotal honey; ev_check/call = (2·adj − 1) × pot − showdownGolfCost(adj); ev_bet/raise = foldEquity·evWinByFold + (1 − foldEquity)·evShowdown for each candidate new agreed total. The bot picks the action with the highest EV, perturbed by player-specific decision noise (low-skill players inject more randomness; elites act closer to optimal). YJ profile optima are tuned to foldOpt 0.25, betOpt 0.45, raiseOpt 0.75 — these are NOT classic poker thresholds; they reflect the optimal aggression level when the pot itself directly improves your scorecard. NOTE the inverted foldOpt polarity: in YJ, HIGH foldOpt = SKILLED play (fold rarely, only when adj falls well below required equity), because folding caps your hand at +1 bogey while showdown can realize -1 to -5 strokes when you have any equity at all.'
   ));
   // === Aggregate-stroke-play lore — describes the future-target Honey-Stroke
   // format. This text ships with the Rules tab regardless of whether the engine
@@ -5094,10 +5096,10 @@ Views.rules = function() {
     'If two or more players are tied for first after 72 holes, the match enters a short sudden-death playoff (2-4 hole aggregate, 1v1 or small group). No mandatory 72-hole heads-up final for any event — playoffs only fire when needed.'
   ));
   core.appendChild(rule('Field selection',
-    'Regulars (default field ' + fmtNum(cfg.regularField || 2048) + '): 65% prior-season merit + 20% career ranking + 15% open qualifier. Majors (default field ' + fmtNum(cfg.majorField || 1024) + '): ' + (((cfg.majorChampShare != null ? cfg.majorChampShare : 0.14) * 100).toFixed(0)) + '% champion exemptions + ' + (((cfg.majorRankingShare != null ? cfg.majorRankingShare : 0.24) * 100).toFixed(0)) + '% career ranking + ' + (((cfg.majorSeasonShare != null ? cfg.majorSeasonShare : 0.26) * 100).toFixed(0)) + '% prior-season + ' + (((cfg.majorCareerShare != null ? cfg.majorCareerShare : 0.14) * 100).toFixed(0)) + '% career performance + ' + (((cfg.majorOpenShare != null ? cfg.majorOpenShare : 0.22) * 100).toFixed(0)) + '% open qualifier. Main Event (default field ' + fmtNum(cfg.mainField || 128) + '): ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30)) * 100).toFixed(0) + '% via the satellite ladder (qualifiers + active cashers in priority order), ' + ((cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30) * 100).toFixed(0) + '% direct entry (champion exemptions first, then top season-points players). Past major champions enter all subsequent majors free within ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years of their most recent major win; the exemption window renews on each new major win.'
+    'Regulars (default field ' + fmtNum(cfg.regularField || 512) + '): 65% prior-season merit + 20% career ranking + 15% open qualifier. Majors (default field ' + fmtNum(cfg.majorField || 256) + '): ' + (((cfg.majorChampShare != null ? cfg.majorChampShare : 0.14) * 100).toFixed(0)) + '% champion exemptions + ' + (((cfg.majorRankingShare != null ? cfg.majorRankingShare : 0.24) * 100).toFixed(0)) + '% career ranking + ' + (((cfg.majorSeasonShare != null ? cfg.majorSeasonShare : 0.26) * 100).toFixed(0)) + '% prior-season + ' + (((cfg.majorCareerShare != null ? cfg.majorCareerShare : 0.14) * 100).toFixed(0)) + '% career performance + ' + (((cfg.majorOpenShare != null ? cfg.majorOpenShare : 0.22) * 100).toFixed(0)) + '% open qualifier. Main Event (default field ' + fmtNum(cfg.mainField || 128) + '): ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65)) * 100).toFixed(0) + '% via the satellite ladder (qualifiers + active cashers in priority order), ' + ((cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65) * 100).toFixed(0) + '% direct entry (champion exemptions first, then top season-points players). Past major champions enter all subsequent majors free within ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years of their most recent major win; the exemption window renews on each new major win.'
   ));
   core.appendChild(rule('Satellites — majors as qualifiers for the Main',
-    'Every major doubles as a Main Event satellite. The top ' + fmtNum(cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 512) + ' finishers in each major earn a free seat in this year\'s Main Event (no Main buy-in required). With ' + (cfg.majors != null ? cfg.majors : 12) + ' majors per season, that\'s up to ' + fmtNum((cfg.majors != null ? cfg.majors : 12) * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 512)) + ' qualifier seats per Main — though only ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30)) * 100).toFixed(0) + '% of the Main field (' + fmtNum(Math.round((cfg.mainField || 128) * (1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.30)))) + ' of ' + fmtNum(cfg.mainField || 128) + ' seats) is allocated to satellite winners, so when qualifiers exceed available seats they are seated by major-finish priority. Each satellite-won seat is worth ' + fmtMoney(cfg.buyInMain || 10000) + ' in saved buy-in.'
+    'Every major doubles as a Main Event satellite. The top ' + fmtNum(cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 28) + ' finishers in each major earn a free seat in this year\'s Main Event (no Main buy-in required). With ' + (cfg.majors != null ? cfg.majors : 12) + ' majors per season, that\'s up to ' + fmtNum((cfg.majors != null ? cfg.majors : 12) * (cfg.mainQualifiersPerMajor != null ? cfg.mainQualifiersPerMajor : 28)) + ' qualifier seats per Main — though only ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65)) * 100).toFixed(0) + '% of the Main field (' + fmtNum(Math.round((cfg.mainField || 128) * (1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65)))) + ' of ' + fmtNum(cfg.mainField || 128) + ' seats) is allocated to satellite winners, so when qualifiers exceed available seats they are seated by major-finish priority. Each satellite-won seat is worth ' + fmtMoney(cfg.buyInMain || 10000) + ' in saved buy-in.'
   ));
   // === Event Pricing & Qualification subsection ===
   // Documents the full satellite-ladder economy plus the 70/30 Main field split.
@@ -5105,7 +5107,7 @@ Views.rules = function() {
   // requirement, and how the system makes multi-accounting unprofitable for an
   // online deployment context (offline sim retains the model documentation).
   core.appendChild(rule('Event Pricing & Qualification',
-    'Direct buy-ins: Regular ' + fmtMoney(cfg.buyInRegular || 100) + ', Major ' + fmtMoney(cfg.buyInMajor || 1000) + ', Main ' + fmtMoney(cfg.buyInMain || 10000) + '. Satellite ladder: Regular tier ' + fmtMoney(cfg.satelliteTierRegular || 15) + ', Major tier ' + fmtMoney(cfg.satelliteTierMajor || 150) + ', Main tier ladder ' + (Array.isArray(cfg.satelliteTierMain) ? cfg.satelliteTierMain.map(fmtMoney).join(' → ') : '$500 → $1,500 → $4,000') + '. Progressive requirement: a player must cash in a lower-tier event to unlock the next satellite tier. The Main Event field is composed 70% via the satellite ladder (qualifiers + active cashers) and 30% direct entry (top 30% of previous season + champion exemptions). The progressive lock makes Sybil-pattern multi-accounting unprofitable: a fresh account starting at the bottom must cash repeatedly across regulars and majors to reach the Main, paying multiple buy-ins along the way — so the cost of fielding a fake account exceeds the expected return from a single deep run.'
+    'Direct buy-ins: Regular ' + fmtMoney(cfg.buyInRegular || 100) + ', Major ' + fmtMoney(cfg.buyInMajor || 1000) + ', Main ' + fmtMoney(cfg.buyInMain || 10000) + '. Satellite ladder: Regular tier ' + fmtMoney(cfg.satelliteTierRegular || 15) + ', Major tier ' + fmtMoney(cfg.satelliteTierMajor || 150) + ', Main tier ladder ' + (Array.isArray(cfg.satelliteTierMain) ? cfg.satelliteTierMain.map(fmtMoney).join(' → ') : '$500 → $1,500 → $4,000') + '. Progressive requirement: a player must cash in a lower-tier event to unlock the next satellite tier. The Main Event field is composed ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65)) * 100).toFixed(0) + '% via the satellite ladder (qualifiers + active cashers) and ' + ((cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65) * 100).toFixed(0) + '% direct entry (champion exemptions first, then top season-points players). The progressive lock makes Sybil-pattern multi-accounting unprofitable: a fresh account starting at the bottom must cash repeatedly across regulars and majors to reach the Main, paying multiple buy-ins along the way — so the cost of fielding a fake account exceeds the expected return from a single deep run.'
   ));
   core.appendChild(rule('Yellow Jacket Inc. economics',
     'grossPool = Σ direct buy-ins. revenue = grossPool × rakePercent (default ' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '%) — this is the Tour\'s take. prizePool = grossPool − revenue + sponsorPurse. Sponsor purses (when configured per event) ride on top of player money — modeled after PGA Tour broadcast/sponsor money — and are NOT raked. Payouts go to the top 15% of the field (with a floor of 2 paid places and a cap of 64), decaying geometrically across positions with default decay factor ' + (cfg.payoutDecay != null ? cfg.payoutDecay : 0.74) + ' (each successive ITM position pays the prior position × the decay factor). Satellite winners do not contribute to the gross pool of the higher-tier event — their seats are already paid for by the lower-tier satellite\'s player pool.'
@@ -5139,6 +5141,377 @@ Views.rules = function() {
     el('a', { href: '#buzz', style: 'color: var(--gold); text-decoration: none; font-weight: 600;', text: "Buzz's Corner →" }),
     ' · For the live simulator and its config sliders, visit ',
     el('a', { href: '#simulator', style: 'color: var(--gold); text-decoration: none; font-weight: 600;', text: 'Simulator →' })
+  ));
+  view.appendChild(links);
+};
+
+// =============================================================================
+// DECISION TREE — visual walkthrough of every stage of a Yellow Jacket hole.
+// Tea Box → Drive → Hazard → Putt → Cup mapped to preflop/flop/turn/river/showdown,
+// with CSS-rendered playing cards and YJ-aware decision rationale at every node.
+// Card art is drawn with HTML/CSS (no external images) so this works fully offline.
+// =============================================================================
+
+// Render a single playing card. rank: '2'..'9','T','J','Q','K','A'. suit: 'S','H','D','C'.
+// size: 'sm' (compact) | 'md' (default) | 'lg' (showcase). Returns a styled div.
+function dtCard(rank, suit, size) {
+  size = size || 'md';
+  const isRed = (suit === 'H' || suit === 'D');
+  const sym = { S: '♠', H: '♥', D: '♦', C: '♣' }[suit] || '?';
+  const dims = {
+    sm: { w: 36, h: 50, rk: 11, sk: 14, ck: 22 },
+    md: { w: 50, h: 70, rk: 14, sk: 18, ck: 30 },
+    lg: { w: 70, h: 100, rk: 18, sk: 24, ck: 42 },
+  }[size];
+  const color = isRed ? '#c8102e' : '#0d1117';
+  const card = el('div', {
+    class: 'dt-card',
+    style: 'display:inline-flex;flex-direction:column;justify-content:space-between;'
+      + 'width:' + dims.w + 'px;height:' + dims.h + 'px;'
+      + 'background:#fff;color:' + color + ';'
+      + 'border:1px solid rgba(0,0,0,0.18);border-radius:6px;'
+      + 'padding:4px 6px;margin:3px;box-shadow:0 1px 3px rgba(0,0,0,0.25);'
+      + 'font-family:Georgia,serif;font-weight:700;line-height:1;user-select:none;'
+  });
+  const top = el('div', {
+    style: 'display:flex;flex-direction:column;align-items:flex-start;font-size:' + dims.rk + 'px;'
+  });
+  top.appendChild(el('span', { text: rank }));
+  top.appendChild(el('span', { text: sym, style: 'font-size:' + dims.sk + 'px;' }));
+  const middle = el('div', {
+    style: 'text-align:center;font-size:' + dims.ck + 'px;flex:1;display:flex;align-items:center;justify-content:center;'
+  });
+  middle.appendChild(el('span', { text: sym }));
+  const bot = el('div', {
+    style: 'display:flex;flex-direction:column;align-items:flex-end;font-size:' + dims.rk + 'px;transform:rotate(180deg);'
+  });
+  bot.appendChild(el('span', { text: rank }));
+  bot.appendChild(el('span', { text: sym, style: 'font-size:' + dims.sk + 'px;' }));
+  card.appendChild(top); card.appendChild(middle); card.appendChild(bot);
+  return card;
+}
+
+// Render a face-down card (for hidden opponent holes).
+function dtCardBack(size) {
+  size = size || 'md';
+  const dims = { sm: { w: 36, h: 50 }, md: { w: 50, h: 70 }, lg: { w: 70, h: 100 } }[size];
+  return el('div', {
+    style: 'display:inline-block;width:' + dims.w + 'px;height:' + dims.h + 'px;'
+      + 'background:repeating-linear-gradient(45deg,#1a3a8c 0 6px,#0f2a6c 6px 12px);'
+      + 'border:1px solid rgba(0,0,0,0.3);border-radius:6px;margin:3px;'
+      + 'box-shadow:0 1px 3px rgba(0,0,0,0.25);'
+  });
+}
+
+// Render a row of cards from an array of [rank,suit] tuples. labelText optional.
+function dtCardRow(cards, labelText) {
+  const wrap = el('div', { style: 'display:flex;flex-direction:column;gap:4px;align-items:flex-start;' });
+  if (labelText) wrap.appendChild(el('div', { class: 'sub', style: 'font-size:11px;opacity:0.75;', text: labelText }));
+  const row = el('div', { style: 'display:flex;flex-wrap:wrap;align-items:center;' });
+  for (const c of cards) {
+    if (c === '?' || c == null) row.appendChild(dtCardBack('md'));
+    else row.appendChild(dtCard(c[0], c[1], 'md'));
+  }
+  wrap.appendChild(row);
+  return wrap;
+}
+
+// Render a stage card: title, mapping line, narrative, optional cards row, optional decision-rationale block.
+function dtStage(opts) {
+  const card = el('div', {
+    class: 'card dt-stage',
+    style: 'padding:18px 20px;margin-bottom:18px;border-left:4px solid ' + (opts.accent || 'var(--gold)') + ';'
+  });
+  const head = el('div', { style: 'display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:6px;' });
+  head.appendChild(el('h2', {
+    text: opts.title,
+    style: 'margin:0;font-size:20px;color:' + (opts.accent || 'var(--gold)') + ';'
+  }));
+  if (opts.mapping) head.appendChild(el('div', {
+    class: 'sub', style: 'font-size:12px;opacity:0.7;font-style:italic;', text: opts.mapping
+  }));
+  card.appendChild(head);
+  if (opts.lede) card.appendChild(el('p', { text: opts.lede, style: 'margin:6px 0 12px 0;' }));
+  if (opts.cards) {
+    const cardsWrap = el('div', { style: 'display:flex;gap:24px;flex-wrap:wrap;margin:10px 0;padding:12px;background:rgba(255,255,255,0.03);border-radius:6px;' });
+    for (const block of opts.cards) cardsWrap.appendChild(block);
+    card.appendChild(cardsWrap);
+  }
+  if (opts.actions) {
+    const actWrap = el('div', { style: 'margin-top:8px;' });
+    actWrap.appendChild(el('h4', { text: 'Available actions', style: 'margin:6px 0;font-size:13px;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85;' }));
+    const actList = el('ul', { style: 'margin:0 0 8px 18px;' });
+    for (const a of opts.actions) {
+      const li = el('li', { style: 'margin-bottom:4px;' });
+      dtRich(a).forEach(n => li.appendChild(n));
+      actList.appendChild(li);
+    }
+    actWrap.appendChild(actList);
+    card.appendChild(actWrap);
+  }
+  if (opts.rationale) {
+    const ratWrap = el('div', { style: 'margin-top:10px;padding:10px 12px;background:rgba(255,200,0,0.06);border-radius:6px;border:1px solid rgba(255,200,0,0.18);' });
+    ratWrap.appendChild(el('h4', { text: 'Decision rationale (YJ-aware EV)', style: 'margin:0 0 6px 0;font-size:12px;letter-spacing:0.05em;text-transform:uppercase;color:var(--gold);' }));
+    const ratList = el('ul', { style: 'margin:0 0 0 18px;' });
+    for (const r of opts.rationale) {
+      const li = el('li', { style: 'margin-bottom:4px;font-size:13px;' });
+      dtRich(r).forEach(n => li.appendChild(n));
+      ratList.appendChild(li);
+    }
+    ratWrap.appendChild(ratList);
+    card.appendChild(ratWrap);
+  }
+  return card;
+}
+
+// Tokenize a simple inline-rich string into a DocumentFragment-like array of
+// nodes: support **bold** and `code` markers only. Avoids innerHTML so we keep
+// the security hook happy while still allowing inline emphasis in rationale text.
+function dtRich(s) {
+  const out = [];
+  let buf = '';
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] === '*' && s[i + 1] === '*') {
+      if (buf) { out.push(document.createTextNode(buf)); buf = ''; }
+      const end = s.indexOf('**', i + 2);
+      if (end === -1) { buf += s.slice(i); break; }
+      out.push(el('b', { text: s.slice(i + 2, end) }));
+      i = end + 2;
+    } else if (s[i] === '`') {
+      if (buf) { out.push(document.createTextNode(buf)); buf = ''; }
+      const end = s.indexOf('`', i + 1);
+      if (end === -1) { buf += s.slice(i); break; }
+      out.push(el('code', { text: s.slice(i + 1, end), style: 'font-size: 12px; background: rgba(255,200,0,0.12); padding: 1px 4px; border-radius: 3px;' }));
+      i = end + 1;
+    } else {
+      buf += s[i]; i++;
+    }
+  }
+  if (buf) out.push(document.createTextNode(buf));
+  return out;
+}
+
+Views.decisiontree = function() {
+  const view = $('[data-view="decisiontree"]'); clear(view);
+  const cfg = (LabState && LabState.config) || {};
+  const mag = cfg.honeyMagnitude != null ? cfg.honeyMagnitude : 5;
+  const backNineMult = cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2;
+
+  // Local helpers (mirrors the pattern in Views.codex / Views.rules).
+  function section(title, ...children) {
+    const card = el('div', { class: 'card', style: 'margin-top: 16px;' });
+    card.appendChild(el('h2', { text: title }));
+    children.forEach(c => { if (c) card.appendChild(c); });
+    return card;
+  }
+  function p(text) {
+    return el('p', { class: 'ui-sans', style: 'font-size: 13px; line-height: 1.6; color: var(--text-primary); margin-top: 6px;', text: text });
+  }
+  function pRich(text) {
+    const node = el('p', { class: 'ui-sans', style: 'font-size: 13px; line-height: 1.6; color: var(--text-primary); margin-top: 6px;' });
+    dtRich(text).forEach(n => node.appendChild(n));
+    return node;
+  }
+  function tbl(headers, rows) {
+    const t = el('table', { style: 'margin-top: 8px; font-size: 12px;' });
+    const thead = el('thead');
+    const tr = el('tr');
+    headers.forEach(h => tr.appendChild(el('th', { text: h })));
+    thead.appendChild(tr);
+    t.appendChild(thead);
+    const tb = el('tbody');
+    rows.forEach(r => {
+      const row = el('tr');
+      r.forEach(c => row.appendChild(el('td', { text: c })));
+      tb.appendChild(row);
+    });
+    t.appendChild(tb);
+    return t;
+  }
+
+  view.appendChild(el('div', { class: 'crumb' },
+    el('a', { href: '#dashboard', text: 'Tour Home' }), ' · Decision Tree'
+  ));
+  view.appendChild(el('div', { class: 'page-header' },
+    el('div', null,
+      el('h1', { text: 'Decision Tree' }),
+      el('div', { class: 'sub', text: 'Every stage of a Yellow Jacket hole — cards, actions, and the rationale that drives them.' })
+    )
+  ));
+
+  // ===== Intro =====
+  const intro = section('Walking the Course',
+    p('A Yellow Jacket hole is a heads-up Texas Hold\'em hand re-skinned as a single hole of golf. Five named stages — Tea Box, Drive, Hazard, Putt, The Cup — map directly to preflop, flop, turn, river, and showdown. Below, each stage shows the cards you typically see, the actions available to you, and the YJ-aware decision logic that distinguishes Yellow Jacket strategy from classic poker.'),
+    p('The core insight: in Yellow Jacket, the pot itself improves your scorecard (winning honey is divided by the round-length divisor and subtracted from your golf total). That changes the math at every street — folding is more expensive than poker intuition suggests, and calling thin equities is more profitable than it looks.')
+  );
+  view.appendChild(intro);
+
+  // ===== The hand we'll walk =====
+  // Hero: A♠ K♠ (suited Broadway, top-10% preflop). Villain: hidden.
+  // Flop: K♥ 7♠ 2♣ → top pair, top kicker.
+  // Turn: 4♠ → adds nut flush draw.
+  // River: 9♠ → made nut flush.
+  const heroHole = [['A', 'S'], ['K', 'S']];
+  const flop = [['K', 'H'], ['7', 'S'], ['2', 'C']];
+  const turn = [['4', 'S']];
+  const river = [['9', 'S']];
+
+  view.appendChild(el('h2', {
+    text: 'A worked example: A♠K♠ from Tea Box to Cup',
+    style: 'margin:24px 0 12px 0;color:var(--gold);font-size:18px;'
+  }));
+  view.appendChild(p('Follow one strong-but-not-locked starting hand through every stage. Decisions adapt as the board comes; rationale boxes show the YJ-aware EV lens at each step.'));
+
+  // Tea Box
+  view.appendChild(dtStage({
+    title: '1 · Tea Box',
+    mapping: 'preflop · hole cards dealt · mandatory opener posts',
+    accent: '#3a8fcc',
+    lede: 'Both players are dealt two private cards. A mandatory 2-honey opener seeds the pot before any action — replacing classic blinds/antes with a symmetric ante that both players post every hole. On holes 10–18 of any 18-hole round the opener doubles to ' + (2 * backNineMult) + ' honey (back-9 multiplier × ' + backNineMult + '), guaranteeing pot pressure on the closing stretch.',
+    cards: [
+      dtCardRow(heroHole, 'Hero (you) — A♠ K♠'),
+      dtCardRow(['?', '?'], 'Villain — face-down (concession poker)')
+    ],
+    actions: [
+      '**Check** — keep the agreed total at 2 (the opener) and see the flop.',
+      '**Bet/raise** — propose a NEW agreed total. The Tea-Box stroke cap is 25% of the per-event cap (e.g. 1.5 honey on a Major\'s 6-cap, rounded). NOT cumulative — bet/raise = propose, never sum.',
+      '**Fold** — concede the hole. You post +1 bogey on the scorecard, the opponent takes the previously-agreed pot (2 honey at this stage) as honey credit. Cards are NEVER revealed on a fold.'
+    ],
+    rationale: [
+      'A♠ K♠ is a top-decile starting hand. With 65% equity heads-up against a random hand, **adj** sits well above the bet threshold (foldOpt=0.25, betOpt=0.45 in YJ-tuned profiles).',
+      'In YJ, foldOpt has **inverted polarity** vs classic poker: high foldOpt = SKILLED play (rarely fold). Reason: folding caps your downside at +1 bogey, but showdown realizes -1 to -5 strokes when you have any equity at all. Conceding equity is structurally expensive.',
+      'Don\'t over-bet here. Premium hands extract value at **showdown**, not by forcing folds — a fold caps your reward at par + previously-agreed honey. The richer line is a small bet that gets called, then escalation when the board pairs your kicker.'
+    ]
+  }));
+
+  // Drive
+  view.appendChild(dtStage({
+    title: '2 · Drive',
+    mapping: 'flop · three community cards · stroke cap unlocks to 50%',
+    accent: '#f0a020',
+    lede: 'Three community cards are dealt face-up. The stroke cap unlocks to 50% (e.g. 5 honey on a Major\'s 10-cap). Most made hands and big draws are decided here.',
+    cards: [
+      dtCardRow(heroHole, 'Hero hole'),
+      dtCardRow(flop, 'Flop · K♥ 7♠ 2♣'),
+    ],
+    actions: [
+      '**Check** — pot stays at the previously-agreed total.',
+      '**Bet a new total** — propose any value up to 50% of the per-event cap. Skill-aware sizing: skilled bots blend optimal sizing (vs villain\'s estimated equity) with the random-aggression baseline.',
+      '**Call** — accept opponent\'s proposal as the new agreed total.',
+      '**Fold** — concede; +1 bogey, opponent takes previously-agreed honey.'
+    ],
+    rationale: [
+      'You flop top pair top kicker — adj ≈ 0.78 against most ranges. Strongly above betOpt; the engine bets for value.',
+      'YJ EV math: `ev_call = (2·adj − 1) × pot − showdownGolfCost(adj)`; `ev_bet/raise = foldEquity·evWinByFold + (1 − foldEquity)·evShowdown`. The bot picks the action with the highest EV after noise.',
+      'Bayesian bluff prior: per-match opponent history updates a posterior on villain\'s bluff frequency. If villain has been raising thin, your call/raise threshold tightens slightly; if they\'ve been honest, your read on a big bet is "villain has a hand" and you can fold marginal holdings cheaper than naive math suggests.'
+    ]
+  }));
+
+  // Hazard
+  view.appendChild(dtStage({
+    title: '3 · Hazard',
+    mapping: 'turn · fourth community card · stroke cap unlocks to 75%',
+    accent: '#c44b8a',
+    lede: 'A fourth community card lands. Stroke cap reaches 75%. Drawing hands have one card left to complete; made hands have one more chance to be outdrawn.',
+    cards: [
+      dtCardRow(heroHole, 'Hero hole'),
+      dtCardRow(flop.concat(turn), 'Board · K♥ 7♠ 2♣ 4♠'),
+    ],
+    actions: [
+      '**Check / Bet / Call / Fold** — same menu as previous streets, with a 75%-of-cap ceiling on any new agreed total.',
+    ],
+    rationale: [
+      'Turn brings 4♠ — you now hold the **nut flush draw** on top of top-pair-top-kicker. ~9 outs to the nut flush by the river (≈19.6% on the river alone, ≈35% by the river cumulative if the turn missed).',
+      'Pot odds vs YJ EV: classic poker would compute (call cost) / (call cost + pot) and call only if that ratio ≤ outs%. YJ adjusts: ev_call subtracts **showdownGolfCost(adj)** (the expected stroke penalty if you reach showdown and lose), so calling thin draws is slightly LESS profitable than poker math suggests on a per-decision basis — but folding is structurally penalized too, so the net effect is "call wider than poker, fold tighter than poker, with the wedge depending on the divisor."',
+      'True fold cost: tracked by the simulator as `1 + agreedTotal/divisor` (the +1 bogey plus the honey you forfeit, normalized by round length). The divisor for a 72-hole final is 72; the EV math at every decision uses that same divisor (v54 unification) so AI choices remain consistent with how the round actually scores.'
+    ]
+  }));
+
+  // Putt
+  view.appendChild(dtStage({
+    title: '4 · Putt',
+    mapping: 'river · fifth community card · stroke cap fully unlocked',
+    accent: '#7ec96b',
+    lede: 'The final community card is revealed. The full stroke cap is now available. This is the last betting street; folds here are most expensive (the previously-agreed pot has had every prior round to climb), but a successful value bet here harvests the pot you spent the whole hole building.',
+    cards: [
+      dtCardRow(heroHole, 'Hero hole'),
+      dtCardRow(flop.concat(turn).concat(river), 'Board · K♥ 7♠ 2♣ 4♠ 9♠'),
+    ],
+    actions: [
+      '**Bet/raise** up to 100% of the per-event cap.',
+      '**Check / Call / Fold** as before. The agreed total at the end of this street is what transfers as honey at showdown.'
+    ],
+    rationale: [
+      'River brings 9♠ — your nut-flush draw completes. Hand is now A-high flush, golf score −2 (premium-kicker bucket: T-high or better posts −2; lower flushes post −1).',
+      'Bet for value. Sizing target: maximize the agreed total villain will **call**, not the size that folds them out. Forcing a fold here scores 0 par + previously-agreed honey; reaching showdown scores −2 + new agreed honey, a much richer outcome.',
+      'If villain raises, the YJ kernel re-runs the EV decision: ev_call now compares "accept villain\'s proposal, realize −2 at showdown, claim the larger honey pot" vs "fold and post +1 bogey, lose the previously-agreed honey." With nut-flush certainty, calling is dominant.'
+    ]
+  }));
+
+  // The Cup
+  view.appendChild(dtStage({
+    title: '5 · The Cup',
+    mapping: 'showdown · cards reveal · honey + scorecard credited',
+    accent: '#daa520',
+    lede: 'Cards turn over. Hands are evaluated, golf scores assigned, the agreed pot transfers as honey to the winner. Decisive showdowns under Yellow Jacket rules: loser posts a fixed +1 bogey regardless of hand. Under Bumblebee rules: loser scores their own hand\'s golf value (−5..+2) — so a flush-loser still posts −1.',
+    cards: [
+      dtCardRow(heroHole, 'Hero — A♠K♠ + 4 spades on board → nut flush'),
+      dtCardRow([['Q', 'D'], ['Q', 'C']], 'Villain (revealed) — pocket queens, beaten by the flush'),
+    ],
+    rationale: [
+      '**Hero** golf score: −2 (T-high or better flush, premium bucket). **Hero** honey: + entire agreed pot at end of Putt.',
+      '**Villain** golf score in **Yellow Jacket**: +1 (fixed loser bogey). In **Bumblebee**: 0 (their pocket queens become a one-pair-J+ kicker hand worth 0 par at showdown, since the K-high board makes their queens second pair).',
+      'Tied showdowns: both score 0 par and the entire pot rolls forward to the next hole as starting honey. Multiple consecutive ties stack — whoever wins the next decisive hole sweeps the entire stack at once.',
+      'Round-end: total golf score across all 18 (or 72) holes minus net honey divided by the round-length divisor (72/18/9/1) gives the final round score. The honey magnitude scalar (current default **' + mag + '**) further tunes the divisor: `honeyDivisorFor(n) = max(4, base/magnitude)`, so a higher magnitude amplifies the per-honey scoring impact.'
+    ]
+  }));
+
+  // ===== Hand → golf score reference =====
+  const refHands = section('Hand → Golf Score Reference',
+    p('The bounded golf score per hand at showdown. Premium-kicker buckets give an extra stroke for hands that beat their family\'s natural threshold (e.g. T-high flush or better posts −2 instead of −1).'),
+    tbl(
+      ['Final Hand', 'Standard Score', 'Premium Bucket', 'Example'],
+      [
+        ['Royal / Straight Flush', '−5', '—', 'A♠K♠Q♠J♠T♠'],
+        ['Four of a Kind',         '−4', '—', '8♥8♦8♣8♠ + kicker'],
+        ['Full House',             '−2', '−3 (J+ trips)', 'K♥K♦K♣ + 7♠7♣'],
+        ['Flush',                  '−1', '−2 (T-high+)',  'A♠ K♠ 9♠ 7♠ 4♠'],
+        ['Straight',               '−1', '−2 (9-high+)',  '9♣ T♦ J♥ Q♠ K♣'],
+        ['Three of a Kind',        '−1', '—', 'Q♥Q♦Q♣ + kickers'],
+        ['Two Pair',               '0',  '−1 (J+ top pair)', 'K♥K♦ + 7♣7♠'],
+        ['One Pair',               '+1', '0 (TT+)', 'A♠A♥ + kickers'],
+        ['High Card',              '+2', '+1 (J-high+)', 'A♣ K♦ 9♥ 5♣ 3♠'],
+      ]
+    )
+  );
+  view.appendChild(refHands);
+
+  // ===== Fold-vs-showdown decision matrix =====
+  const foldMatrix = section('Fold vs Showdown — When Each Wins',
+    p('A compact decision matrix for the most-asked YJ question: "should I fold or showdown?" The answer depends on adj (your equity-vs-villain after any pot odds adjustment), the agreed pot, and the variant.'),
+    tbl(
+      ['adj (your equity)', 'Yellow Jacket variant', 'Bumblebee variant'],
+      [
+        ['adj ≥ 0.50', 'Showdown — you\'re favored.', 'Showdown — you\'re favored.'],
+        ['adj 0.30 – 0.50', 'Lean showdown. Loser caps at +1; calling is cheap insurance against bluffs.', 'Lean showdown if you hold any made hand; lean fold if you only hold a high card.'],
+        ['adj 0.10 – 0.30', 'Coin-flip zone. Compare 1+pot/divisor (true fold cost) vs (1−adj) + (loss honey). Skilled lines call slightly wider here than poker dictates.', 'Lean fold if you hold a hand worth ≥ +1 (you score your own bogey on a loss anyway).'],
+        ['adj < 0.10', 'Fold — true fold cost is now lower than expected showdown loss.', 'Fold — same logic, intensified by the additional bogey risk on a weak hand.'],
+      ]
+    ),
+    pRich('Key formulas: `ev_fold = −divisor − previousAgreedTotal honey` (you forfeit one stroke and the agreed pot); `ev_call = (2·adj − 1) × pot − showdownGolfCost(adj)` (your share of the pot minus expected stroke cost). The bot picks the higher EV after profile-specific noise.')
+  );
+  view.appendChild(foldMatrix);
+
+  // ===== Quick links =====
+  const links = el('div', { class: 'card', style: 'padding: 16px 20px; margin-top: 24px;' });
+  links.appendChild(el('div', { style: 'font-size: 13px; opacity: 0.85; line-height: 1.6;' },
+    'For full hand-distribution probabilities and odds tables, visit the ',
+    el('a', { href: '#rules', style: 'color: var(--gold); text-decoration: none; font-weight: 600;', text: 'Rulebook (Section 7) →' }),
+    ' · For tournament structure and economics: ',
+    el('a', { href: '#codex', style: 'color: var(--gold); text-decoration: none; font-weight: 600;', text: 'Codex →' }),
+    ' · To play a hand yourself: ',
+    el('a', { href: '#solo', style: 'color: var(--gold); text-decoration: none; font-weight: 600;', text: 'Single Player →' })
   ));
   view.appendChild(links);
 };
@@ -5539,6 +5912,7 @@ function renderCmdResults(query) {
     { cat: 'go', label: '🐝 Buzz Corner', action: () => { location.hash = '#buzz'; closeCmd(); } },
     { cat: 'go', label: '🐝 Single Player (vs AI)', action: () => { location.hash = '#solo'; closeCmd(); } },
     { cat: 'go', label: '🎮 Multiplayer (Hot-Seat / Share-Link)', action: () => { location.hash = '#multiplayer'; closeCmd(); } },
+    { cat: 'go', label: '🌳 Decision Tree (stage walkthrough)', action: () => { location.hash = '#decisiontree'; closeCmd(); } },
     { cat: 'go', label: '📖 Codex (master manual)', action: () => { location.hash = '#codex'; closeCmd(); } },
   ];
   const faqMatches = BuzzKnowledge.faqs.filter(f => !q || f.q.toLowerCase().includes(q) || f.a.toLowerCase().includes(q)).slice(0, 6);
@@ -12641,8 +13015,11 @@ function init() {
     const productionDefaults = {
       poolSize: 25000, seasons: 3,
       majors: 12, regulars: 40, mains: 1,
-      majorField: 1024, regularField: 2048, mainField: 128,
-      mainQualifiersPerMajor: 512,
+      majorField: 256, regularField: 512, mainField: 128,
+      mainQualifiersPerMajor: 28,
+      mainDirectEntryShare: 0.65,
+      honeyMagnitude: 5,
+      backNineOpenerMultiplier: 2,
       payoutDecay: 0.74,
       buyInRegular: 100, buyInMajor: 1000, buyInMain: 10000,
       rakePercent: 0.03,
