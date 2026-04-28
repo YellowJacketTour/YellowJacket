@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.27-v49";
+const APP_VERSION = "2026.04.27-v50";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2255,16 +2255,70 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   const aggBias = ((profile.aggression || 0.5) - 0.5) * 0.20;
   const effectiveBetThreshold = Math.max(0.05, profile.betThreshold - cBetBonus - aggBias);
   const effectiveRaiseThreshold = Math.max(0.10, profile.raiseThreshold - aggBias);
-  // v49 reading discount: when opponent has bet/raised multiple times this
-  // hand, their range is strong. Skilled readers (high readingDepth) discount
-  // their own equity proportionally; weak readers ignore the signal.
-  // 0.05 per opponent-aggression × readingDepth, capped at 0.20 total.
+  // === v50 (C) BAYESIAN BLUFF-AWARE READING ===
+  // Replaces the v49 fixed discount with a two-stage model:
+  //   (1) NAIVE read: "more aggression = stronger range" → naiveDiscount
+  //       proportional to opponent's aggression count this hand.
+  //   (2) BLUFF PRIOR: probability opponent is bluffing given (a) per-match
+  //       learned bluff rate, (b) bet-size pattern, (c) street, (d) c-bet
+  //       context. Skilled readers (high readingDepth) NULLIFY the naive
+  //       discount when the bluff prior is high, correctly calling down.
+  // Net effect: low readingDepth → over-folds vs bluffs (v49 pathology).
+  //             high readingDepth → calls bluffs, folds to value (correct).
   const oppAgg = Math.max(0, +(gameContext && gameContext.oppAggressionCount) || 0);
-  const readDiscount = Math.min(0.20, oppAgg * 0.05 * (profile.readingDepth || 0.5));
-  // adjRead is what the actor THINKS their equity is after reading opponent.
-  // Used for fold decisions (pot odds + EV). Bet/raise still uses raw adj
-  // since aggression shouldn't be self-undermined by over-respect.
+  const naiveDiscount = Math.min(0.20, oppAgg * 0.05);
+  // BLUFF PRIOR construction. Starts from the per-match learned rate, modulated
+  // by current-action context. Bounded [0, 0.55] — even the most polarized
+  // signal can't push P(bluff) above ~half (real polarized ranges remain
+  // value-heavy at the river).
+  const baseBluffRate = Math.max(0, Math.min(0.5,
+    +(gameContext && gameContext.oppEstBluffRate) || 0.05));
+  let bluffPrior = baseBluffRate;
+  const oppLastBetSize = +(gameContext && gameContext.oppLastBetSizeRatio) || 0;
+  const oppLastStreet = (gameContext && gameContext.oppLastAggStreet) || null;
+  // Polarized sizing: overbets (>1.2x pot) carry elevated bluff frequency
+  // (real-poker convention — value-betting at overbet sizes is rare, so
+  // overbets bifurcate into nuts vs bluff). Tiny bets (<0.4x pot) are usually
+  // thin value or blocker bets, suppressing bluff prior.
+  if (oppLastBetSize > 1.2)      bluffPrior += 0.10;
+  else if (oppLastBetSize > 0.8) bluffPrior += 0.03;
+  else if (oppLastBetSize < 0.4) bluffPrior -= 0.03;
+  // Multi-street aggression (3+ aggressions) is rarely bluffed — barreling
+  // through three streets requires either real equity or extreme bluff style.
+  if (oppAgg >= 3)      bluffPrior -= 0.10;
+  else if (oppAgg >= 2) bluffPrior -= 0.04;
+  // C-bet on the flop has elevated bluff rate by poker convention (the preflop
+  // raiser fires regardless of flop hit), so skilled readers know not to over-fold.
+  if (street === 'flop' && oppLastStreet === 'flop' && oppAgg === 1) bluffPrior += 0.05;
+  // Preflop aggression is rarely a bluff (preflop ranges are tighter).
+  if (street === 'preflop') bluffPrior -= 0.02;
+  bluffPrior = Math.max(0, Math.min(0.55, bluffPrior));
+
+  // BLEND: high readingDepth nullifies the naive discount when bluff prior is
+  // high. Low readingDepth applies the naive discount fully (current-v49-like).
+  //   adjustedDiscount = naiveDiscount × (1 − bluffPrior)   [perfect reader]
+  //   blended         = readingDepth × adjustedDiscount + (1 − readingDepth) × naiveDiscount
+  // Equivalent: blended = naiveDiscount × (1 − readingDepth × bluffPrior).
+  const readingDepth = Math.max(0, Math.min(1, profile.readingDepth || 0.5));
+  const readDiscount = naiveDiscount * (1 - readingDepth * bluffPrior);
   const adjRead = Math.max(0.01, adj - readDiscount);
+
+  // v50 (C) telemetry: emit (heroSide, readingDepth, bluffPrior, naiveDiscount,
+  // appliedDiscount) per fold-eligible decision so we can verify high-readingDepth
+  // players actually catch bluffs at higher rates than low-readingDepth players.
+  if (isPending && oppAgg > 0
+      && typeof LabState !== 'undefined' && LabState.instrumentation
+      && LabState.instrumentation.bluffReadCollector) {
+    LabState.instrumentation.bluffReadCollector({
+      heroSide: gameContext && gameContext.heroSide,
+      readingDepth,
+      bluffPrior,
+      naiveDiscount,
+      appliedDiscount: readDiscount,
+      adj,
+      adjRead,
+    });
+  }
   if (!isPending) {
     if (adj > effectiveBetThreshold && remaining > 0) {
       // v24: additive room-based sizing — the bet adds a small/medium/large
@@ -2418,29 +2472,34 @@ function makeProfileForSkill(targetSkill, cfg) {
   // v49 MULTI-DIMENSIONAL PROFILES — three orthogonal traits beyond the
   // skill axis. Two skill-0.95 players now have DIFFERENT profiles in these
   // dimensions, producing genuine matchup variance and exploitable patterns.
-  // This is the core fix for "skilled players can't show edge against other
-  // skilled players": one-dimensional skill made identical-skill players
-  // play identical poker. Real poker style/aggression/reading varies
-  // independently of raw decision precision.
   //
   //   aggression  ∈ [0.1, 0.9]  — Bet/raise tendency. INDEPENDENT of skill.
   //                 Tight-aggressive (TAG) ≠ tight-passive even at same skill.
-  //   bluffFreq   ∈ [0,   0.20] — Probability of bluff-betting low-equity
-  //                 hands. INDEPENDENT of skill (some elites bluff more).
+  //   bluffFreq   ∈ [0,   0.18] — v50 (B): SKILL-CORRELATED. Mean ≈ 0.02 + 0.10·t,
+  //                 with multiplicative jitter ∈ [0.5, 1.0]. Low-skill players
+  //                 bluff rarely AND with poor selection; high-skill players
+  //                 bluff more often with better selection. v49 had bluffFreq
+  //                 uncorrelated with skill, which let low-skill players who
+  //                 happened to roll high bluffFreq systematically out-bluff
+  //                 high-skill, low-readingDepth opponents — inverting skill
+  //                 expression at the top end of the field.
   //   readingDepth ∈ [0,   1]   — How much the AI weights opponent's prior
   //                 aggression as range-narrowing info. Half-correlated with
-  //                 skill (skilled players generally read better) plus
-  //                 random variation, so two skill-0.95 players differ in
-  //                 their hand-reading depth.
+  //                 skill plus random variation. v50 (C): readingDepth now
+  //                 modulates a Bayesian bluff-detection posterior (not a
+  //                 fixed discount), so high-readingDepth players correctly
+  //                 call bluffs and fold to value, while low-readingDepth
+  //                 players fall back to naive "aggression = strength."
   return {
     noise: Math.max(0.005, noiseOpt + (1 - t) * 0.30 + jitter(jitterScaleN)),
     betThreshold: betOpt + dir() * (1 - t) * 0.15 + jitter(jitterScaleB),
     foldThreshold: foldOpt + dir() * (1 - t) * 0.15 + jitter(jitterScaleF),
     raiseThreshold: raiseOpt + dir() * (1 - t) * 0.10 + jitter(jitterScaleR),
     authoredSkill: t,
-    // v49 orthogonal style traits
     aggression: Math.max(0.1, Math.min(0.9, 0.5 + (Math.random() - 0.5) * 0.6)),
-    bluffFreq: Math.max(0, Math.min(0.20, 0.05 + (Math.random() - 0.5) * 0.20)),
+    // v50 (B): bluffFreq scales with skill. Mean (0.02 + 0.10·t), multiplicative
+    // jitter in [0.5, 1.0]. skill 0.05 → ~0.015, skill 0.95 → ~0.090 (typical).
+    bluffFreq: Math.max(0, Math.min(0.18, (0.02 + 0.10 * t) * (0.5 + Math.random() * 0.5))),
     readingDepth: Math.max(0, Math.min(1, 0.3 + 0.4 * t + (Math.random() - 0.5) * 0.4)),
   };
 }
@@ -2523,6 +2582,18 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
   // their own equity when opponent has aggressed multiple times).
   let lastAggressor = null;
   const oppAggCount = { a: 0, b: 0 };
+  // v50 (C): per-hand aggression log. Each entry records the aggressor and the
+  // bet-size ratio relative to the pot at the moment of aggression. Used by:
+  //   (1) decideFor — the actor reads opponent's most-recent aggression sizing
+  //       to refine the bluff prior (overbets are polarized; small bets are
+  //       thin value).
+  //   (2) playHole showdown — feeds back which aggressors had weak hands so
+  //       the per-match estBluffRate updates Bayesian-fashion across the match.
+  const aggressionLog = [];
+  // v50 (C): track the most-recent aggressor's bet-size ratio for the actor's
+  // immediate bluff-prior calculation. Updated as bets/raises happen.
+  const lastAggBetSizeRatio = { a: 0, b: 0 };
+  const lastAggStreet = { a: null, b: null };
   for (let iter = 0; iter < 16; iter++) {
     const actor = toAct;
     const other = actor === 'a' ? 'b' : 'a';
@@ -2535,12 +2606,19 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     // threshold (continuation-bet behavior).
     const isCBet = (street === 'flop' && actor === preflopAggressor);
     // v49 reading: pass opponent's aggression count this hand for the
-    // actor's range-strength assessment. The actor's `oppAggressionCount`
-    // = how aggressive their OPPONENT has been (i.e., the OTHER side's
-    // aggression count, since that's the range info actor uses).
+    // actor's range-strength assessment.
+    // v50 (C): also pass opponent's most-recent bet-size ratio + street and
+    // per-match estBluffRate so decideFor can compute a Bayesian bluff prior.
+    const oppEstBluffRate = (gameContext && gameContext.oppHistory && gameContext.oppHistory[other])
+      ? gameContext.oppHistory[other].estBluffRate : 0.05;
     const ctx = Object.assign({}, gameContext, {
       cBet: isCBet,
       oppAggressionCount: oppAggCount[other],
+      oppLastBetSizeRatio: lastAggBetSizeRatio[other],
+      oppLastAggStreet: lastAggStreet[other],
+      oppEstBluffRate,
+      heroSide: actor,                  // for telemetry: who is reading whom
+      oppSide: other,
     });
     const d = decideFor(cards, community, currentProposal, agreedTotal, isPending, profile, actorHand, tex, ctx);
     recordEV(actor, d);
@@ -2571,6 +2649,13 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
       toAct = other;
       continue;
     }
+    // v50 (C): bet-size ratio = added stake / pot before the bet. Larger ratio
+    // (>1.0 = overbet) is a polarized signal that elevates bluff prior.
+    const potBefore = Math.max(1, agreedTotal);
+    const betSizeRatio = (proposed - agreedTotal) / potBefore;
+    aggressionLog.push({ actor, street, betSizeRatio, level: proposed });
+    lastAggBetSizeRatio[actor] = betSizeRatio;
+    lastAggStreet[actor] = street;
     currentProposal = proposed;
     agreed[actor] = true;                    // proposer agrees to their own proposal
     agreed[other] = false;                   // other must respond
@@ -2580,7 +2665,19 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     // Stroke-cap saturation: if proposal is at cap, force one final response from opp.
     if (currentProposal >= streetCap) {
       const otherHand = other === 'a' ? aHand : bHand;
-      const resp = decideFor(other === 'a' ? aCards : bCards, community, currentProposal, agreedTotal, true, other === 'a' ? profileA : profileB, otherHand, tex, gameContext);
+      // v50 (C): build full ctx for the forced response too (was using bare gameContext)
+      const otherEstBluff = (gameContext && gameContext.oppHistory && gameContext.oppHistory[actor])
+        ? gameContext.oppHistory[actor].estBluffRate : 0.05;
+      const ctxForced = Object.assign({}, gameContext, {
+        cBet: false,
+        oppAggressionCount: oppAggCount[actor],
+        oppLastBetSizeRatio: lastAggBetSizeRatio[actor],
+        oppLastAggStreet: lastAggStreet[actor],
+        oppEstBluffRate: otherEstBluff,
+        heroSide: other,
+        oppSide: actor,
+      });
+      const resp = decideFor(other === 'a' ? aCards : bCards, community, currentProposal, agreedTotal, true, other === 'a' ? profileA : profileB, otherHand, tex, ctxForced);
       recordEV(other, resp);
       if (resp.action === 'fold') {
         folded = other;
@@ -2592,7 +2689,7 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
       break;
     }
   }
-  return { strokes: folded ? foldedAtAgreedTotal : agreedTotal, folded, lastAggressor };
+  return { strokes: folded ? foldedAtAgreedTotal : agreedTotal, folded, lastAggressor, aggressionLog };
 }
 function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   const t0 = SimPerf.enabled ? performance.now() : 0;
@@ -2612,6 +2709,10 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   // v46 c-bet support: track who took the last aggressive action preflop so
   // they can be identified as the c-bet candidate on flop. Resets each hole.
   let preflopAggressor = null;
+  // v50 (C): collect every aggression across all streets of this hole. After
+  // a decisive showdown, the aggressor's revealed hand updates the per-match
+  // estBluffRate via Bayesian update (weak hand revealed = bluff observation).
+  const allAggressions = [];
   for (let si = 0; si < streets.length; si++) {
     const s = streets[si];
     const firstToAct = startDealer === 'a' ? 'b' : 'a';
@@ -2623,6 +2724,9 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     SimPerf.add('bettingRound', brT);
     strokes = br.strokes;     // for fold: pre-proposal agreedTotal; otherwise: final agreedTotal
     if (s === 'preflop' && br.lastAggressor) preflopAggressor = br.lastAggressor;
+    if (br.aggressionLog && br.aggressionLog.length) {
+      for (const e of br.aggressionLog) allAggressions.push(e);
+    }
     if (br.folded) { folded = br.folded; break; }
     if (s === 'preflop') { community.push(DECK[off++], DECK[off++], DECK[off++]); }
     else if (s === 'flop') { community.push(DECK[off++]); }
@@ -2703,6 +2807,39 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   if (typeof LabState !== 'undefined' && LabState.instrumentation && LabState.instrumentation.potBucketCollector) {
     LabState.instrumentation.potBucketCollector('showdown', strokes);
   }
+  // v50 (C): SHOWDOWN FEEDBACK — Bayesian update of per-match estBluffRate.
+  // For each aggressor whose hand was revealed, classify the aggression as
+  // bluff (revealed hand has weak golf score) or value, then update the
+  // running estimate so subsequent hands in this match read more accurately.
+  // - Bluff = aggressor's golf score > 0 (i.e., positive = bogey or worse).
+  //   Bumblebee mode: each player scores own hand → straightforward read.
+  //   Yellow Jacket mode: loser scores +1 fixed → use the aggressor's actual
+  //     hand value (not their bogey score), via golfScoreFromHandValue on
+  //     their evaluated 7-card hand.
+  // - Bayesian-style update: weighted average with prior estimate, weight on
+  //   new observation = 1/(handsRevealed+1) so early reads move the estimate
+  //   quickly; later reads only refine. Caps at 50 hands to prevent overfit.
+  if (gameContext && gameContext.oppHistory && allAggressions.length > 0) {
+    const aGolfTrue = golfScoreFromHandValue(aH);
+    const bGolfTrue = golfScoreFromHandValue(bH);
+    const aggBySide = { a: false, b: false };
+    for (const e of allAggressions) {
+      aggBySide[e.actor] = true;
+    }
+    const updateSide = (side, golfTrue) => {
+      const h = gameContext.oppHistory[side];
+      if (!h) return;
+      const isBluff = golfTrue > 0;
+      const n = Math.min(50, h.handsRevealed);
+      // Bayesian-ish: new estimate = (prior * n + obs) / (n + 1)
+      const obs = isBluff ? 1 : 0;
+      h.estBluffRate = (h.estBluffRate * n + obs) / (n + 1);
+      h.handsRevealed = h.handsRevealed + 1;
+      if (isBluff) h.bluffsRevealed++;
+    };
+    if (aggBySide.a) updateSide('a', aGolfTrue);
+    if (aggBySide.b) updateSide('b', bGolfTrue);
+  }
   SimPerf.add('showdown', sdT);
   SimPerf.add('dealHole', t0);
   return { folded: null, aScore, bScore, aHand: aH, bHand: bH, strokes, aHoneyCredit, bHoneyCredit, carryPot: 0 };
@@ -2748,6 +2885,20 @@ function playMatch(pA, pB, numHoles, opts) {
   let carryPot = 0;
   let dealer = Math.random() < 0.5 ? 'a' : 'b';
   const baseGameContext = opts.gameContext || null;
+  // v50 (C): per-match opponent-history. Tracks each actor's aggression
+  // patterns so the OTHER actor can build a Bayesian bluff-prior at decision
+  // time. Reset per match (not per hole) so reads accumulate across the 18-72
+  // hole arc, which is how real heads-up reading works.
+  //   estBluffRate     — running estimate of opponent's bluff frequency,
+  //                      seeded from population prior (0.05).
+  //   handsRevealed    — count of completed showdowns where opp's hand was
+  //                      visible AND they were the aggressor.
+  //   bluffsRevealed   — subset where revealed hand was weak (golf score > 0).
+  // Initialized for both 'a' and 'b' so either side can read the other.
+  const oppHistory = {
+    a: { estBluffRate: 0.05, handsRevealed: 0, bluffsRevealed: 0 },
+    b: { estBluffRate: 0.05, handsRevealed: 0, bluffsRevealed: 0 },
+  };
   // === YJ DYNAMIC DIVISOR (v23 + v24 fix) ===
   // Honey is normalized at the EVENT level, not the per-call-to-playMatch
   // level. In aggregate format, each player plays 4 × 18-hole matches that
@@ -2776,6 +2927,7 @@ function playMatch(pA, pB, numHoles, opts) {
       totalHoles,
       honeyDivisor: divisor,                  // threaded into decideFor
       isFinals: !!(baseGameContext && baseGameContext.isFinals),
+      oppHistory,                              // v50 (C): per-match read state
     });
   };
   // v45 compound-tie premium: each consecutive tie adds bonus honey to the
@@ -7161,7 +7313,7 @@ const LabState = {
   runs: [],
   activeRunId: null,
   panelWidth: 320,
-  instrumentation: { collector: null },
+  instrumentation: { collector: null, foldCostCollector: null, potBucketCollector: null, bluffReadCollector: null },
   logBuffer: [],
   busy: false,
 };
@@ -7235,6 +7387,18 @@ const BackgroundSim = {
           { check:0, bet:0, call:0, raise:0, fold:0 },
           { check:0, bet:0, call:0, raise:0, fold:0 },
           { check:0, bet:0, call:0, raise:0, fold:0 },
+        ],
+        // v50 (C) instrumentation: bluff-read stats by readingDepth bucket.
+        // Buckets: [0-0.25, 0.25-0.5, 0.5-0.75, 0.75-1.0].
+        // Each bucket counts fold-eligible decisions where opp aggressed and
+        // sums the bluffPrior + naive vs applied discount. Diagnostic that
+        // confirms whether high-readingDepth players are correctly suppressing
+        // the discount when their bluff prior is high.
+        bluffReadStats: [
+          { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
+          { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
+          { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
+          { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
         ],
       },
       rng: this.currentCfg.seed ? mulberry32(this.currentCfg.seed >>> 0) : null,
@@ -7325,6 +7489,20 @@ const BackgroundSim = {
         actionStats.potBucketsAtTie[idx]++;
       }
     };
+    // v50 (C): bluff-read collector — bucket by readingDepth, accumulate priors.
+    LabState.instrumentation.bluffReadCollector = (info) => {
+      if (!info || !actionStats.bluffReadStats) return;
+      const rd = +info.readingDepth || 0;
+      const idx = Math.min(3, Math.max(0, Math.floor(rd * 4)));
+      const row = actionStats.bluffReadStats[idx];
+      if (!row) return;
+      row.reads++;
+      row.priorSum   += +info.bluffPrior      || 0;
+      row.naiveSum   += +info.naiveDiscount   || 0;
+      row.appliedSum += +info.appliedDiscount || 0;
+      row.adjSum     += +info.adj             || 0;
+      row.adjReadSum += +info.adjRead         || 0;
+    };
     try {
       const ev = runTourEventLab(item.type, item.year, item.name, TourState.pool, cfg);
       ev.season_slot = item.slot;
@@ -7339,10 +7517,9 @@ const BackgroundSim = {
       }
     } finally {
       LabState.instrumentation.collector = null;
-    LabState.instrumentation.foldCostCollector = null;
-    LabState.instrumentation.potBucketCollector = null;
       LabState.instrumentation.foldCostCollector = null;
       LabState.instrumentation.potBucketCollector = null;
+      LabState.instrumentation.bluffReadCollector = null;
       Math.random = priorRandom;
     }
     this.state.index++;
@@ -7411,6 +7588,7 @@ const BackgroundSim = {
     LabState.instrumentation.collector = null;
     LabState.instrumentation.foldCostCollector = null;
     LabState.instrumentation.potBucketCollector = null;
+    LabState.instrumentation.bluffReadCollector = null;
     this.isRunning = false;
     this.isPaused = false;
     this.cancelRequested = false;
@@ -8101,6 +8279,12 @@ async function runLabSession(cfg, onProgress) {
       { check:0, bet:0, call:0, raise:0, fold:0 },
       { check:0, bet:0, call:0, raise:0, fold:0 },
     ],
+    bluffReadStats: [
+      { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
+      { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
+      { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
+      { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
+    ],
   };
   LabState.instrumentation.collector = (street, action, adj) => {
     if (actionStats[street] && actionStats[street][action] != null) actionStats[street][action]++;
@@ -8128,6 +8312,19 @@ async function runLabSession(cfg, onProgress) {
       actionStats.tieCount++;
       actionStats.potBucketsAtTie[idx]++;
     }
+  };
+  LabState.instrumentation.bluffReadCollector = (info) => {
+    if (!info || !actionStats.bluffReadStats) return;
+    const rd = +info.readingDepth || 0;
+    const idx = Math.min(3, Math.max(0, Math.floor(rd * 4)));
+    const row = actionStats.bluffReadStats[idx];
+    if (!row) return;
+    row.reads++;
+    row.priorSum   += +info.bluffPrior      || 0;
+    row.naiveSum   += +info.naiveDiscount   || 0;
+    row.appliedSum += +info.appliedDiscount || 0;
+    row.adjSum     += +info.adj             || 0;
+    row.adjReadSum += +info.adjRead         || 0;
   };
   // Perf instrumentation: enabled for this run only. We estimate the event count so
   // SimPerf can preallocate its per-event timing array without growing mid-run.
@@ -8174,6 +8371,7 @@ async function runLabSession(cfg, onProgress) {
     LabState.instrumentation.collector = null;
     LabState.instrumentation.foldCostCollector = null;
     LabState.instrumentation.potBucketCollector = null;
+    LabState.instrumentation.bluffReadCollector = null;
   }
   const elapsedMs = performance.now() - t0;
   const metricsT0 = performance.now();
@@ -8230,6 +8428,7 @@ function computeLabMetrics(pool, events, actionStats, cfg) {
       tie: actionStats.tieCount || 0,
     },
     equityBucketActions: actionStats.equityBucketActions || null,
+    bluffReadStats: actionStats.bluffReadStats || null,
     h2hMatrix: computeH2HMatrixByQuartile(pool, events),
     scoreTrajectory: computeScoreTrajectory(events, cfg.seasons),
     champScores: events.map(e => e.champScore),
@@ -9697,6 +9896,32 @@ function _exportRunToCSVImpl(snap) {
       rows.push([labels[i], row.check, row.bet, row.call, row.raise, row.fold, total, foldRate]);
     });
   }
+  // v50 (C): bluff-read accuracy by readingDepth bucket. Confirms whether
+  // high-readingDepth players are correctly suppressing the discount when their
+  // bluff prior is high. Diagnostic columns:
+  //   reads     — count of fold-eligible decisions where opp had aggressed
+  //   meanPrior — average bluff prior the hero perceived (higher = more bluff-suspicious)
+  //   meanNaive — average naive discount that would have been applied (no reading)
+  //   meanApplied — average actual discount applied (after bluff-prior nullification)
+  //   suppression — (naive − applied) / naive : fraction of naive discount suppressed
+  //                 by bluff reading. Should rise with readingDepth bucket.
+  if (m.bluffReadStats) {
+    rows.push([]);
+    rows.push(['--- bluffReadStats (v50 C) ---']);
+    rows.push(['readingDepthBucket','reads','meanPrior','meanNaive','meanApplied','suppression','meanAdj','meanAdjRead']);
+    const rdLabels = ['0.00-0.25','0.25-0.50','0.50-0.75','0.75-1.00'];
+    m.bluffReadStats.forEach((row, i) => {
+      const n = row.reads || 0;
+      const mp = n > 0 ? (row.priorSum / n).toFixed(4) : '0';
+      const mn = n > 0 ? (row.naiveSum / n).toFixed(4) : '0';
+      const ma = n > 0 ? (row.appliedSum / n).toFixed(4) : '0';
+      const supp = (n > 0 && row.naiveSum > 0)
+        ? ((row.naiveSum - row.appliedSum) / row.naiveSum).toFixed(4) : '0';
+      const madj = n > 0 ? (row.adjSum / n).toFixed(4) : '0';
+      const madjR = n > 0 ? (row.adjReadSum / n).toFixed(4) : '0';
+      rows.push([rdLabels[i], n, mp, mn, ma, supp, madj, madjR]);
+    });
+  }
   // Build the Blob from an ARRAY of line-strings rather than a single concatenated
   // mega-string. Browsers have per-string length limits (Chrome ~1GB, Safari ~512MB
   // allocated in smaller chunks) — V8 also copy-grows string concat for large arrays
@@ -10393,6 +10618,12 @@ async function runSimulator(cfg, onProgress) {
       { check:0, bet:0, call:0, raise:0, fold:0 },
       { check:0, bet:0, call:0, raise:0, fold:0 },
     ],
+    bluffReadStats: [
+      { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
+      { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
+      { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
+      { reads:0, priorSum:0, naiveSum:0, appliedSum:0, adjSum:0, adjReadSum:0 },
+    ],
   };
   LabState.instrumentation.collector = (street, action, adj) => {
     if (actionStats[street] && actionStats[street][action] != null) actionStats[street][action]++;
@@ -10420,6 +10651,19 @@ async function runSimulator(cfg, onProgress) {
       actionStats.tieCount++;
       actionStats.potBucketsAtTie[idx]++;
     }
+  };
+  LabState.instrumentation.bluffReadCollector = (info) => {
+    if (!info || !actionStats.bluffReadStats) return;
+    const rd = +info.readingDepth || 0;
+    const idx = Math.min(3, Math.max(0, Math.floor(rd * 4)));
+    const row = actionStats.bluffReadStats[idx];
+    if (!row) return;
+    row.reads++;
+    row.priorSum   += +info.bluffPrior      || 0;
+    row.naiveSum   += +info.naiveDiscount   || 0;
+    row.appliedSum += +info.appliedDiscount || 0;
+    row.adjSum     += +info.adj             || 0;
+    row.adjReadSum += +info.adjRead         || 0;
   };
   const t0 = performance.now();
   const startYear = TourState.currentSeason + 1;
@@ -10463,6 +10707,7 @@ async function runSimulator(cfg, onProgress) {
     LabState.instrumentation.collector = null;
     LabState.instrumentation.foldCostCollector = null;
     LabState.instrumentation.potBucketCollector = null;
+    LabState.instrumentation.bluffReadCollector = null;
   }
   saveState();
   const elapsedMs = performance.now() - t0;
