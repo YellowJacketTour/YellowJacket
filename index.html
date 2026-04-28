@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.27-v47";
+const APP_VERSION = "2026.04.27-v49";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2243,14 +2243,28 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     return Object.assign({ evChosen, evOptimal, decisionAdj: adj }, result);
   }
 
-  // === DECISION LOGIC (v23 + v46 c-bet) ===
+  // === DECISION LOGIC (v23 + v46 c-bet + v49 multi-dim profile) ===
   // Profile thresholds drive bet/raise; fold uses direct YJ EV comparison.
-  // v46: when the actor is the preflop aggressor and we're on flop, lower
-  // their bet threshold by 0.20 to model the standard heads-up c-bet
-  // (continuation bet) behavior. This restores flop activity from the
-  // 86%-checks-on-flop telemetry we observed in v44.
+  // v46: c-bet bonus when actor was the preflop aggressor and is on flop.
+  // v49: aggression trait shifts bet/raise thresholds independently of skill,
+  // so high-aggression players bet/raise more even at equal skill. Reading
+  // depth discounts adj when opponent has aggressed multiple times this
+  // hand — the AI recognizes opponent's narrowed strong range.
   const cBetBonus = (gameContext && gameContext.cBet) ? 0.20 : 0;
-  const effectiveBetThreshold = Math.max(0.05, profile.betThreshold - cBetBonus);
+  // Aggression: 0.5 = neutral, 0.9 = max aggressive (-0.08 threshold), 0.1 = passive (+0.08)
+  const aggBias = ((profile.aggression || 0.5) - 0.5) * 0.20;
+  const effectiveBetThreshold = Math.max(0.05, profile.betThreshold - cBetBonus - aggBias);
+  const effectiveRaiseThreshold = Math.max(0.10, profile.raiseThreshold - aggBias);
+  // v49 reading discount: when opponent has bet/raised multiple times this
+  // hand, their range is strong. Skilled readers (high readingDepth) discount
+  // their own equity proportionally; weak readers ignore the signal.
+  // 0.05 per opponent-aggression × readingDepth, capped at 0.20 total.
+  const oppAgg = Math.max(0, +(gameContext && gameContext.oppAggressionCount) || 0);
+  const readDiscount = Math.min(0.20, oppAgg * 0.05 * (profile.readingDepth || 0.5));
+  // adjRead is what the actor THINKS their equity is after reading opponent.
+  // Used for fold decisions (pot odds + EV). Bet/raise still uses raw adj
+  // since aggression shouldn't be self-undermined by over-respect.
+  const adjRead = Math.max(0.01, adj - readDiscount);
   if (!isPending) {
     if (adj > effectiveBetThreshold && remaining > 0) {
       // v24: additive room-based sizing — the bet adds a small/medium/large
@@ -2258,6 +2272,18 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
       const room = Math.max(0, streetCap - agreedTotal);
       const sizeFactor = adj > 0.85 ? 1.0 : adj > 0.70 ? 0.5 : 0.25;
       const newLevel = Math.min(streetCap, agreedTotal + Math.max(1, Math.round(room * sizeFactor)));
+      if (newLevel > agreedTotal) {
+        return wrap({ action: 'bet', amount: newLevel });
+      }
+    }
+    // v49 bluff: high-bluffFreq players sometimes bet weak hands as a stab
+    // at fold equity. Only fires when adj is low enough that the value-bet
+    // path declined (avoid double-betting strong hands), and only if the
+    // street allows room. Bluff size is small (33% of room) to limit downside.
+    if (profile.bluffFreq > 0 && adj < 0.40 && remaining > 0
+        && Math.random() < profile.bluffFreq) {
+      const room = Math.max(0, streetCap - agreedTotal);
+      const newLevel = Math.min(streetCap, agreedTotal + Math.max(1, Math.round(room * 0.33)));
       if (newLevel > agreedTotal) {
         return wrap({ action: 'bet', amount: newLevel });
       }
@@ -2297,14 +2323,17 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   const potAfterCall = Math.max(1, 2 * currentProposal - agreedTotal);
   const reqEquity = callAmount / potAfterCall;
   const slack = Number.isFinite(profile.foldThreshold) ? profile.foldThreshold : 0.05;
-  if (callAmount > 0 && adj < reqEquity - slack) {
+  // v49: use adjRead (reading-discounted equity) for fold decisions. Skilled
+  // readers fold more vs aggressive opponents because they correctly perceive
+  // narrowed strong ranges. Weak readers ignore the signal and call/get spewy.
+  if (callAmount > 0 && adjRead < reqEquity - slack) {
     return wrap({ action: 'fold' });
   }
-  // EV-based fold (variant-aware via showEV; noisy via adj instead of adjTrue).
-  const evCallNoisy = showEV(adj, currentProposal);
+  // EV-based fold (variant-aware via showEV; reading-discounted via adjRead).
+  const evCallNoisy = showEV(adjRead, currentProposal);
   const evFoldNoisy = -foldStrokeCost * divisor - agreedTotal;
   if (evCallNoisy < evFoldNoisy) return wrap({ action: 'fold' });
-  if (adj > profile.raiseThreshold && remaining > 0) {
+  if (adj > effectiveRaiseThreshold && remaining > 0) {
     // v24: additive room-based raise sizing.
     const room = Math.max(0, streetCap - currentProposal);
     const sizeFactor = adj > 0.90 ? 1.0 : adj > 0.80 ? 0.5 : 0.25;
@@ -2386,12 +2415,33 @@ function makeProfileForSkill(targetSkill, cfg) {
   const betOpt = 0.45;
   const foldOpt = 0.05;
   const raiseOpt = 0.75;
+  // v49 MULTI-DIMENSIONAL PROFILES — three orthogonal traits beyond the
+  // skill axis. Two skill-0.95 players now have DIFFERENT profiles in these
+  // dimensions, producing genuine matchup variance and exploitable patterns.
+  // This is the core fix for "skilled players can't show edge against other
+  // skilled players": one-dimensional skill made identical-skill players
+  // play identical poker. Real poker style/aggression/reading varies
+  // independently of raw decision precision.
+  //
+  //   aggression  ∈ [0.1, 0.9]  — Bet/raise tendency. INDEPENDENT of skill.
+  //                 Tight-aggressive (TAG) ≠ tight-passive even at same skill.
+  //   bluffFreq   ∈ [0,   0.20] — Probability of bluff-betting low-equity
+  //                 hands. INDEPENDENT of skill (some elites bluff more).
+  //   readingDepth ∈ [0,   1]   — How much the AI weights opponent's prior
+  //                 aggression as range-narrowing info. Half-correlated with
+  //                 skill (skilled players generally read better) plus
+  //                 random variation, so two skill-0.95 players differ in
+  //                 their hand-reading depth.
   return {
     noise: Math.max(0.005, noiseOpt + (1 - t) * 0.30 + jitter(jitterScaleN)),
     betThreshold: betOpt + dir() * (1 - t) * 0.15 + jitter(jitterScaleB),
     foldThreshold: foldOpt + dir() * (1 - t) * 0.15 + jitter(jitterScaleF),
     raiseThreshold: raiseOpt + dir() * (1 - t) * 0.10 + jitter(jitterScaleR),
-    authoredSkill: t, // remember the target so downstream code can reference it
+    authoredSkill: t,
+    // v49 orthogonal style traits
+    aggression: Math.max(0.1, Math.min(0.9, 0.5 + (Math.random() - 0.5) * 0.6)),
+    bluffFreq: Math.max(0, Math.min(0.20, 0.05 + (Math.random() - 0.5) * 0.20)),
+    readingDepth: Math.max(0, Math.min(1, 0.3 + 0.4 * t + (Math.random() - 0.5) * 0.4)),
   };
 }
 
@@ -2467,7 +2517,12 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
   // v43: bumped from 8 to 16 to allow 3-bet/4-bet/5-bet sequences within cap.
   // v46: track who was the last bet/raise actor so playHole can identify the
   // preflop aggressor and wire up c-betting on flop.
+  // v49: track per-player aggression counts so the OTHER player's decideFor
+  // can use opponent's bet/raise count as a range-strength signal (modulated
+  // by their readingDepth profile trait — high readers correctly discount
+  // their own equity when opponent has aggressed multiple times).
   let lastAggressor = null;
+  const oppAggCount = { a: 0, b: 0 };
   for (let iter = 0; iter < 16; iter++) {
     const actor = toAct;
     const other = actor === 'a' ? 'b' : 'a';
@@ -2477,11 +2532,16 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     const isPending = currentProposal > agreedTotal;
     // v46 c-bet: if hero was the preflop aggressor and this is the flop,
     // pass cBet=true through gameContext so decideFor lowers their bet
-    // threshold (continuation-bet behavior). Real heads-up Hold'em c-bets
-    // are 60-70% on flop; this restores that behavior since v44 telemetry
-    // showed 86% checks on flop in YJ.
+    // threshold (continuation-bet behavior).
     const isCBet = (street === 'flop' && actor === preflopAggressor);
-    const ctx = isCBet ? Object.assign({}, gameContext, { cBet: true }) : gameContext;
+    // v49 reading: pass opponent's aggression count this hand for the
+    // actor's range-strength assessment. The actor's `oppAggressionCount`
+    // = how aggressive their OPPONENT has been (i.e., the OTHER side's
+    // aggression count, since that's the range info actor uses).
+    const ctx = Object.assign({}, gameContext, {
+      cBet: isCBet,
+      oppAggressionCount: oppAggCount[other],
+    });
     const d = decideFor(cards, community, currentProposal, agreedTotal, isPending, profile, actorHand, tex, ctx);
     recordEV(actor, d);
     if (typeof LabState !== 'undefined' && LabState.instrumentation && LabState.instrumentation.collector) {
@@ -2515,6 +2575,7 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     agreed[actor] = true;                    // proposer agrees to their own proposal
     agreed[other] = false;                   // other must respond
     lastAggressor = actor;                   // v46: track for c-bet identification
+    oppAggCount[actor]++;                    // v49: track for opponent-reading
     toAct = other;
     // Stroke-cap saturation: if proposal is at cap, force one final response from opp.
     if (currentProposal >= streetCap) {
@@ -2894,19 +2955,20 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
     scored.sort((a, b) => b.rating - a.rating);
     return scored.map(x => x.p);
   }
-  // Each round: pair off via tier-appropriate logic. Odd field gets a bye
-  // player who posts a 0 round (no honey/golf changes — they sit out a round).
-  // Bye assignment rotates so no one player gets multiple byes if avoidable.
+  // v48 R1 REVERT — all events use random pairing.
+  // The v46 tiered system (skill-bracket Major, woven Regular) backfired:
+  // in aggregate stroke-play format, skill-matched pairings NEUTRALIZE the
+  // honey-edge that Elite players need to express skill. Honey is zero-sum
+  // within a pair, so Elite-vs-Elite produces ≈0 honey edge per pair, while
+  // Elite-vs-Bottom produces meaningful honey edge. Random pairing gives
+  // Elite a diverse opponent mix, accumulating skill edge across rounds.
+  // Empirical confirmation: v47 sweep showed skillSpearman 0.44→0.25 and
+  // eliteMajorDominance 0.19→0.13 under tiered pairing. Reverting.
+  // Helper functions (pairBySkillBracket, pairWoven) preserved for future
+  // bracket-format experiments where higher-seed-advances logic applies.
   const byeHistory = new Set();
   for (let r = 0; r < rounds; r++) {
-    let rotation;
-    if (eventType === 'major') {
-      rotation = pairBySkillBracket(players);
-    } else if (eventType === 'regular') {
-      rotation = pairWoven(players, agg);
-    } else {
-      rotation = pairRandom(players);
-    }
+    const rotation = pairRandom(players);
     let byePlayer = null;
     if (rotation.length % 2 === 1) {
       // Pull the first player not previously bye-d (or the first if all have).
@@ -6920,7 +6982,13 @@ const DEFAULT_SIM_CONFIG = {
   // To run production-scale Tour Standard, manually bump:
   //   poolSize → 25000, seasons → 3, majors → 12, regulars → 40
   //   majorField → 1024, regularField → 2048, mainQualifiersPerMajor → 512
-  poolSize: 1000, seasons: 30,
+  // v49 seasons bumped 30 → 100 for skill-edge accumulation (Approach 3).
+  // Per-hand skill edge in heads-up Hold'em is small (1-3%); compounding it
+  // into observable rank correlation requires sample sizes in the thousands
+  // of events. 100 seasons × 30 events = 3,000 events per run, ~30k decisions
+  // per metric, ~2-4 minute runtime — sufficient signal for elite-dominance
+  // and skillSpearman to stabilize without making sims painful.
+  poolSize: 1000, seasons: 100,
   majors: 4, regulars: 25, mains: 1,
   // v47 field sizes — quarter of Tour-Standard for ~16× faster sims:
   //   Major: 256 — competitive prestige (top quartile of pool faces each other)
@@ -7812,22 +7880,16 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   // exemptSeats = count of waived buy-ins this event. Flows through to the
   // CSV economics block (totalExemptSeats) so the waiver volume is visible.
   const exemptSeats = perPlayerBuyIns.filter(v => v === 0).length;
-  // v45 tier-progressive rake. Flat 3% across all event tiers was regressive:
-  // Bottom-tier players who entered fewer cheap events outperformed Elite-tier
-  // players in non-Main ROI because Elite paid more rake in absolute terms.
-  // Tier-progressive aligns rake with prestige & prize stakes — cheap accessible
-  // events tax less, expensive prestige events tax more.
-  //   Regular: 1% (broad-accessibility, weekly-grind feel)
-  //   Major:   2% (mid-prestige, professional tier)
-  //   Main:    4% (mass-prestige, capped via mainRake structure)
-  // cfg.rakePercent is preserved as the LEGACY flat-rake fallback when the
-  // tier-progressive overrides are explicitly nulled, so existing test configs
-  // still calibrate cleanly.
-  const baseRake = cfg.rakePercent != null ? cfg.rakePercent : 0.03;
-  const tierRakeMap = { regular: 0.01, major: 0.02, main: 0.04 };
-  const rake = (cfg.tierProgressiveRake !== false && tierRakeMap[eventType] != null)
-    ? tierRakeMap[eventType]
-    : baseRake;
+  // v48 R2 REVERT — flat 3% rake across all tiers.
+  // The v45 tier-progressive rake (Reg 1%, Major 2%, Main 4%) was intended
+  // to fix Bottom-tier ROI inversion, but combined with v46's skill-bracket
+  // pairing it AMPLIFIED the inversion: Bottom played mostly cheap Regulars
+  // (1% rake) where skill was already neutralized by woven pairing, so they
+  // earned positive variance with light tax. Elite played expensive Majors
+  // (2% rake) where skill-bracket pairing eliminated edge — they paid more
+  // rake without skill recoupment. v48 reverts to flat rake; the F revert
+  // (R1) is what actually fixes the underlying skill-edge problem.
+  const rake = cfg.rakePercent != null ? cfg.rakePercent : 0.03;
   const revenue = grossPool * rake;
   // Sponsor purse: fixed prize-pool contribution from sponsors/TV (PGA Tour model). Rake does
   // not apply to sponsor money — it goes directly to the purse.
