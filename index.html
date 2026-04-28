@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.27-v54";
+const APP_VERSION = "2026.04.28-v55";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1426,6 +1426,30 @@ function setHoneyMagnitude(n) {
   const v = +n;
   CurrentHoneyMagnitude = (Number.isFinite(v) && v > 0) ? v : 1;
 }
+// v55 FIELD-SIZE SCALING — derive sensible field sizes from a target pool
+// size. Returns the field-shape config that scales proportionally with pool
+// while keeping the WSOP/PGA-feel tier ratios. Caller can spread the result
+// over their cfg or use individual fields.
+//   majorField        ≈ pool × 0.256
+//   regularField      ≈ pool × 0.512  (regulars are large; players play many)
+//   mainField         ≈ pool × 0.128
+//   mainQualifiersPerMajor ≈ mainField × 0.22  (≈2.5× over-supply on satellites)
+// Examples:
+//   pool=500   → major=128, regular=256, main=64,  mainQualifiers=14
+//   pool=1000  → major=256, regular=512, main=128, mainQualifiers=28  (default)
+//   pool=2500  → major=640, regular=1280, main=320, mainQualifiers=70
+//   pool=5000  → major=1280, regular=2560, main=640, mainQualifiers=140
+// All sizes clamped to a minimum of 4 to keep small-pool tests viable.
+function deriveFieldSizes(poolSize) {
+  const p = Math.max(8, +poolSize || 1000);
+  const round4 = (n) => Math.max(4, Math.round(n / 4) * 4);
+  const major = round4(p * 0.256);
+  const regular = round4(p * 0.512);
+  const main = round4(p * 0.128);
+  const mainQualifiersPerMajor = Math.max(4, Math.round(main * 0.22));
+  return { majorField: major, regularField: regular, mainField: main, mainQualifiersPerMajor };
+}
+
 // v54 TRUE FOLD COST BIN — maps a stroke-equivalent fold cost to a histogram
 // bucket. Higher resolution at the low end (most folds) and coarser bins at
 // the high end (rare big-pot folds). Returns 0..9.
@@ -3390,6 +3414,11 @@ function buildPool(size) {
       majorWins: 0, regularWins: 0, mainWins: 0, totalWins: 0, runnerUps: 0,
       eventsEntered: 0, majorsEntered: 0, regularsEntered: 0, mainsEntered: 0,
       lastMajorWin: null, firstMajorWin: null,
+      // v55: Augusta-style lifetime exemption per specific major. Keys are
+      // event names ('Hive Open', 'Buzz Classic', etc.); values are the year
+      // of first win at that event. Once you win Major X, you're exempt to
+      // Major X for life. Independent of the 3-year cross-major exemption.
+      majorWinsByEvent: {},
       lastMainWin: null,
       careerSpanStart: null, careerSpanEnd: null,
       bestFinalsScore: 999, recentForm: [],
@@ -3533,11 +3562,25 @@ function selectMajorField(pool, fieldSize, year, cfg) {
   const sourceCounts = { champ: 0, ranking: 0, season: 0, career: 0, open: 0, fallback: 0 };
   const exemptYears = cfg.exemptionYears != null ? cfg.exemptionYears : MAJOR_EXEMPTION;
 
-  // Champion exemption — earned-once binary entry, not score-based. No cap:
-  // a 5-time major winner inside their exemption window plays free.
+  // Champion exemption — TWO criteria, either qualifies:
+  //   1. v55 LIFETIME PER-MAJOR (Augusta rule). Won this specific major event
+  //      ever in career → permanently exempt to this major.
+  //   2. Legacy 3-year cross-major window (existing behavior). Recent major
+  //      winner is exempt across all majors for exemptionYears.
+  // Sort puts lifetime-eligible champions first (they're a smaller, more
+  // exclusive group), then by major-win count, season merit, skill.
+  const eventName = (cfg && cfg.eventName) || null;
+  const isLifetimeChamp = (p) => !!(eventName && p.majorWinsByEvent && p.majorWinsByEvent[eventName]);
   const champs = pool
-    .filter(p => p.lastMajorWin != null && (year - p.lastMajorWin) < exemptYears)
-    .sort((a, b) => (b.majorWins - a.majorWins) || (seasonMeritScore(b) - seasonMeritScore(a)) || (b.skill - a.skill));
+    .filter(p => isLifetimeChamp(p) ||
+      (p.lastMajorWin != null && (year - p.lastMajorWin) < exemptYears))
+    .sort((a, b) => {
+      // Lifetime-this-major exempt sorts ahead of merely-recent-major exempt.
+      const aLifetime = isLifetimeChamp(a) ? 1 : 0;
+      const bLifetime = isLifetimeChamp(b) ? 1 : 0;
+      if (aLifetime !== bLifetime) return bLifetime - aLifetime;
+      return (b.majorWins - a.majorWins) || (seasonMeritScore(b) - seasonMeritScore(a)) || (b.skill - a.skill);
+    });
   takeQualified(champs, counts.champs, selected, out, 'champ', sourceCounts);
 
   // Ranking bucket: skill-desc with ±0.05 jitter and a 0.009 × eventsThisYear
@@ -3640,7 +3683,7 @@ function selectRegularField(pool, fieldSize, year) {
   return out.slice(0, fieldSize);
 }
 
-function selectField(eventType, year) {
+function selectField(eventType, year, eventName) {
   const pool = TourState.pool;
   if (eventType === 'main') {
     const shuffled = pool.slice();
@@ -3656,13 +3699,14 @@ function selectField(eventType, year) {
       majorSeasonShare: 0.22,
       majorCareerShare: 0.13,
       majorOpenShare: 0.15,
+      eventName,                              // v55: lifetime per-major exempt key
     });
   }
   return pool.slice(0, 32);
 }
 
 function runTourEvent(eventType, year, eventName) {
-  const field = selectField(eventType, year);
+  const field = selectField(eventType, year, eventName);
   const players = field.map(p => ({
     id: p.id, name: p.name, profile: p.profile, poolRef: p,
     stats: makeFreshStats(), eliminatedAtBracket: null, path: [],
@@ -3682,6 +3726,11 @@ function runTourEvent(eventType, year, eventName) {
   if (eventType === 'major') {
     champ.majorWins++; champ.lastMajorWin = year;
     if (champ.firstMajorWin == null) champ.firstMajorWin = year;
+    // v55 Augusta rule: lifetime exemption to THIS specific major event.
+    if (!champ.majorWinsByEvent) champ.majorWinsByEvent = {};
+    if (eventName && !champ.majorWinsByEvent[eventName]) {
+      champ.majorWinsByEvent[eventName] = year;
+    }
   } else if (eventType === 'regular') champ.regularWins++;
   else if (eventType === 'main') champ.mainWins++;
   champ.totalWins++;
@@ -4012,6 +4061,7 @@ function resetTourHistory() {
       p.majorWins = 0; p.regularWins = 0; p.mainWins = 0; p.totalWins = 0; p.runnerUps = 0;
       p.eventsEntered = 0; p.majorsEntered = 0; p.regularsEntered = 0; p.mainsEntered = 0;
       p.lastMajorWin = null; p.firstMajorWin = null;
+      p.majorWinsByEvent = {};
       p.bestFinalsScore = 999; p.recentForm = [];
       p.currentSeasonPoints = 0; p.lastSeasonPoints = 0; p.qualSeasonYear = 0;
       p.careerSpanStart = null; p.careerSpanEnd = null;
@@ -7242,11 +7292,12 @@ const DEFAULT_SIM_CONFIG = {
   //   Main: 128 — annual championship (Players-Championship invitational scale)
   majorField: 256, regularField: 512, mainField: 128,
   exemptionYears: 3,
-  // v47: mainQualifiersPerMajor reduced from 512 → 64 to match smaller fields.
-  // 4 majors × 64 = 256 max satellite seats — but mainField=128 caps actual
-  // satellite seats at 128 × (1 - mainDirectEntryShare 0.5) = 64 satellite seats.
-  // Aligned with field size to avoid wasted qualifier slots.
-  mainQualifiersPerMajor: 64,
+  // v55: mainQualifiersPerMajor reduced from 64 → 28 to align with smaller
+  // satellite seat count. With mainField=128 and mainDirectEntryShare=0.65,
+  // there are ~45 satellite seats per main. 4 majors × 28 = 112 qualifier
+  // paths feeding 45 seats = ~2.5× over-supply (healthy, lets best
+  // qualifiers compete for limited seats).
+  mainQualifiersPerMajor: 28,
   // TOURNAMENT FORMAT — switches between two structurally different event types:
   //   'aggregate' (default, PGA Masters feel): regulars and majors play 4 rounds
   //     × 18 holes = 72 holes total, with rotating-partner pairings each round.
@@ -7289,7 +7340,13 @@ const DEFAULT_SIM_CONFIG = {
   // of Main fields, reducing tail-luck Main champions and aligning with
   // the brief target eliteMajorDominance of 0.45-0.60.
   // Set to 0 to disable the split (random fill); set to 1 for direct-entry-only.
-  mainDirectEntryShare: 0.50,
+  // v55: 0.50 → 0.65. Larger direct-entry share means elite pros (paying
+  // $50k+) buy in directly more often, while satellite-fed seats (variance
+  // correlated) shrink. Combined with the v55 mainQualifiersPerMajor 64→28
+  // reduction, Main fields become more skill-dense, lifting the elite share
+  // of Main top-10s without breaking the Moneymaker-tail story (35% of
+  // seats still come from satellites).
+  mainDirectEntryShare: 0.65,
   // Match structure
   earlyRoundHoles: 9, lateRoundHoles: 18, finalsHoles: 72, strokeCap: 3,
   regularStrokeCap: 6,
@@ -7757,6 +7814,11 @@ function buildPoolFromConfig(cfg) {
       majorWins: 0, regularWins: 0, mainWins: 0, totalWins: 0, runnerUps: 0,
       eventsEntered: 0, majorsEntered: 0, regularsEntered: 0, mainsEntered: 0,
       lastMajorWin: null, firstMajorWin: null,
+      // v55: Augusta-style lifetime exemption per specific major. Keys are
+      // event names ('Hive Open', 'Buzz Classic', etc.); values are the year
+      // of first win at that event. Once you win Major X, you're exempt to
+      // Major X for life. Independent of the 3-year cross-major exemption.
+      majorWinsByEvent: {},
       lastMainWin: null,
       careerSpanStart: null, careerSpanEnd: null,
       bestFinalsScore: 999, recentForm: [],
@@ -7778,7 +7840,7 @@ function buildPoolFromConfig(cfg) {
 }
 
 // --- Lab tournament runner — parallels runTourEvent but uses cfg + tracks bracket survival ---
-function selectFieldLab(eventType, pool, year, cfg) {
+function selectFieldLab(eventType, pool, year, cfg, eventName) {
   if (eventType === 'main') {
     // === MAIN FIELD COMPOSITION ===
     // Per the economic model: 70% via satellite ladder, 30% direct entry.
@@ -7879,13 +7941,15 @@ function selectFieldLab(eventType, pool, year, cfg) {
     return seated;
   }
   if (eventType === 'regular') return selectRegularField(pool, Math.min(cfg.regularField, pool.length), year);
-  return selectMajorField(pool, Math.min(cfg.majorField, pool.length), year, cfg);
+  // v55: pass eventName via cfg for lifetime-per-major exempt lookup
+  const cfgWithEvent = Object.assign({}, cfg, { eventName });
+  return selectMajorField(pool, Math.min(cfg.majorField, pool.length), year, cfgWithEvent);
 }
 
 function runTourEventLab(eventType, year, eventName, pool, cfg) {
   const priorStrokeCap = CurrentStrokeCap;
   const capPlan = resolveEventStrokeCaps(eventType, cfg);
-  const field = selectFieldLab(eventType, pool, year, cfg);
+  const field = selectFieldLab(eventType, pool, year, cfg, eventName);
   // Lazy-init counters on any pool player missing them (classic buildPool() didn't add them).
   for (const p of field) {
     if (!p.reaches) p.reaches = { r1: 0, r4: 0, r2: 0, finals: 0, champ: 0 };
@@ -8097,6 +8161,11 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   if (eventType === 'major') {
     champ.majorWins++; champ.lastMajorWin = year;
     if (champ.firstMajorWin == null) champ.firstMajorWin = year;
+    // v55 Augusta rule: lifetime exemption to THIS specific major event.
+    if (!champ.majorWinsByEvent) champ.majorWinsByEvent = {};
+    if (eventName && !champ.majorWinsByEvent[eventName]) {
+      champ.majorWinsByEvent[eventName] = year;
+    }
   } else if (eventType === 'regular') {
     champ.regularWins++;
   } else {
