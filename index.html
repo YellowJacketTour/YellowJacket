@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.27-v51";
+const APP_VERSION = "2026.04.27-v53";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1438,7 +1438,14 @@ function honeyDivisorFor(numHoles) {
   // EV math read the divisor through this function (or its mirrored fallback),
   // so player perception and actual scoring stay aligned.
   const mult = (CurrentHoneyMagnitude > 0) ? CurrentHoneyMagnitude : 1;
-  return Math.max(0.01, base / mult);
+  // v52 DIVISOR FLOOR: clamp the returned divisor to a minimum of 4 so short
+  // events at high magnitude don't collapse into honey-dominated scoring.
+  // Without this, mag=9 + 9-hole bracket = divisor 1, meaning 1 honey = 1
+  // stroke and a 30-honey pot is worth 30 strokes — completely breaking
+  // bracket play. With the floor, bracket/sudden-death events cap at
+  // 4 honey = 1 stroke regardless of magnitude. 72-hole championships still
+  // see the full magnitude effect (mag=9 → divisor=8).
+  return Math.max(4, base / mult);
 }
 // honeyNormalizationDivisor = 72 (4×18, like 4 rounds of golf / majors).
 // Golf dominates; honey is the light smoothing drizzle.
@@ -7279,26 +7286,25 @@ const DEFAULT_SIM_CONFIG = {
   // recovers the v37/v38 "almost never fold" behavior; dropping to 6 makes
   // folds aggressive (think pot-committed-only-when-strong play).
   decisionDivisor: 9,
-  // HONEY MAGNITUDE (v40 Path 2, retuned v51) — global scalar that boosts
-  // honey impact on the scorecard. magnitude=N means honeyDivisorFor returns
-  // base/N, so 1 stroke = (roundLength/N) honey at round end.
-  //   mag=1 (legacy):   72-hole div=72  → 30-honey fold = +1.42 strokes
-  //   mag=2 (v46 B3):   72-hole div=36  → 30-honey fold = +1.83 strokes
-  //   mag=4 (aggr):     72-hole div=18  → 30-honey fold = +2.67 strokes
-  //   mag=5 (v51):      72-hole div=14.4 → 30-honey fold = +3.08 strokes (~0.75σ)
-  //   mag=8 (extreme):  72-hole div=9   → 30-honey fold = +4.33 strokes (~1σ)
+  // HONEY MAGNITUDE — global scalar that boosts honey impact on the scorecard.
+  // magnitude=N means honeyDivisorFor returns base/N (clamped to floor 4),
+  // so 1 stroke = (roundLength/N) honey at round end.
+  //   mag=1:  72-hole div=72,  30-honey fold = +1.42 strokes (legacy)
+  //   mag=2:  72-hole div=36,  30-honey fold = +1.83 strokes (v46-v50)
+  //   mag=5:  72-hole div=14.4, 30-honey fold = +3.08 strokes (v51)
+  //   mag=9:  72-hole div=8,   30-honey fold = +4.75 strokes (v52 "back nine")
   //
-  // v51 raises default 2 → 5. Rationale: at mag=2 the +1 bogey dominated all
-  // fold/loss costs, making honey a 14-45% tail. At mag=5 honey becomes the
-  // primary cost component for big pots, restoring WSOP-style "folding away
-  // a big pot HURTS." Combined with the v51 foldOpt fix (slack 0.05→0.25)
-  // and skill-aware bet sizing, skilled players who only build big pots
-  // when actually ahead win meaningfully more honey, while noisy players
-  // who blow up pots at 50/50 hemorrhage strokes via the (now-larger) honey
-  // term. Also pulls champion scores toward the brief's −5 to −15 target
-  // band (currently +3 with mag=2; mag=5 should bring this down 1.5-3 strokes
-  // for skilled winners).
-  honeyMagnitude: 5,
+  // v52: mag 5→9 ("back nine"). At mag=9, every 8 honey = 1 stroke in a
+  // 72-hole event. A typical 4-12 honey pot moves your scorecard by ~1
+  // stroke; a monster 30-honey pot swings ~5 strokes. WSOP-style "this hand
+  // mattered" applied to a golf scorecard. The honeyDivisorFor floor of 4
+  // protects short-format events (9-hole brackets, sudden-death) from
+  // collapsing into pure honey contests — see honeyDivisorFor for details.
+  // Pulls champion scores deeper into the negative tail without breaking
+  // bracket play. Combined with v51's fold-polarity fix and skill-aware
+  // bet sizing, this is the final calibration layer for skilled-player
+  // expression in long-format championships.
+  honeyMagnitude: 9,
   // POT-ELASTIC CAP MULTIPLIER (v43). When > 0, streetCap can exceed the
   // legacy progressive floor proportionally to current pot size. Default 3
   // calibrates: opener=2 → preflop cap = 6 (4 honey of preflop room, was 0);
@@ -11214,6 +11220,23 @@ function renderActiveRun(root, r) {
     const signed = (delta >= 0 ? '+' : '') + delta.toFixed(0) + 'pp';
     kpis.appendChild(kpi('Below-par rate', rate.toFixed(0) + '%', 'vs Honey-Stroke target 70% · ' + signed));
   })();
+  // v52: per-event-type finals skill-edge. Different event formats (72-hole
+  // aggregate vs 9-hole bracket) express skill differently, so a single
+  // pooled finals skill-edge can hide that majors are skill-dominated while
+  // mains are coin-flip. Surface all three so calibration gaps are visible.
+  if (m.finalsSkillEdge) {
+    const formatEdge = (label, edge) => {
+      if (!edge || !edge.n) return null;
+      const tag = edge.mean > 0.05 ? 'skill' : edge.mean > 0.01 ? 'faint skill' : edge.mean > -0.01 ? 'coin flip' : 'inverted';
+      return kpi(label, edge.mean.toFixed(3), tag + ' · ' + (edge.upsetRate * 100).toFixed(0) + '% upsets');
+    };
+    const tiles = [
+      formatEdge('Finals edge · major', m.finalsSkillEdge.major),
+      formatEdge('Finals edge · regular', m.finalsSkillEdge.regular),
+      formatEdge('Finals edge · main', m.finalsSkillEdge.main),
+    ].filter(Boolean);
+    tiles.forEach(t => kpis.appendChild(t));
+  }
   // Surface Codex's Median major-winner percentile (the headline signal for whether
   // majors are a true elite filter or a broader ecosystem). Healthy band: top 8–15%.
   if (m.majorWinnerSkillMetrics && typeof m.majorWinnerSkillMetrics.medianPercentile === 'number' && m.majorWinnerSkillMetrics.count > 0) {
@@ -11337,126 +11360,329 @@ function renderActiveRun(root, r) {
     wrap.appendChild(card);
   })();
 
-  // Charts
-  const grid = el('div', { class: 'chart-grid' });
+  // ============================================================================
+  // SECTIONED CHART LAYOUT (v53 reorg). Each section has a header + its own
+  // chart-grid. Order is reading-friendly: skill expression → champion profile
+  // → tournament dynamics → AI decision quality → field composition → economics
+  // → career arc. KPIs appropriate to each section live IN that section, not
+  // crammed into one mega-strip up top.
+  // ============================================================================
+  function addSection(title, subtitle) {
+    const div = el('div');
+    div.style.cssText = 'margin-top: 28px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border, #334);';
+    div.appendChild(el('h3', { text: title, style: 'font-size: 15px; margin: 0 0 4px 0; color: var(--text);' }));
+    if (subtitle) div.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 11px; color: var(--text-secondary);', text: subtitle }));
+    wrap.appendChild(div);
+    const grid = el('div', { class: 'chart-grid', style: 'margin-top: 12px;' });
+    wrap.appendChild(grid);
+    return grid;
+  }
+  function makeChartCard(title, subtitle, canvas, note) {
+    const card = el('div', { class: 'chart-box' });
+    card.appendChild(el('div', { class: 'chart-title', text: title }));
+    if (subtitle) card.appendChild(el('div', { class: 'chart-sub', text: subtitle }));
+    card.appendChild(canvas);
+    if (note) card.appendChild(el('div', { class: 'chart-note', text: note }));
+    return card;
+  }
+  const hasEco = m.economics && m.economics.totalRevenue > 0;
+  const byTypeStats = m.champScoreStatsByType || {};
 
-  // Skill → win-rate curve
-  const ch1 = el('div', { class: 'chart-box' });
-  ch1.appendChild(el('div', { class: 'chart-title', text: 'Skill → Wins Curve' }));
-  ch1.appendChild(el('div', { class: 'chart-sub', text: '20-bin smoothed · slope is the skill signal' }));
+  // ─────────────────────────────────────────────────────────────────────────
+  // SECTION 1 — SKILL EXPRESSION
+  // ─────────────────────────────────────────────────────────────────────────
+  const gridSkill = addSection('Skill Expression',
+    'How does authored player skill translate into observed performance?');
   const cv1 = el('canvas', { width: '520', height: '240' });
-  ch1.appendChild(cv1);
-  ch1.appendChild(el('div', { class: 'chart-note', text: 'Steeper slope = more skill-dominated. Flat = luck-dominated.' }));
-  grid.appendChild(ch1);
-
-  // Bracket survival by tier — CONVERSION RATES per entry (not stacked totals).
-  // Previous stacked-area version was dominated by the "R1-only" slice in every tier and
-  // visually indistinguishable across skill tiers. Conversion rates make the tier edge explicit.
-  const ch2 = el('div', { class: 'chart-box' });
-  ch2.appendChild(el('div', { class: 'chart-title', text: 'Bracket Conversion by Skill Tier' }));
-  ch2.appendChild(el('div', { class: 'chart-sub', text: 'P(reach stage | entered) — should fall sharply in weaker tiers' }));
+  gridSkill.appendChild(makeChartCard(
+    'Skill → Wins Curve',
+    '20-bin smoothed · slope is the skill signal',
+    cv1,
+    'Steeper slope = more skill-dominated. Flat = luck-dominated.'));
   const cv2 = el('canvas', { width: '520', height: '240' });
-  ch2.appendChild(cv2);
-  ch2.appendChild(el('div', { class: 'chart-note', text: 'Elite should have higher R16%, Finals%, Champ% per entry than Bottom. If bars look identical across tiers, skill has no effect — pure luck.' }));
-  grid.appendChild(ch2);
+  gridSkill.appendChild(makeChartCard(
+    'Bracket Conversion by Skill Tier',
+    'P(reach stage | entered) — pooled across event types',
+    cv2,
+    'Flat bars = bracket survival is variance-driven. Skill expresses primarily in earnings (see Economics) and aggregate champion scores, less in per-bracket survival rates.'));
 
-  // Score trajectory
-  const ch3 = el('div', { class: 'chart-box' });
-  ch3.appendChild(el('div', { class: 'chart-title', text: 'Avg Champion Score · Year' }));
-  ch3.appendChild(el('div', { class: 'chart-sub', text: 'Does the tour get harder as elite solidifies?' }));
-  const cv3 = el('canvas', { width: '520', height: '240' });
-  ch3.appendChild(cv3);
-  grid.appendChild(ch3);
-
-  // Action rates by street (stacked)
-  const ch4 = el('div', { class: 'chart-box' });
-  ch4.appendChild(el('div', { class: 'chart-title', text: 'Action Rate by Street' }));
-  ch4.appendChild(el('div', { class: 'chart-sub', text: 'check / bet / call / raise / fold · across the pool' }));
-  const cv4 = el('canvas', { width: '520', height: '240' });
-  ch4.appendChild(cv4);
-  ch4.appendChild(el('div', { class: 'chart-note', text: 'Watch this when you widen aggression — fold/raise ratios should shift.' }));
-  grid.appendChild(ch4);
-
-  // H2H matrix heatmap
-  const ch5 = el('div', { class: 'chart-box' });
-  ch5.appendChild(el('div', { class: 'chart-title', text: 'Quartile H2H Matrix (finals)' }));
-  ch5.appendChild(el('div', { class: 'chart-sub', text: 'Champion quartile (rows) beating runner-up quartile (cols)' }));
-  const cv5 = el('canvas', { width: '520', height: '320' });
-  ch5.appendChild(cv5);
-  grid.appendChild(ch5);
-
-  // Gini visualized alongside histogram of wins
-  const ch6 = el('div', { class: 'chart-box' });
-  ch6.appendChild(el('div', { class: 'chart-title', text: 'Win Distribution' }));
-  ch6.appendChild(el('div', { class: 'chart-sub', text: 'Total wins per player · Gini = ' + m.gini.toFixed(3) }));
+  // ─────────────────────────────────────────────────────────────────────────
+  // SECTION 2 — CHAMPION PROFILE
+  // ─────────────────────────────────────────────────────────────────────────
+  const gridChamp = addSection('Champion Profile',
+    'How deep do champion scores go, and how does it vary by event type?');
   const cv6 = el('canvas', { width: '520', height: '240' });
-  ch6.appendChild(cv6);
-  if (ch6.firstChild) ch6.firstChild.textContent = 'Champion Score Distribution';
-  if (ch6.children[1]) ch6.children[1].textContent = '72-hole winning totals · negatives are better';
+  const champCard = makeChartCard(
+    'Champion Score Distribution · all events',
+    'Pooled across all event types',
+    cv6, null);
   if (m.champScoreStats && m.champScoreStats.count > 0) {
     const s = m.champScoreStats;
-    const common = s.common.map(x => formatScore(x.score) + ' (' + (x.rate * 100).toFixed(0) + '%)').join(' Â· ');
-    ch6.appendChild(el('div', {
-      class: 'chart-note',
-      text: 'Champion scores: mean ' + formatScore(Math.round(s.mean)) + ' Â· median ' + formatScore(Math.round(s.median)) + ' Â· p10 ' + formatScore(Math.round(s.p10)) + ' Â· p90 ' + formatScore(Math.round(s.p90)) + ' Â· most common: ' + common
-    }));
+    const common = s.common.map(x => formatScore(x.score) + ' (' + (x.rate * 100).toFixed(0) + '%)').join(' · ');
+    champCard.appendChild(el('div', { class: 'chart-note',
+      text: 'mean ' + formatScore(Math.round(s.mean * 10) / 10) + ' · median ' + formatScore(Math.round(s.median * 10) / 10) + ' · p10 ' + formatScore(Math.round(s.p10 * 10) / 10) + ' · p90 ' + formatScore(Math.round(s.p90 * 10) / 10) }));
   }
-  grid.appendChild(ch6);
+  gridChamp.appendChild(champCard);
 
-  const ch11 = el('div', { class: 'chart-box' });
-  ch11.appendChild(el('div', { class: 'chart-title', text: 'Actual Win Distribution' }));
-  ch11.appendChild(el('div', { class: 'chart-sub', text: 'True total wins per player Â· not smoothed skill bins' }));
-  const cv11 = el('canvas', { width: '520', height: '240' });
-  ch11.appendChild(cv11);
-  ch11.appendChild(el('div', { class: 'chart-note', text: 'Right tail = dynasties. Left pile = the many players who never meaningfully break through.' }));
-  grid.appendChild(ch11);
+  function eventTypeCard(type, label, canvas) {
+    const stats = byTypeStats[type];
+    const subText = stats && stats.count
+      ? stats.count + ' events · mean ' + formatScore(Math.round(stats.mean * 10) / 10) + ' · ' + (stats.underParRate * 100).toFixed(0) + '% below par'
+      : 'No events of this type';
+    const note = type === 'main'
+      ? '9-hole bracket lottery. High variance, scores skew positive — WSOP-feel by design.'
+      : type === 'major'
+        ? '72-hole aggregate, 256-field. Skill-dominated; champions go deeper below par.'
+        : '72-hole aggregate, 512-field. Workhorse format.';
+    return makeChartCard('Champion Score · ' + label, subText, canvas, note);
+  }
+  const cv6Major = el('canvas', { width: '520', height: '240' });
+  const cv6Regular = el('canvas', { width: '520', height: '240' });
+  const cv6Main = el('canvas', { width: '520', height: '240' });
+  gridChamp.appendChild(eventTypeCard('major', 'Majors', cv6Major));
+  gridChamp.appendChild(eventTypeCard('regular', 'Regulars', cv6Regular));
+  gridChamp.appendChild(eventTypeCard('main', 'Main Event', cv6Main));
 
-  // Career Total Score Distribution — cumulative golf score across every event a player entered.
-  // Answers "how does the full pool's lifetime scoring spread look?" — not just champions.
-  const ch12 = el('div', { class: 'chart-box' });
-  ch12.appendChild(el('div', { class: 'chart-title', text: 'Career Total Score Distribution' }));
-  ch12.appendChild(el('div', { class: 'chart-sub', text: 'Lifetime golf total per active player · below-par left · above-par right' }));
-  const cv12 = el('canvas', { width: '520', height: '240' });
-  ch12.appendChild(cv12);
-  ch12.appendChild(el('div', { class: 'chart-note', id: 'careerScoreNote', text: 'Reveals middle-of-pack structure that Win Distribution hides (most players never win, but many play par-ish golf for years).' }));
-  grid.appendChild(ch12);
+  // Calibration thresholds table — pct of events with champion score ≤ -1, -5, -10, -20.
+  // Hidden in CSV; visible markers tell you where the "historic round" tail sits.
+  if (m.champScoreStatsByType) {
+    const calCard = el('div', { class: 'chart-box' });
+    calCard.appendChild(el('div', { class: 'chart-title', text: 'Champion Calibration Thresholds' }));
+    calCard.appendChild(el('div', { class: 'chart-sub', text: 'Share of events with champion at-or-below the listed score · per event type' }));
+    const tbl = el('table', { style: 'width: 100%; font-size: 11px; margin-top: 8px;' });
+    const thead = el('thead');
+    const hr = el('tr');
+    ['Event type','≤ −1','≤ −5','≤ −10','≤ −20','best'].forEach(h => hr.appendChild(el('th', { text: h, style: 'text-align: right; padding: 4px 6px;' })));
+    hr.firstChild.style.textAlign = 'left';
+    thead.appendChild(hr);
+    tbl.appendChild(thead);
+    const tbody = el('tbody');
+    ['major','regular','main'].forEach(type => {
+      const s = byTypeStats[type];
+      if (!s || !s.count) return;
+      const tr = el('tr');
+      const cells = [
+        type.charAt(0).toUpperCase() + type.slice(1) + ' (' + s.count + ')',
+        (s.atOrBelow1 * 100).toFixed(1) + '%',
+        (s.atOrBelow5 * 100).toFixed(1) + '%',
+        (s.atOrBelow10 * 100).toFixed(1) + '%',
+        (s.atOrBelow20 * 100).toFixed(1) + '%',
+        formatScore(Math.round(s.min * 10) / 10),
+      ];
+      cells.forEach((c, i) => tr.appendChild(el('td', { text: c, style: 'text-align: ' + (i === 0 ? 'left' : 'right') + '; padding: 4px 6px; font-family: monospace;' })));
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    calCard.appendChild(tbl);
+    calCard.appendChild(el('div', { class: 'chart-note', text: '"≤ −5" is the historic-round tail. Healthy 72-hole majors hit ~10-20% at this threshold; mains rarely.' }));
+    gridChamp.appendChild(calCard);
+  }
 
-  // --- Economics charts (only shown when buy-ins are set) ---
-  let cv7, cv8, cv9, cv10;
-  const hasEco = m.economics && m.economics.totalRevenue > 0;
+  const cv3 = el('canvas', { width: '520', height: '240' });
+  gridChamp.appendChild(makeChartCard(
+    'Avg Champion Score · Year',
+    'Does the tour get harder as elite solidifies?',
+    cv3,
+    'Downward drift = the tour is getting more competitive over time as exemptions stack.'));
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SECTION 3 — TOURNAMENT DYNAMICS
+  // ─────────────────────────────────────────────────────────────────────────
+  const gridDyn = addSection('Tournament Dynamics',
+    'Finals matchups, head-to-head outcomes, and repeat-winner concentration.');
+  const cv5 = el('canvas', { width: '520', height: '320' });
+  gridDyn.appendChild(makeChartCard(
+    'Quartile H2H Matrix · Finals',
+    'Champion quartile (rows) beating runner-up quartile (cols)',
+    cv5,
+    'Diagonal weight = within-quartile finals (skill-similar). Top-row dominance = elite winning down.'));
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SECTION 4 — AI DECISION QUALITY
+  // ─────────────────────────────────────────────────────────────────────────
+  const gridAI = addSection('AI Decision Quality',
+    'Are players making correct decisions at each equity level and pot size?');
+  const cv4 = el('canvas', { width: '520', height: '240' });
+  gridAI.appendChild(makeChartCard(
+    'Action Rate by Street',
+    'check / bet / call / raise / fold · across the pool',
+    cv4,
+    'Watch this when you widen aggression — fold/raise ratios should shift.'));
+  let cv4b = null;
+  if (m.equityBucketActions) {
+    cv4b = el('canvas', { width: '520', height: '240' });
+    gridAI.appendChild(makeChartCard(
+      'Fold Rate by Equity Bucket',
+      '% of fold-eligible decisions where AI folded · by perceived equity',
+      cv4b,
+      'YJ-correct: high fold rate at 0-20% equity, near-zero everywhere else. Folds at 40%+ are leaks (the v18-v50 inversion bug looked like this).'));
+  }
+  // Resolution mix donut — fold/showdown/tie share. Tells you whether the AI
+  // is folding too much (healthy YJ should be ~20% fold, ~75% showdown, ~5% tie).
+  let cvResMix = null;
+  if (m.resolutionCounts && (m.resolutionCounts.fold + m.resolutionCounts.showdown + m.resolutionCounts.tie) > 0) {
+    cvResMix = el('canvas', { width: '520', height: '240' });
+    gridAI.appendChild(makeChartCard(
+      'Hole Resolution Mix',
+      'Share of holes ending in fold / showdown / tie (carry-pot)',
+      cvResMix,
+      'YJ target: ~20% fold, ~75% showdown, ~5% tie. High fold rate = AI over-folding (classic-poker tight bias).'));
+  }
+  // Pot-size at resolution — does the AI fold on big pots (bad) or only small?
+  let cvPotRes = null;
+  if (m.potBucketsAtFold && m.potBucketsAtShowdown) {
+    cvPotRes = el('canvas', { width: '520', height: '260' });
+    gridAI.appendChild(makeChartCard(
+      'Pot Size at Resolution',
+      'How big was the pot when the hole ended? · 5 buckets',
+      cvPotRes,
+      'Folds should cluster in small pots (<8). Big-pot folds mean AI is paying maximum honey loss instead of seeing showdown.'));
+  }
+  // Fold-cost histogram — under YJ flat-fold-cost it should be 100% at +1.
+  let cvFoldCost = null;
+  if (m.foldCostHist && m.foldCostHist.some(c => c > 0)) {
+    cvFoldCost = el('canvas', { width: '520', height: '240' });
+    gridAI.appendChild(makeChartCard(
+      'Fold Cost Histogram',
+      'Stroke cost per fold · bins +0..+9',
+      cvFoldCost,
+      'v46+ uses flat +1 fold cost. If anything is non-zero outside +1, an old commitment-escalating formula has crept back in.'));
+  }
+  // Bluff-read suppression by readingDepth bucket (v50 C diagnostic).
+  let cvBluffRead = null;
+  if (m.bluffReadStats && m.bluffReadStats.some(r => r.reads > 0)) {
+    cvBluffRead = el('canvas', { width: '520', height: '240' });
+    gridAI.appendChild(makeChartCard(
+      'Bluff-Read Suppression by Reading Depth',
+      'Fraction of naive aggression-discount nullified by Bayesian bluff prior',
+      cvBluffRead,
+      'Should rise monotonically with readingDepth. Confirms high-readingDepth players correctly identify bluffs and refuse to overfold.'));
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SECTION 5 — FIELD COMPOSITION
+  // ─────────────────────────────────────────────────────────────────────────
+  let cvWinSrc = null, cvFieldSrc = null;
+  if (m.majorQualifierMetrics) {
+    const gridField = addSection('Field Composition',
+      'Where do major champions come from, and how is the field constructed?');
+    const winSources = m.majorQualifierMetrics.winnerSource;
+    const fieldSources = m.majorQualifierMetrics.fieldSource;
+    if (winSources) {
+      cvWinSrc = el('canvas', { width: '520', height: '240' });
+      gridField.appendChild(makeChartCard(
+        'Major Champion Sources',
+        'Qualification path of each major-event champion',
+        cvWinSrc,
+        'High season/career/ranking share = merit-driven. High open/fallback = luck-driven entries breaking through.'));
+    }
+    if (fieldSources) {
+      cvFieldSrc = el('canvas', { width: '520', height: '240' });
+      gridField.appendChild(makeChartCard(
+        'Major Field Sources',
+        'Composition of the 256-player major fields by qualification path',
+        cvFieldSrc,
+        'Compare against Champion Sources: a path that sources X% of fields but Y% of champions has effective skill density Y/X.'));
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SECTION 6 — ECONOMICS
+  // ─────────────────────────────────────────────────────────────────────────
+  let cv7, cv7nm, cv8, cv9, cv10;
   if (hasEco) {
-    const ch7 = el('div', { class: 'chart-box' });
-    ch7.appendChild(el('div', { class: 'chart-title', text: 'ROI by Skill Tier' }));
-    ch7.appendChild(el('div', { class: 'chart-sub', text: '(prize earned − buy-ins) / buy-ins · per tier' }));
+    const gridEco = addSection('Economics',
+      'Foundation revenue, prize-pool flow, ROI by skill tier, lifetime P&L.');
     cv7 = el('canvas', { width: '520', height: '240' });
-    ch7.appendChild(cv7);
-    ch7.appendChild(el('div', { class: 'chart-note', text: 'Rising curve = skill rewarded. Flat = pure lottery.' }));
-    grid.appendChild(ch7);
+    gridEco.appendChild(makeChartCard(
+      'ROI by Skill Tier · ALL events',
+      '(prize earned − buy-ins) / buy-ins · includes Main lottery',
+      cv7,
+      'Includes Main lottery: Bottom tier rarely enters Main but pockets large prizes when they tail-win. WSOP-feel signature, not a bug.'));
+    cv7nm = el('canvas', { width: '520', height: '240' });
+    gridEco.appendChild(makeChartCard(
+      'ROI by Skill Tier · ex-Main',
+      'Regulars + Majors only · the skill-only curve',
+      cv7nm,
+      'Removing Main strips lottery variance. Elite should sit near or above zero; Bottom should sit at-or-below.'));
 
-    const ch8 = el('div', { class: 'chart-box' });
-    ch8.appendChild(el('div', { class: 'chart-title', text: 'YJ Inc Revenue · Year' }));
-    ch8.appendChild(el('div', { class: 'chart-sub', text: 'Rake collected per simulated year · cumulative line' }));
+    // Per-tier breakdown table: events, profit, ITM, ROI per event. Exposes
+    // structural detail that the bar charts collapse into single ROI numbers.
+    if (m.economics.tiers && m.economics.tiers.length > 0) {
+      const tierCard = el('div', { class: 'chart-box' });
+      tierCard.appendChild(el('div', { class: 'chart-title', text: 'Per-Tier Breakdown' }));
+      tierCard.appendChild(el('div', { class: 'chart-sub', text: 'Events, profit, ITM rate · all events vs ex-Main' }));
+      const tbl = el('table', { style: 'width: 100%; font-size: 11px; margin-top: 8px;' });
+      const thead = el('thead');
+      const hr = el('tr');
+      ['Tier','Avg events','Avg profit','ROI','ITM rate','ex-Main events','ex-Main profit','ex-Main ROI'].forEach((h, i) => {
+        hr.appendChild(el('th', { text: h, style: 'text-align: ' + (i === 0 ? 'left' : 'right') + '; padding: 4px 6px;' }));
+      });
+      thead.appendChild(hr);
+      tbl.appendChild(thead);
+      const tbody = el('tbody');
+      m.economics.tiers.forEach(t => {
+        const tr = el('tr');
+        const profitColor = (v) => 'color: ' + (v >= 0 ? 'var(--chart-pos, #6cc24a)' : 'var(--chart-neg, #d96a6a)') + ';';
+        const cells = [
+          { text: t.label, align: 'left' },
+          { text: (t.avgEvents != null ? t.avgEvents.toFixed(0) : '—'), align: 'right' },
+          { text: (t.avgProfit != null ? fmtMoney(t.avgProfit) : '—'), align: 'right', style: t.avgProfit != null ? profitColor(t.avgProfit) : '' },
+          { text: ((t.roi || 0) * 100).toFixed(1) + '%', align: 'right', style: profitColor(t.roi || 0) },
+          { text: ((t.itmRate || 0) * 100).toFixed(1) + '%', align: 'right' },
+          { text: (t.avgEvents_nonMain != null ? t.avgEvents_nonMain.toFixed(0) : '—'), align: 'right' },
+          { text: (t.avgProfit_nonMain != null ? fmtMoney(t.avgProfit_nonMain) : '—'), align: 'right', style: t.avgProfit_nonMain != null ? profitColor(t.avgProfit_nonMain) : '' },
+          { text: ((t.roi_nonMain || 0) * 100).toFixed(1) + '%', align: 'right', style: profitColor(t.roi_nonMain || 0) },
+        ];
+        cells.forEach(c => {
+          tr.appendChild(el('td', { text: c.text, style: 'text-align: ' + c.align + '; padding: 4px 6px; font-family: monospace; ' + (c.style || '') }));
+        });
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      tierCard.appendChild(tbl);
+      tierCard.appendChild(el('div', { class: 'chart-note', text: 'ex-Main columns isolate the Regulars+Majors economy. Mid-tier sometimes shows negative ex-Main ROI as the structural-squeeze cohort (lots of buy-ins, no exemptions, no tail wins).' }));
+      gridEco.appendChild(tierCard);
+    }
+
     cv8 = el('canvas', { width: '520', height: '240' });
-    ch8.appendChild(cv8);
-    ch8.appendChild(el('div', { class: 'chart-note', text: 'The foundation balance — YJ Inc’s topline.' }));
-    grid.appendChild(ch8);
-
-    const ch9 = el('div', { class: 'chart-box' });
-    ch9.appendChild(el('div', { class: 'chart-title', text: 'Revenue by Event Type' }));
-    ch9.appendChild(el('div', { class: 'chart-sub', text: 'Which event class fuels YJ Inc' }));
+    gridEco.appendChild(makeChartCard(
+      'YJ Inc Revenue · Year',
+      'Rake collected per simulated year · cumulative line',
+      cv8,
+      'The foundation balance — YJ Inc topline.'));
     cv9 = el('canvas', { width: '520', height: '240' });
-    ch9.appendChild(cv9);
-    grid.appendChild(ch9);
-
-    const ch10 = el('div', { class: 'chart-box' });
-    ch10.appendChild(el('div', { class: 'chart-title', text: 'Profit Distribution (all players)' }));
-    ch10.appendChild(el('div', { class: 'chart-sub', text: 'Histogram of career P&L · negatives = losing players, positives = winners' }));
+    gridEco.appendChild(makeChartCard(
+      'Revenue by Event Type',
+      'Which event class fuels YJ Inc',
+      cv9, null));
     cv10 = el('canvas', { width: '520', height: '240' });
-    ch10.appendChild(cv10);
-    grid.appendChild(ch10);
+    gridEco.appendChild(makeChartCard(
+      'Profit Distribution (all players)',
+      'Histogram of career P&L · negatives = losing players',
+      cv10, null));
   }
 
-  wrap.appendChild(grid);
+  // ─────────────────────────────────────────────────────────────────────────
+  // SECTION 7 — CAREER ARC
+  // ─────────────────────────────────────────────────────────────────────────
+  const gridCareer = addSection('Career Arc',
+    'Lifetime distributions across all players in the pool.');
+  const cv11 = el('canvas', { width: '520', height: '240' });
+  gridCareer.appendChild(makeChartCard(
+    'Win Distribution',
+    'True total wins per player · Gini = ' + m.gini.toFixed(3),
+    cv11,
+    'Right tail = dynasties. Left pile = the many players who never meaningfully break through.'));
+  const cv12 = el('canvas', { width: '520', height: '240' });
+  const careerCard = makeChartCard(
+    'Career Total Score Distribution',
+    'Lifetime golf total per active player · below-par left, above-par right',
+    cv12,
+    'Reveals middle-of-pack structure that Win Distribution hides (most players never win, but many play par-ish golf for years).');
+  // Override id for backward-compat note update
+  if (careerCard.lastChild) careerCard.lastChild.id = 'careerScoreNote';
+  gridCareer.appendChild(careerCard);
 
   // Top earners + Biggest losers (side by side)
   const ecoTop = (m.economics && m.economics.topEarners) || [];
@@ -11549,7 +11775,118 @@ function renderActiveRun(root, r) {
       bestFit: 'linear',
     }));
     safeDraw(cv4, 'actionRate', () => drawStackedArea(cv4, ['preflop','flop','turn','river'].map(s => ({ label: streetLabel(s), check: m.actionRate[s].check || 0, bet: m.actionRate[s].bet || 0, call: m.actionRate[s].call || 0, raise: m.actionRate[s].raise || 0, fold: m.actionRate[s].fold || 0 })), ['check','bet','call','raise','fold'], ['check','bet','call','raise','fold']));
+    // v52: equity-bucket fold rate. Direct bar chart drawn inline since none of
+    // the existing chart helpers fit single-series labeled bars. This is the
+    // single most diagnostic plot for verifying YJ-correct fold polarity.
+    if (cv4b) {
+      safeDraw(cv4b, 'equityBucketFoldRate', () => {
+        const labels = ['0.0-0.2','0.2-0.4','0.4-0.6','0.6-0.8','0.8-1.0'];
+        const rates = m.equityBucketActions.map(row => {
+          const total = (row.check || 0) + (row.bet || 0) + (row.call || 0) + (row.raise || 0) + (row.fold || 0);
+          return total > 0 ? (row.fold || 0) / total : 0;
+        });
+        const ctx = cv4b.getContext('2d');
+        const w = cv4b.width, h = cv4b.height, pad = 48;
+        ctx.clearRect(0, 0, w, h);
+        const C = chartColors();
+        const yMax = Math.max(0.05, Math.max.apply(null, rates) * 1.2);
+        chartAxes(ctx, w, h, pad, 0, yMax, labels, v => (v * 100).toFixed(0) + '%');
+        const plotW = w - 2 * pad, plotH = h - 2 * pad;
+        const colW = plotW / rates.length;
+        const barW = Math.min(76, colW * 0.55);
+        rates.forEach((r, i) => {
+          const cx = pad + colW * (i + 0.5);
+          const y = h - pad - (r / yMax) * plotH;
+          // YJ-correct: red (warning) only at 0.0-0.2 (where folding is right),
+          // orange/red for the higher buckets (where folding is a leak).
+          ctx.fillStyle = i === 0 ? C.pos : (r > 0.01 ? C.neg : C.pos);
+          ctx.fillRect(cx - barW / 2, y, barW, h - pad - y);
+          ctx.fillStyle = C.text; ctx.font = '11px monospace';
+          const lbl = (r * 100).toFixed(2) + '%';
+          ctx.fillText(lbl, cx - ctx.measureText(lbl).width / 2, y - 4);
+        });
+        ctx.fillStyle = C.text; ctx.font = '10px -apple-system, sans-serif';
+        const xt = 'Perceived equity (adj)'; ctx.fillText(xt, (w + pad) / 2 - ctx.measureText(xt).width / 2, h - 4);
+        ctx.save(); ctx.translate(14, h / 2); ctx.rotate(-Math.PI / 2);
+        const yt = 'Fold rate'; ctx.fillText(yt, -ctx.measureText(yt).width / 2, 0); ctx.restore();
+      });
+    }
     safeDraw(cv5, 'h2hMatrix', () => drawHeatmap(cv5, m.h2hMatrix.rate, ['Q1','Q2','Q3','Q4'], ['Q1','Q2','Q3','Q4'], { xTitle: 'Runner-up quartile', yTitle: 'Champion quartile' }));
+
+    // v53 NEW CHARTS — resolution mix donut, pot at resolution, fold-cost
+    // histogram, bluff-read suppression, winner/field source donuts.
+
+    if (cvResMix) {
+      safeDraw(cvResMix, 'resolutionMix', () => {
+        const r = m.resolutionCounts || {};
+        drawDonut(cvResMix, [
+          { label: 'Showdown', value: r.showdown || 0 },
+          { label: 'Fold',     value: r.fold || 0 },
+          { label: 'Tie (carry)', value: r.tie || 0 },
+        ], { centerLabel: ((r.fold || 0) + (r.showdown || 0) + (r.tie || 0)).toLocaleString() + ' holes' });
+      });
+    }
+    if (cvPotRes) {
+      safeDraw(cvPotRes, 'potAtResolution', () => {
+        const labels = ['<4', '4-7', '8-11', '12-15', '16+'];
+        const groups = labels.map((lbl, i) => ({
+          label: lbl,
+          fold:     (m.potBucketsAtFold && m.potBucketsAtFold[i]) || 0,
+          showdown: (m.potBucketsAtShowdown && m.potBucketsAtShowdown[i]) || 0,
+          tie:      (m.potBucketsAtTie && m.potBucketsAtTie[i]) || 0,
+        }));
+        drawGroupedHorizontalBars(cvPotRes, groups, [
+          { key: 'fold',     label: 'Fold' },
+          { key: 'showdown', label: 'Showdown' },
+          { key: 'tie',      label: 'Tie' },
+        ]);
+      });
+    }
+    if (cvFoldCost) {
+      safeDraw(cvFoldCost, 'foldCostHist', () => {
+        const items = (m.foldCostHist || []).map((v, i) => ({
+          label: '+' + (i === 9 ? '9+' : i),
+          value: +v || 0,
+        }));
+        drawSimpleBars(cvFoldCost, items, { xLabel: 'Stroke cost', yLabel: 'Folds' });
+      });
+    }
+    if (cvBluffRead) {
+      safeDraw(cvBluffRead, 'bluffReadSuppression', () => {
+        const labels = ['0.00-0.25', '0.25-0.50', '0.50-0.75', '0.75-1.00'];
+        const items = (m.bluffReadStats || []).map((row, i) => {
+          const supp = (row.reads > 0 && row.naiveSum > 0)
+            ? (row.naiveSum - row.appliedSum) / row.naiveSum
+            : 0;
+          return { label: labels[i], value: supp };
+        });
+        drawSimpleBars(cvBluffRead, items, {
+          xLabel: 'Reading depth bucket',
+          yLabel: 'Suppression fraction',
+          yDecimals: 2,
+          barLabel: (v) => (v * 100).toFixed(1) + '%',
+        });
+      });
+    }
+    if (cvWinSrc) {
+      safeDraw(cvWinSrc, 'majorWinnerSources', () => {
+        const sources = m.majorQualifierMetrics.winnerSource || {};
+        const slices = Object.keys(sources)
+          .filter(k => sources[k] > 0)
+          .map(k => ({ label: k, value: sources[k] }));
+        drawDonut(cvWinSrc, slices);
+      });
+    }
+    if (cvFieldSrc) {
+      safeDraw(cvFieldSrc, 'majorFieldSources', () => {
+        const sources = m.majorQualifierMetrics.fieldSource || {};
+        const slices = Object.keys(sources)
+          .filter(k => sources[k] > 0)
+          .map(k => ({ label: k, value: sources[k] }));
+        drawDonut(cvFieldSrc, slices);
+      });
+    }
+
     const scoreVals = m.champScores || [];
     if (scoreVals.length > 0) {
       safeDraw(cv6, 'champScores', () => {
@@ -11566,6 +11903,33 @@ function renderActiveRun(root, r) {
         });
       });
     } else { noDataPlaceholder(cv6); }
+
+    // v52: per-event-type Champion Score Distributions. Reuses the same bin
+    // logic as the pooled chart (cv6) so the three histograms are visually
+    // comparable. Each canvas renders only if events of that type exist.
+    function drawTypeHistogram(canvas, type) {
+      const stats = byTypeStats[type];
+      if (!stats || !stats.count || !stats.scores || stats.scores.length === 0) {
+        noDataPlaceholder(canvas, 'No ' + type + ' events in this run');
+        return;
+      }
+      safeDraw(canvas, 'champScores_' + type, () => {
+        const vals = stats.scores;
+        const minScore = Math.min.apply(null, vals);
+        const maxScore = Math.max.apply(null, vals);
+        const span = Math.max(1, maxScore - minScore + 1);
+        const bins = Math.max(5, Math.min(31, Math.round(span)));
+        drawHistogram(canvas, vals, minScore - 0.5, maxScore + 0.5, bins, {
+          labelFormat: v => Math.round(v),
+          xLabel: 'Champion score',
+          yLabel: 'Events',
+        });
+      });
+    }
+    drawTypeHistogram(cv6Major, 'major');
+    drawTypeHistogram(cv6Regular, 'regular');
+    drawTypeHistogram(cv6Main, 'main');
+
     const winVals = m.winTotals || [];
     if (winVals.length > 0) {
       safeDraw(cv11, 'winTotals', () => {
@@ -11612,6 +11976,22 @@ function renderActiveRun(root, r) {
     } else { noDataPlaceholder(cv12, 'No career-score data (run may be archived)'); }
     if (hasEco) {
       safeDraw(cv7, 'ROITiers', () => drawROITiers(cv7, m.economics.tiers));
+      // v52: ROI-ex-Main chart. Reuses drawROITiers by mapping roi_nonMain
+      // onto the .roi field of a synthetic tier list. Gracefully degrades if
+      // the metric pipeline didn't compute the non-Main breakdown for some
+      // reason (older snapshot, archived run).
+      safeDraw(cv7nm, 'ROITiers_nonMain', () => {
+        const tiersNm = (m.economics.tiers || []).map(t => ({
+          label: t.label,
+          roi: (typeof t.roi_nonMain === 'number') ? t.roi_nonMain : 0,
+        }));
+        const hasNonMain = tiersNm.some(t => t.roi !== 0);
+        if (!hasNonMain) {
+          noDataPlaceholder(cv7nm, 'No ex-Main ROI data on this run');
+          return;
+        }
+        drawROITiers(cv7nm, tiersNm);
+      });
       // Auto-engage log-cumulative when the cumulative max exceeds 100× the first
       // year's value — that's the threshold past which linear scaling crushes
       // the early years against the floor.
@@ -11880,6 +12260,145 @@ function drawRevenueByType(canvas, revByType) {
   const xt = 'Event type'; ctx.fillText(xt, (w + pad) / 2 - ctx.measureText(xt).width / 2, h - 4);
   ctx.save(); ctx.translate(14, h / 2); ctx.rotate(-Math.PI / 2);
   const yt = 'YJ Inc revenue'; ctx.fillText(yt, -ctx.measureText(yt).width / 2, 0); ctx.restore();
+}
+
+// v53 ADDITIONAL CHART HELPERS — written for the full-coverage dashboard reorg.
+// drawDonut: source breakdowns (winner sources, field sources, resolution mix).
+// drawSimpleBars: single-series vertical bars (fold-cost histogram, bluff-read).
+// drawGroupedHorizontalBars: grouped horizontal bars (pot-size at resolution).
+
+function drawDonut(canvas, slices, opts) {
+  opts = opts || {};
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const C = chartColors();
+  const total = slices.reduce((a, s) => a + (s.value || 0), 0);
+  if (total <= 0) {
+    ctx.fillStyle = C.text; ctx.font = 'italic 11px -apple-system, sans-serif';
+    ctx.fillText('No data', 12, h / 2);
+    return;
+  }
+  // Donut on the left half, legend on the right half.
+  const cx = h * 0.55, cy = h / 2, R = h * 0.40, r = R * 0.55;
+  const palette = [C.accent, C.primary, C.tertiary || C.accent, C.pos, C.neg, '#9b8cff', '#ffb37a', '#7ad6c5'];
+  let a0 = -Math.PI / 2;
+  slices.forEach((s, i) => {
+    const frac = (s.value || 0) / total;
+    const a1 = a0 + frac * 2 * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a0) * r, cy + Math.sin(a0) * r);
+    ctx.arc(cx, cy, R, a0, a1);
+    ctx.arc(cx, cy, r, a1, a0, true);
+    ctx.closePath();
+    ctx.fillStyle = palette[i % palette.length];
+    ctx.fill();
+    a0 = a1;
+  });
+  // Center label
+  ctx.fillStyle = C.text; ctx.font = 'bold 14px -apple-system, sans-serif';
+  const center = opts.centerLabel || (total + ' total');
+  ctx.fillText(center, cx - ctx.measureText(center).width / 2, cy + 5);
+  // Legend
+  const legendX = h + 8, legendY = 12;
+  const lineH = Math.min(20, (h - 24) / Math.max(1, slices.length));
+  ctx.font = '11px -apple-system, sans-serif';
+  slices.forEach((s, i) => {
+    const y = legendY + i * lineH;
+    ctx.fillStyle = palette[i % palette.length];
+    ctx.fillRect(legendX, y, 10, 10);
+    ctx.fillStyle = C.text;
+    const pct = (s.value / total * 100).toFixed(1) + '%';
+    const txt = s.label + ' · ' + pct + ' · ' + s.value.toLocaleString();
+    ctx.fillText(txt, legendX + 16, y + 9);
+  });
+}
+
+function drawSimpleBars(canvas, items, opts) {
+  opts = opts || {};
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height, pad = 48;
+  ctx.clearRect(0, 0, w, h);
+  const C = chartColors();
+  if (!items || items.length === 0) {
+    ctx.fillStyle = C.text; ctx.font = 'italic 11px -apple-system, sans-serif';
+    ctx.fillText('No data', 12, h / 2);
+    return;
+  }
+  const vals = items.map(it => +it.value || 0);
+  const yMax = Math.max(0.001, Math.max.apply(null, vals) * 1.15);
+  const labels = items.map(it => it.label);
+  const yFmt = opts.yFmt || (v => v.toFixed(opts.yDecimals != null ? opts.yDecimals : 0));
+  chartAxes(ctx, w, h, pad, 0, yMax, labels, yFmt);
+  const plotW = w - 2 * pad, plotH = h - 2 * pad;
+  const colW = plotW / items.length;
+  const barW = Math.min(60, colW * 0.6);
+  items.forEach((it, i) => {
+    const cx = pad + colW * (i + 0.5);
+    const bh = (vals[i] / yMax) * plotH;
+    ctx.fillStyle = it.color || C.accent;
+    ctx.fillRect(cx - barW / 2, h - pad - bh, barW, bh);
+    ctx.fillStyle = C.text; ctx.font = '11px monospace';
+    const lbl = opts.barLabel ? opts.barLabel(vals[i], it) : yFmt(vals[i]);
+    ctx.fillText(lbl, cx - ctx.measureText(lbl).width / 2, h - pad - bh - 6);
+  });
+  ctx.fillStyle = C.text; ctx.font = '10px -apple-system, sans-serif';
+  if (opts.xLabel) {
+    const xt = opts.xLabel;
+    ctx.fillText(xt, (w + pad) / 2 - ctx.measureText(xt).width / 2, h - 4);
+  }
+  if (opts.yLabel) {
+    ctx.save(); ctx.translate(14, h / 2); ctx.rotate(-Math.PI / 2);
+    ctx.fillText(opts.yLabel, -ctx.measureText(opts.yLabel).width / 2, 0);
+    ctx.restore();
+  }
+}
+
+function drawGroupedHorizontalBars(canvas, groups, series, opts) {
+  opts = opts || {};
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const C = chartColors();
+  const padL = 100, padR = 100, padT = 16, padB = 32;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  // Compute max across all series within each group; total max is the axis bound.
+  let maxVal = 0;
+  groups.forEach(g => {
+    series.forEach(s => { maxVal = Math.max(maxVal, +g[s.key] || 0); });
+  });
+  if (maxVal <= 0) {
+    ctx.fillStyle = C.text; ctx.font = 'italic 11px -apple-system, sans-serif';
+    ctx.fillText('No data', 12, h / 2);
+    return;
+  }
+  const palette = [C.accent, C.primary, C.tertiary || C.pos];
+  const groupH = plotH / groups.length;
+  const seriesH = (groupH * 0.7) / series.length;
+  ctx.font = '10px -apple-system, sans-serif';
+  groups.forEach((g, gi) => {
+    const yTop = padT + gi * groupH + groupH * 0.15;
+    ctx.fillStyle = C.text;
+    ctx.fillText(g.label, 8, yTop + groupH * 0.4);
+    series.forEach((s, si) => {
+      const v = +g[s.key] || 0;
+      const barW = (v / maxVal) * plotW;
+      const y = yTop + si * seriesH;
+      ctx.fillStyle = palette[si % palette.length];
+      ctx.fillRect(padL, y, barW, seriesH * 0.85);
+      ctx.fillStyle = C.text;
+      ctx.fillText(v.toLocaleString(), padL + barW + 4, y + seriesH * 0.65);
+    });
+  });
+  // Legend on the right
+  ctx.font = '11px -apple-system, sans-serif';
+  series.forEach((s, si) => {
+    const ly = padT + si * 18;
+    ctx.fillStyle = palette[si % palette.length];
+    ctx.fillRect(w - padR + 8, ly, 10, 10);
+    ctx.fillStyle = C.text;
+    ctx.fillText(s.label, w - padR + 22, ly + 9);
+  });
 }
 
 // Parameter sensitivity sweep UI removed — Yellow Jacket Tour ships as a single optimized
