@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.27-v50";
+const APP_VERSION = "2026.04.27-v51";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2319,12 +2319,20 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
       adjRead,
     });
   }
+  // v51 (C) SKILL-AWARE BET SIZING. Decision-to-bet still uses noisy adj
+  // (skill differentiates threshold-crossing). But bet SIZE uses a blended
+  // sizing perception: skilled players size based on adjTrue (the oracle),
+  // noisy players size based on adj (their own perception). The blend is
+  // weighted by skillFactor so it's continuous across the skill axis.
+  // Net effect: skilled players big-bet only when actually ahead; noisy
+  // players big-bet at perceived equity (often at 50/50 true), inflating
+  // pots they're 50% to lose. Combined with mag=5 honey, noisy big bets
+  // now hemorrhage real strokes via the (much larger) honey term.
+  const sizingAdj = skillFactor * adjTrue + (1 - skillFactor) * adj;
   if (!isPending) {
     if (adj > effectiveBetThreshold && remaining > 0) {
-      // v24: additive room-based sizing — the bet adds a small/medium/large
-      // FRACTION of remaining cap headroom, never multiplies agreedTotal.
       const room = Math.max(0, streetCap - agreedTotal);
-      const sizeFactor = adj > 0.85 ? 1.0 : adj > 0.70 ? 0.5 : 0.25;
+      const sizeFactor = sizingAdj > 0.85 ? 1.0 : sizingAdj > 0.70 ? 0.5 : 0.25;
       const newLevel = Math.min(streetCap, agreedTotal + Math.max(1, Math.round(room * sizeFactor)));
       if (newLevel > agreedTotal) {
         return wrap({ action: 'bet', amount: newLevel });
@@ -2352,21 +2360,26 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   //
   // STAGE 1 — POT-ODDS FOLD (restored from v22; the actual fold lever).
   // The v23 rewrite eliminated this in favor of pure-EV math, which produced
-  // near-zero fold rates because YJ EV break-even sits at 12-22% equity —
-  // below where heads-up Hold'em hands typically land at the moment of
-  // facing a bet. Pot-odds folding is the historically calibrated lever
-  // that produced realistic action.
+  // near-zero fold rates. Pot-odds folding is the calibrated lever that
+  // produces non-trivial action.
   //
   //   reqEquity = call_amount / pot_after_call  = (L - T) / (2L - T)
   //
-  // profile.foldThreshold (default 0.05) is "slack" — distance below pot
-  // odds the AI will tolerate before folding:
-  //   slack = 0.05 (elite, tight)  → fold when adj < reqEquity − 0.05
-  //                                  (folds even slightly below pot odds)
-  //   slack = 0.20 (loose)          → fold only when adj < reqEquity − 0.20
-  //                                  (calling station — calls deep below odds)
-  // Profile jitter creates the archetype distribution. This is the v22
-  // semantics with a clean naming: foldOpt is the slack, not the threshold.
+  // profile.foldThreshold is "slack" — distance below pot odds the AI will
+  // tolerate before folding:
+  //   slack = 0.25 (YJ-skilled)  → fold only when adj < reqEquity − 0.25
+  //                                ≈ fold when adj < 0.08 (matches YJ
+  //                                break-even of (L−T)/(d+2L) ≈ 8-12%).
+  //   slack = 0.05 (anti-YJ)     → fold when adj < reqEquity − 0.05
+  //                                ≈ fold when adj < 0.28. Classic-poker
+  //                                tight folding; under YJ rules this throws
+  //                                away equity on every mid-bucket fold.
+  //
+  // POLARITY (v51 fix): under YJ + loserBogey, calling-and-losing costs the
+  // same +1 stroke as folding, differing only by (L−T) honey. So break-even
+  // fold equity sits at 5-12% depending on event divisor — far below classic
+  // poker's 33% pot-odds. HIGH slack = correct YJ play. LOW slack = mistake.
+  // foldOpt was 0.05 (low slack = anti-YJ) v19 through v50; now 0.25.
   //
   // STAGE 2 — EV-BASED FOLD (kept from v23, variant-aware via showEV).
   // Catches large-pot / deep-stack scenarios where the per-stroke EV
@@ -2388,9 +2401,11 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   const evFoldNoisy = -foldStrokeCost * divisor - agreedTotal;
   if (evCallNoisy < evFoldNoisy) return wrap({ action: 'fold' });
   if (adj > effectiveRaiseThreshold && remaining > 0) {
-    // v24: additive room-based raise sizing.
+    // v51 (C): raise SIZE uses sizingAdj (skill-blended), not raw adj. Same
+    // rationale as the bet path — skilled raisers escalate only when truly
+    // ahead, noisy raisers escalate based on their misperceived equity.
     const room = Math.max(0, streetCap - currentProposal);
-    const sizeFactor = adj > 0.90 ? 1.0 : adj > 0.80 ? 0.5 : 0.25;
+    const sizeFactor = sizingAdj > 0.90 ? 1.0 : sizingAdj > 0.80 ? 0.5 : 0.25;
     const newLevel = Math.min(streetCap, currentProposal + Math.max(1, Math.round(room * sizeFactor)));
     if (newLevel > currentProposal) {
       return wrap({ action: 'raise', amount: newLevel });
@@ -2420,31 +2435,46 @@ function sampleTargetSkill(cfg) {
 
 // Generate a profile that will read as `targetSkill` under estimateSkillRating.
 //
-// YELLOW JACKET GAME-THEORY OPTIMA (replaces classic-poker optima v18→v19):
-// Yellow Jacket is poker × golf, not classic poker. Folding preflop costs the
-// folder +2 strokes on the golf scorecard (+1 on flop/turn, 0 on river) per
-// playHole's resolution table — over a 72-hole stroke-play round, a player
-// who folds preflop 40% of the time accumulates ~+58 strokes from folds
-// alone. A "calling station" who plays every hand to showdown gets bounded
-// golf scores from showdown and wins career events through tail variance.
-// The Run_1_Y1_Y15 (22).csv audit confirmed this: under classic-poker optima
-// (foldOpt 0.25, betOpt 0.63, raiseOpt 0.82), eliteMajorDominance collapsed
-// to ZERO and authored skill correlated INVERSELY with career wins.
+// YELLOW JACKET GAME-THEORY OPTIMA (re-derived v51 from first principles):
+// Yellow Jacket is poker × golf, not classic poker. Under the loserBogey rule
+// (default), the showdown loser pays a fixed +1 stroke regardless of hand
+// strength. This collapses the cost differential between calling-and-losing
+// vs folding to just (L − T) honey, which at typical event divisors makes
+// folding essentially worthless until equity gets very low. Re-deriving:
 //
-// Pro Yellow Jacket optima:
-//   foldOpt 0.25 → 0.05 — almost never fold (slack = 0.30 − 0.05 = 0.25,
-//                          fold only when adj < reqEquity − 0.25, i.e., very
-//                          deeply behind pot odds). Pre-flop folds are
-//                          off-limits except in extreme deficit; later-street
-//                          folds happen when pot odds and equity diverge
-//                          enough to overcome the smaller late-street penalty.
-//   betOpt   0.63 → 0.55 — bet more often to build pots (winning a pot
-//                          translates to honey credit; building pots compounds).
-//   raiseOpt 0.82 → 0.75 — raise more aggressively on equity advantage
-//                          (combined with the 0.55 bet threshold this lets
-//                          elites pressure mediocre hands into folds, where
-//                          THEIR opponents pay the +2 stroke penalty).
-//   noiseOpt 0    → 0    — unchanged; precision still dominant.
+//   EV_fold(T)   = 1 + T/d                 [stroke units; lower=better]
+//   EV_call(a,L) = (1−a)(1 + L/d) − a(L/d)
+//   Break-even   a* = (L − T) / (d + 2L)
+//
+// At decisionDivisor=9, T=2, L=4:  a* = 2/17 ≈ 11.8%
+// At round-end div=14.4 (mag=5),  a* = 2/22.4 ≈ 8.9%
+//
+// So YJ-optimal is "fold only when equity < 8-12%" — far below classic poker's
+// ~33% pot-odds threshold. The fold rule fires when adj < reqEquity − slack,
+// with reqEquity ≈ 0.33 at typical pot shapes. To target a fold-when-adj<0.08
+// behavior we need slack ≈ 0.25.
+//
+// HISTORICAL BUG (v18→v19, fixed in v51): the prior comment claimed
+//   "foldOpt 0.25 → 0.05 — almost never fold (slack = 0.30 − 0.05 = 0.25)"
+// but the code uses `slack = profile.foldThreshold = foldOpt` directly, so
+// foldOpt=0.05 produced slack=0.05 and fold-when-adj<0.28 (CLASSIC POKER tight
+// folding, not YJ "almost never fold"). The intent was right, the value was
+// wrong by 5×, and the inversion has been the root cause of negative skill
+// expression across v19-v50: "skilled" tight folders were folding 5-10× more
+// than YJ-optimal, paying the equity-give-up cost on every wrong fold, while
+// "unskilled" calling stations played closer to the actual YJ optimum.
+//
+// Pro Yellow Jacket optima (v51 corrected):
+//   foldOpt   0.05 → 0.25 — slack large; fold only when adj < ≈0.08
+//                            (equity below 8% AND pot-odds shortfall). Skilled
+//                            YJ players fold rarely; "tight" classic-poker
+//                            discipline is a vice under loserBogey.
+//   betOpt    0.45         — bet at adj > 0.45 to grow pots when ahead.
+//                            Pre-existing v45 calibration retained.
+//   raiseOpt  0.75         — raise on strong equity (≥0.75 perceived).
+//                            Pre-existing calibration retained.
+//   noiseOpt  0            — precision still dominant; lower noise = better
+//                            adj estimation = better all decisions.
 //
 // cfg.*Spread sliders still control within-tier jitter (±0.15 on bet/fold,
 // ±0.10 on raise) — distinct playing styles within the same skill tier.
@@ -2467,7 +2497,11 @@ function makeProfileForSkill(targetSkill, cfg) {
   // with, and (c) opens the bluff-catching range (0.4–0.6 equity) that
   // currently never folds because pots stay too small to threaten pot odds.
   const betOpt = 0.45;
-  const foldOpt = 0.05;
+  // v51: foldOpt 0.05 → 0.25. The pot-odds rule fires when adj < reqEquity−slack;
+  // slack=foldOpt directly. Setting foldOpt=0.25 produces "fold when adj<≈0.08"
+  // which matches YJ break-even fold equity. Prior 0.05 produced "fold at adj<0.28"
+  // which is classic-poker tight folding, the wrong polarity for YJ rules.
+  const foldOpt = 0.25;
   const raiseOpt = 0.75;
   // v49 MULTI-DIMENSIONAL PROFILES — three orthogonal traits beyond the
   // skill axis. Two skill-0.95 players now have DIFFERENT profiles in these
@@ -2505,11 +2539,14 @@ function makeProfileForSkill(targetSkill, cfg) {
 }
 
 function estimateSkillRating(profile) {
-  // Skill rating measures distance from Yellow Jacket optima (not classic
-  // poker optima). Updated 2026-04 alongside makeProfileForSkill.
+  // Skill rating measures distance from Yellow Jacket optima. Must stay in
+  // sync with the constants in makeProfileForSkill — when those move, this
+  // function moves with them or authoredVsMeasuredSkill goes negative for
+  // structural reasons. v51: foldOpt 0.05→0.25 (the v18→v19 inversion fix);
+  // betOpt 0.55→0.45 (v45 calibration that was never propagated here).
   const nT = 1 - profile.noise / 0.30;
-  const bT = 1 - Math.abs(profile.betThreshold - 0.55) / 0.15;
-  const fT = 1 - Math.abs(profile.foldThreshold - 0.05) / 0.15;
+  const bT = 1 - Math.abs(profile.betThreshold - 0.45) / 0.15;
+  const fT = 1 - Math.abs(profile.foldThreshold - 0.25) / 0.15;
   const rT = 1 - Math.abs(profile.raiseThreshold - 0.75) / 0.10;
   return (nT + bT + fT + rT) / 4;
 }
@@ -7242,24 +7279,26 @@ const DEFAULT_SIM_CONFIG = {
   // recovers the v37/v38 "almost never fold" behavior; dropping to 6 makes
   // folds aggressive (think pot-committed-only-when-strong play).
   decisionDivisor: 9,
-  // HONEY MAGNITUDE (v40 Path 2) — global scalar that boosts honey impact
-  // on the scorecard. Default 1.0 = original behavior; 2.0 doubles honey
-  // value (1 stroke = 36 honey instead of 72 in a 72-hole event); 0.5
-  // halves it. Applied INSIDE honeyDivisorFor so both end-of-round scoring
-  // and decideFor's EV math stay aligned. The brief framed honey as the
-  // "skilled adjustment layer" but at magnitude 1.0 a 72-hole event caps
-  // skilled honey edge at ~5 strokes — washed out by single-hole swings.
-  // Higher magnitude restores honey as a genuine skill axis. Range
-  // recommended 1.0–4.0; values >4 risk honey dominating the scorecard.
-  // v46 B3 scoring identity: champions go below par via skilled honey
-  // accumulation. Default magnitude raised from 1 → 2 (effective divisor
-  // halved). Population mean stays neutral (honey is zero-sum), but
-  // variance roughly doubles in honey-impact, pulling skilled winners
-  // deeper below their hand-only baseline. Combined with YJ's +1 loser
-  // rule and flat +1 fold cost, this targets champion scores in the
-  // −5 to −15 band (golf-realistic). Tunable: 1=legacy, 2=B3 default,
-  // 3=aggressive, 4+=experimental.
-  honeyMagnitude: 2,
+  // HONEY MAGNITUDE (v40 Path 2, retuned v51) — global scalar that boosts
+  // honey impact on the scorecard. magnitude=N means honeyDivisorFor returns
+  // base/N, so 1 stroke = (roundLength/N) honey at round end.
+  //   mag=1 (legacy):   72-hole div=72  → 30-honey fold = +1.42 strokes
+  //   mag=2 (v46 B3):   72-hole div=36  → 30-honey fold = +1.83 strokes
+  //   mag=4 (aggr):     72-hole div=18  → 30-honey fold = +2.67 strokes
+  //   mag=5 (v51):      72-hole div=14.4 → 30-honey fold = +3.08 strokes (~0.75σ)
+  //   mag=8 (extreme):  72-hole div=9   → 30-honey fold = +4.33 strokes (~1σ)
+  //
+  // v51 raises default 2 → 5. Rationale: at mag=2 the +1 bogey dominated all
+  // fold/loss costs, making honey a 14-45% tail. At mag=5 honey becomes the
+  // primary cost component for big pots, restoring WSOP-style "folding away
+  // a big pot HURTS." Combined with the v51 foldOpt fix (slack 0.05→0.25)
+  // and skill-aware bet sizing, skilled players who only build big pots
+  // when actually ahead win meaningfully more honey, while noisy players
+  // who blow up pots at 50/50 hemorrhage strokes via the (now-larger) honey
+  // term. Also pulls champion scores toward the brief's −5 to −15 target
+  // band (currently +3 with mag=2; mag=5 should bring this down 1.5-3 strokes
+  // for skilled winners).
+  honeyMagnitude: 5,
   // POT-ELASTIC CAP MULTIPLIER (v43). When > 0, streetCap can exceed the
   // legacy progressive floor proportionally to current pot size. Default 3
   // calibrates: opener=2 → preflop cap = 6 (4 honey of preflop room, was 0);
@@ -9596,8 +9635,8 @@ function _exportRunToCSVImpl(snap) {
   // v42: pot-odds-aware fold check. Stage-1 trigger compares adj to
   // (reqEquity − foldThreshold). Stage-2 EV check (now using v43
   // commitment-escalating fold cost) runs as a backup.
-  cfgRow('decision.foldRule', 'pot-odds + EV (v42 + v43 escalating)');
-  cfgRow('decision.foldOptSlack', 0.05);
+  cfgRow('decision.foldRule', 'pot-odds + EV (v42 base, v51 polarity-corrected)');
+  cfgRow('decision.foldOptSlack', 0.25);
   // v43: pot-elastic streetCap multiplier. effectiveCap = max(progressive,
   // min(globalCap×3, k×agreedTotal)). k=3 default unlocks preflop play and
   // restores overbet pressure on hot pots.
@@ -9619,8 +9658,8 @@ function _exportRunToCSVImpl(snap) {
   // live decision logic, and audits read them as if they were live config knobs.
   // Reporting the real betOpt / foldOpt / raiseOpt instead so a CSV audit
   // matches the actual AI behavior.
-  cfgRow('ai.profileOpt.bet', 0.55);
-  cfgRow('ai.profileOpt.fold', 0.05);
+  cfgRow('ai.profileOpt.bet', 0.45);
+  cfgRow('ai.profileOpt.fold', 0.25);
   cfgRow('ai.profileOpt.raise', 0.75);
   cfgRow('ai.profileOpt.noise', 0);
   cfgRow('rakePercent', snapCfg.rakePercent != null ? snapCfg.rakePercent : 0.03);
