@@ -882,7 +882,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.27-v44";
+const APP_VERSION = "2026.04.27-v47";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2157,12 +2157,11 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     const fe = foldEqFor(newLevel);
     return fe * agreedTotal + (1 - fe) * showEV(adjVal, newLevel);
   }
-  // v43 commitment-escalating fold cost: +1 base + floor(agreedTotal/4)
-  // escalation strokes. The AI now correctly perceives that walking away
-  // from a big pot costs more golf strokes than walking from a small one,
-  // creating pot-control as a real skill axis and restoring bluff equity
-  // on inflated pots (committed opponents call more).
-  const foldStrokeCost = 1 + Math.floor((+agreedTotal || 0) / 4);
+  // v46: flat +1 fold cost (escalation removed). Empirical telemetry showed
+  // the v43 escalation rarely fired (91% of folds at +1) so the formula was
+  // decorative complexity. Pot-committed dynamics now come from pot odds
+  // (which scale with agreedTotal naturally) rather than fold-cost.
+  const foldStrokeCost = 1;
   const evFoldAbs = -foldStrokeCost * divisor - agreedTotal;
 
   // Build candidate set with adjTrue (oracle) for the metric.
@@ -2177,13 +2176,20 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     const levels = [];
     const room = Math.max(0, streetCap - base);
     if (room <= 0) return levels;
-    // v43: 5 size tiers (was 3) — finer bet/raise granularity enables 3-bet
-    // and 4-bet wars within the cap. Combined with iteration headroom in
-    // playBettingRound, this restores range-vs-range preflop strategy
-    // within bounded space.
+    // v46 POT-RELATIVE BET SIZING — bets scale with the existing pot, not
+    // with remaining cap headroom. Mirrors real-poker convention where bet
+    // sizes are expressed as fractions of pot ("1/3 pot, half-pot, pot, 1.5x pot").
+    //   - Small pots → small bets (no overcommitting on weak boards)
+    //   - Big pots → big bets (late-street pressure restored)
+    //   - Overbets allowed (1.5x pot) → polarized bluff/value structures
+    // The pot-elastic streetCap ceiling caps maximum aggression so single-hole
+    // variance stays bounded, but within that ceiling, bet sizing matches
+    // how real poker thinks about pressure.
+    const pot = Math.max(1, base);
     const seen = new Set();
-    [0.15, 0.30, 0.50, 0.70, 1.0].forEach(f => {
-      const L = Math.min(streetCap, base + Math.max(1, Math.round(room * f)));
+    [0.33, 0.50, 0.75, 1.0, 1.5].forEach(f => {
+      const proposed = base + Math.max(1, Math.round(pot * f));
+      const L = Math.min(streetCap, proposed);
       if (L > base && !seen.has(L)) {
         seen.add(L);
         levels.push(L);
@@ -2237,12 +2243,16 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     return Object.assign({ evChosen, evOptimal, decisionAdj: adj }, result);
   }
 
-  // === DECISION LOGIC (v23) ===
+  // === DECISION LOGIC (v23 + v46 c-bet) ===
   // Profile thresholds drive bet/raise; fold uses direct YJ EV comparison.
-  // No threshold-coupling. profile.foldThreshold is no longer used in the
-  // decision path (kept for skill-rating distance only).
+  // v46: when the actor is the preflop aggressor and we're on flop, lower
+  // their bet threshold by 0.20 to model the standard heads-up c-bet
+  // (continuation bet) behavior. This restores flop activity from the
+  // 86%-checks-on-flop telemetry we observed in v44.
+  const cBetBonus = (gameContext && gameContext.cBet) ? 0.20 : 0;
+  const effectiveBetThreshold = Math.max(0.05, profile.betThreshold - cBetBonus);
   if (!isPending) {
-    if (adj > profile.betThreshold && remaining > 0) {
+    if (adj > effectiveBetThreshold && remaining > 0) {
       // v24: additive room-based sizing — the bet adds a small/medium/large
       // FRACTION of remaining cap headroom, never multiplies agreedTotal.
       const room = Math.max(0, streetCap - agreedTotal);
@@ -2365,7 +2375,15 @@ function makeProfileForSkill(targetSkill, cfg) {
   const dir = () => Math.random() < 0.5 ? -1 : 1;
   // YELLOW JACKET OPTIMA — hardcoded; reflect the poker × golf hybrid rules.
   const noiseOpt = 0;
-  const betOpt = 0.55;
+  // v45: lowered from 0.55 to 0.45 to increase action density.
+  // Telemetry from v44 showed 86% checks on flop and 74% on turn — most
+  // marginal hands never bet, so the action chart was concentrated on
+  // preflop and river. Lowering betOpt means more marginal hands bet,
+  // which (a) creates more decision points, (b) grows pots earlier so the
+  // pot-elastic cap and pot-odds fold rule have more material to work
+  // with, and (c) opens the bluff-catching range (0.4–0.6 equity) that
+  // currently never folds because pots stay too small to threaten pot odds.
+  const betOpt = 0.45;
   const foldOpt = 0.05;
   const raiseOpt = 0.75;
   return {
@@ -2420,7 +2438,7 @@ function makeFreshStats() {
 //   - "fold" = end the hand. agreedTotal stays at its PRE-proposal value
 //     (foldedAtAgreedTotal). Folder loses agreedTotal honey to opponent.
 //   - No "matched" array. No additive doubling. Pot = last agreed total only.
-function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, profileB, initialBet, firstToAct, carryPot = 0, gameContext = {}, pA = null, pB = null) {
+function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, profileB, initialBet, firstToAct, carryPot = 0, gameContext = {}, pA = null, pB = null, preflopAggressor = null) {
   let agreedTotal = +strokes || 0;
   let currentProposal = agreedTotal;        // no pending proposal at street start
   // agreed[x] = true means player x has accepted the current state (currentProposal).
@@ -2447,6 +2465,9 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     player.stats.evLossSum = (player.stats.evLossSum || 0) + Math.max(0, evO - evC);
   }
   // v43: bumped from 8 to 16 to allow 3-bet/4-bet/5-bet sequences within cap.
+  // v46: track who was the last bet/raise actor so playHole can identify the
+  // preflop aggressor and wire up c-betting on flop.
+  let lastAggressor = null;
   for (let iter = 0; iter < 16; iter++) {
     const actor = toAct;
     const other = actor === 'a' ? 'b' : 'a';
@@ -2454,7 +2475,14 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     const profile = actor === 'a' ? profileA : profileB;
     const actorHand = actor === 'a' ? aHand : bHand;
     const isPending = currentProposal > agreedTotal;
-    const d = decideFor(cards, community, currentProposal, agreedTotal, isPending, profile, actorHand, tex, gameContext);
+    // v46 c-bet: if hero was the preflop aggressor and this is the flop,
+    // pass cBet=true through gameContext so decideFor lowers their bet
+    // threshold (continuation-bet behavior). Real heads-up Hold'em c-bets
+    // are 60-70% on flop; this restores that behavior since v44 telemetry
+    // showed 86% checks on flop in YJ.
+    const isCBet = (street === 'flop' && actor === preflopAggressor);
+    const ctx = isCBet ? Object.assign({}, gameContext, { cBet: true }) : gameContext;
+    const d = decideFor(cards, community, currentProposal, agreedTotal, isPending, profile, actorHand, tex, ctx);
     recordEV(actor, d);
     if (typeof LabState !== 'undefined' && LabState.instrumentation && LabState.instrumentation.collector) {
       LabState.instrumentation.collector(street, d.action, d.decisionAdj);
@@ -2486,6 +2514,7 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
     currentProposal = proposed;
     agreed[actor] = true;                    // proposer agrees to their own proposal
     agreed[other] = false;                   // other must respond
+    lastAggressor = actor;                   // v46: track for c-bet identification
     toAct = other;
     // Stroke-cap saturation: if proposal is at cap, force one final response from opp.
     if (currentProposal >= streetCap) {
@@ -2502,7 +2531,7 @@ function playBettingRound(aCards, bCards, community, dealer, strokes, profileA, 
       break;
     }
   }
-  return { strokes: folded ? foldedAtAgreedTotal : agreedTotal, folded };
+  return { strokes: folded ? foldedAtAgreedTotal : agreedTotal, folded, lastAggressor };
 }
 function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   const t0 = SimPerf.enabled ? performance.now() : 0;
@@ -2519,15 +2548,20 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   let strokes = 2 + (carryPot || 0);
   let folded = null;
   const streets = ['preflop','flop','turn','river'];
+  // v46 c-bet support: track who took the last aggressive action preflop so
+  // they can be identified as the c-bet candidate on flop. Resets each hole.
+  let preflopAggressor = null;
   for (let si = 0; si < streets.length; si++) {
     const s = streets[si];
     const firstToAct = startDealer === 'a' ? 'b' : 'a';
     const brT = SimPerf.enabled ? performance.now() : 0;
     // Pass agreedTotal-so-far as `strokes`, no blind (initialBet=0). carryPot
-    // is already folded into strokes at hole start.
-    const br = playBettingRound(aCards, bCards, community, startDealer, strokes, pA.profile, pB.profile, 0, firstToAct, 0, gameContext, pA, pB);
+    // is already folded into strokes at hole start. preflopAggressor threads
+    // through to enable c-bet behavior on flop.
+    const br = playBettingRound(aCards, bCards, community, startDealer, strokes, pA.profile, pB.profile, 0, firstToAct, 0, gameContext, pA, pB, preflopAggressor);
     SimPerf.add('bettingRound', brT);
     strokes = br.strokes;     // for fold: pre-proposal agreedTotal; otherwise: final agreedTotal
+    if (s === 'preflop' && br.lastAggressor) preflopAggressor = br.lastAggressor;
     if (br.folded) { folded = br.folded; break; }
     if (s === 'preflop') { community.push(DECK[off++], DECK[off++], DECK[off++]); }
     else if (s === 'flop') { community.push(DECK[off++]); }
@@ -2535,26 +2569,18 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     if (strokes >= CurrentStrokeCap && s !== 'river') { while (community.length < 5) community.push(DECK[off++]); break; }
   }
   if (folded) {
-    // === YJ FOLD SCORING (v43 commitment-escalating) ===
-    // Base fold cost is +1 bogey. v43 adds an escalation: +floor(strokes/4)
-    // additional strokes when the previously-agreed pot is large. Mirrors
-    // the no-limit "pot-committed" dynamic without requiring chip stacks —
-    // the AI must consider that walking away from a big pot is genuinely
-    // expensive in golf terms, not just the honey forfeit. A folder bailing
-    // out of a 12-honey carry pot now eats +4 strokes (1 base + 3 escalation),
-    // restoring real bluff equity on hot pots and creating pot-control as a
-    // genuine skill axis.
-    //   strokes (=previousAgreedTotal) → fold strokes
-    //     0-3   → +1
-    //     4-7   → +2
-    //     8-11  → +3
-    //     12-15 → +4
-    //     16-19 → +5
-    //   etc.
-    // Non-folder still posts 0 par + previously-agreed honey credit (unchanged).
+    // === YJ FOLD SCORING (v46) — flat +1 across all pot sizes ===
+    // v43 introduced a commitment-escalating formula (1 + floor(T/4)) that
+    // produced empirically near-zero escalation: 91% of folds paid +1, only
+    // 0.2% paid +3. The escalation never materially fired because folds
+    // overwhelmingly happen at small pots (T<4). v46 removes the formula
+    // since (a) it adds complexity without changing behavior and (b) the
+    // chosen scoring identity (B3 golf-realistic) doesn't want fold-tax
+    // accumulation pushing scores positive — honey amplification handles
+    // skill expression instead.
+    // Folder posts +1 bogey; non-folder posts 0 par + previousAgreedTotal honey.
     const streetIdx = (community.length < 3) ? 0 : (community.length === 3) ? 1 : (community.length === 4) ? 2 : 3;
-    const escalation = Math.floor((strokes || 0) / 4);
-    const folderScore = 1 + escalation;
+    const folderScore = 1;
     const bettorScore = 0;
     // v44 instrumentation: record fold cost + pot bucket at fold.
     if (typeof LabState !== 'undefined' && LabState.instrumentation) {
@@ -2691,12 +2717,22 @@ function playMatch(pA, pB, numHoles, opts) {
       isFinals: !!(baseGameContext && baseGameContext.isFinals),
     });
   };
+  // v45 compound-tie premium: each consecutive tie adds bonus honey to the
+  // carry, capped at +5 per tie to prevent runaway. Streak bonus on Nth
+  // consecutive tie = min(5, N). Cumulative across a 3-tie streak = 1+2+3 = 6
+  // bonus honey injected into the carry pot. Resets on any decisive or folded
+  // resolution. Adds drama to slow-played streaks without breaking variance.
+  let consecTies = 0;
   const applyHole = (r) => {
     totalGolfA += r.aScore; totalGolfB += r.bScore;
     if (r.tie) {
-      // Carry only in finals; otherwise the tied pot is forfeited (no transfer).
-      if (carryEnabled) carryPot += (r.strokes || 0);
+      if (carryEnabled) {
+        consecTies++;
+        const bonus = Math.min(5, consecTies);
+        carryPot += (r.strokes || 0) + bonus;
+      }
     } else {
+      consecTies = 0;
       const aSk = r.aHoneyCredit || 0;
       const bSk = r.bHoneyCredit || 0;
       totalHoneyA += aSk;
@@ -2790,7 +2826,7 @@ function runKnockoutRound(players, numHoles) {
 //   - placements: { id, rankFloor, tierSize } records (1 = champion, etc.)
 //   - playoffsRun: how many extra holes were needed to break a tie for first
 // =============================================================================
-function runStrokePlayEvent(players, holesPerRound, rounds, cfg) {
+function runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
   holesPerRound = holesPerRound || 18;
   rounds = rounds || 4;
   const totalHoles = holesPerRound * rounds;
@@ -2798,15 +2834,78 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg) {
   // Initialize aggregate scores.
   const agg = new Map();
   for (const p of players) agg.set(p.id, { player: p, score: 0, rounds: [] });
-  // Each round: shuffle field and pair off. Odd field gets a bye player who
-  // posts a 0 round (no honey changes, no golf changes — they sit out a round).
+  // === v46 TIERED PAIRING SYSTEM ===
+  // Different event tiers use different pairing logics, mirroring how real
+  // tournament hierarchies work:
+  //   Main: random — preserves WSOP-flavored lottery variance (current behavior)
+  //   Major: skill-bracket — top-quartile vs top-quartile (Masters-flavored
+  //          competitive race; champions earn it via head-to-head with peers)
+  //   Regular: woven mix — skill ± recent form (weekly Tour Open feel; hot
+  //            players play up, cold players play down)
+  // Pairing controls who plays whom each round. With random pairing, the
+  // champion is determined heavily by pairing variance (a top player gets
+  // unlucky and faces strong opponents every round). With skill-bracket
+  // pairing, the champion EMERGES through competitive duels with peers,
+  // dramatically lifting elite-skill expression in Majors.
+  function shuffleInPlace(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+  }
+  function pairRandom(field) {
+    const r = field.slice();
+    shuffleInPlace(r);
+    return r;
+  }
+  function pairBySkillBracket(field) {
+    // Sort by authored skill (descending — best first), split into halves,
+    // shuffle WITHIN each half so pairings within a tier vary across rounds,
+    // then pair adjacent (so top-tier faces top-tier).
+    const sorted = field.slice().sort((a, b) => {
+      const sa = (a.poolRef && a.poolRef.skill) != null ? a.poolRef.skill : (a.skill || 0);
+      const sb = (b.poolRef && b.poolRef.skill) != null ? b.poolRef.skill : (b.skill || 0);
+      return sb - sa;
+    });
+    const mid = Math.floor(sorted.length / 2);
+    const top = sorted.slice(0, mid);
+    const bot = sorted.slice(mid);
+    shuffleInPlace(top); shuffleInPlace(bot);
+    return top.concat(bot);
+  }
+  function pairWoven(field, aggMap) {
+    // Combined rating: 70% authored skill + 30% running form (negative recent
+    // score = good form; rescale to [0,1]). Sort by combined rating, pair
+    // adjacent. This produces organic skill matching with recency mobility:
+    // a hot bottom-skill player who's been scoring well plays "up" toward
+    // mid-tier opponents, while a cold elite plays "down" — exactly like
+    // weekly tour pairings respect form.
+    const scored = field.map(p => {
+      const sk = (p.poolRef && p.poolRef.skill) != null ? p.poolRef.skill : (p.skill || 0);
+      const rec = (aggMap && aggMap.get(p.id)) || null;
+      // Form score: lower = better. Normalize roughly to [-1, +1] range.
+      const formRaw = rec && rec.rounds.length > 0
+        ? rec.rounds.reduce((a, b) => a + b.score, 0) / rec.rounds.length
+        : 0;
+      const formNorm = -Math.tanh(formRaw / 10); // higher = better form
+      const rating = 0.7 * sk + 0.3 * (formNorm * 0.5 + 0.5);
+      return { p, rating };
+    });
+    scored.sort((a, b) => b.rating - a.rating);
+    return scored.map(x => x.p);
+  }
+  // Each round: pair off via tier-appropriate logic. Odd field gets a bye
+  // player who posts a 0 round (no honey/golf changes — they sit out a round).
   // Bye assignment rotates so no one player gets multiple byes if avoidable.
   const byeHistory = new Set();
   for (let r = 0; r < rounds; r++) {
-    const rotation = players.slice();
-    for (let i = rotation.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      const t = rotation[i]; rotation[i] = rotation[j]; rotation[j] = t;
+    let rotation;
+    if (eventType === 'major') {
+      rotation = pairBySkillBracket(players);
+    } else if (eventType === 'regular') {
+      rotation = pairWoven(players, agg);
+    } else {
+      rotation = pairRandom(players);
     }
     let byePlayer = null;
     if (rotation.length % 2 === 1) {
@@ -2887,11 +2986,16 @@ function runFinals(p1, p2) {
   let p1Scorecard = 0, p2Scorecard = 0;
   let p1HoneyTotal = 0, p2HoneyTotal = 0;
   let carryPot = 0;
+  // v45 compound-tie premium (matches strokePlay applyHole)
+  let consecTies = 0;
   const applyHole = (r) => {
     p1Scorecard += r.aScore; p2Scorecard += r.bScore;
     if (r.tie) {
-      carryPot += (r.strokes || 0);
+      consecTies++;
+      const bonus = Math.min(5, consecTies);
+      carryPot += (r.strokes || 0) + bonus;
     } else {
+      consecTies = 0;
       const aSk = r.aHoneyCredit || 0;
       const bSk = r.bHoneyCredit || 0;
       p1HoneyTotal += aSk;
@@ -4871,20 +4975,17 @@ function resolveMPHole(g) {
   // so we can roll a NEW carry forward if THIS hole ties.
   let p1Golf = 0, p2Golf = 0, p1Honey = 0, p2Honey = 0, desc = '';
   if (c.folded) {
-    // v43 commitment-escalating fold (matches simulator playHole):
-    // folder posts +1 base + floor(previouslyAgreed/4) escalation. Walking
-    // away from a big pot now costs real golf strokes, restoring bluff equity
-    // on hot pots and pot-control as a skill axis. Non-folder still posts
-    // 0 par + previouslyAgreed honey credit.
+    // v46 fold rule (matches simulator playHole): flat +1 base, no escalation.
+    // The v43 escalation rarely fired empirically and added complexity
+    // without behavioral change; reverting to a clean uniform rule.
     const folderSide = c.folded;
     const bettorSide = folderSide === 'p1' ? 'p2' : 'p1';
     const previouslyAgreed = c.agreedTotal;
-    const foldStroke = 1 + Math.floor((previouslyAgreed || 0) / 4);
-    if (folderSide === 'p1') { p1Golf = foldStroke; p2Golf = 0; p2Honey = previouslyAgreed; }
-    else                     { p2Golf = foldStroke; p1Golf = 0; p1Honey = previouslyAgreed; }
+    if (folderSide === 'p1') { p1Golf = 1; p2Golf = 0; p2Honey = previouslyAgreed; }
+    else                     { p2Golf = 1; p1Golf = 0; p1Honey = previouslyAgreed; }
     const folderName = folderSide === 'p1' ? g.p1.name : g.p2.name;
     const bettorName = bettorSide === 'p1' ? g.p1.name : g.p2.name;
-    desc = folderName + ' folded. ' + bettorName + ' takes the ' + previouslyAgreed + '-honey pot (the previously agreed total). ' + folderName + ' +' + foldStroke + ' bogey (commitment-escalating), ' + bettorName + ' 0 par.';
+    desc = folderName + ' folded. ' + bettorName + ' takes the ' + previouslyAgreed + '-honey pot (the previously agreed total). ' + folderName + ' +1 bogey, ' + bettorName + ' 0 par.';
     g.carryPot = 0;
   } else {
     while (c.community.length < 5) c.community.push(c.deck.pop());
@@ -6809,28 +6910,29 @@ const DEFAULT_SIM_CONFIG = {
   betCenter:   0.650,  betSpread:   0.200,
   foldCenter:  0.290,  foldSpread:  0.180,
   raiseCenter: 0.855,  raiseSpread: 0.150,
-  // Event structure
-  // poolSize 30,000: Yellow Jacket population is intentionally larger than the Main
-  // field so the Main is competitive selection (a real annual qualifier), not a
-  // pure "every player plays" lottery. Real WSOP Main fields ~10k entrants from a
-  // worldwide pool of millions — we model that ratio at simulator scale.
-  poolSize: 25000, seasons: 3,
-  majors: 12, regulars: 40, mains: 1,
-  // Field sizes (Yellow Jacket Tour Standard):
-  //   Major: 1024 — prestige invitational; top finishers double as Main satellite winners
-  //   Regular: 2048 — open weekly grind
-  //   Main: 128 — single $1M-purse championship (128 × $10k = $1.28M gross,
-  //                ~$1.24M prize pool after 3% rake). Players-Championship-style
-  //                invitational rather than WSOP mass field; satellite ladder
-  //                + direct-entry champ exemptions still apply.
-  majorField: 1024, regularField: 2048, mainField: 128,
+  // === EVENT STRUCTURE (v47 testing-optimized defaults) ===
+  // The previous defaults (poolSize 25000, seasons 3) were "production-scale"
+  // values targeting Tour-Standard simulation — they take 5-15 min/run and
+  // are unstable at only 3 seasons. v47 retunes for EFFECTIVE TESTING:
+  // statistically meaningful sample sizes (30 seasons × 30 events = 900 events
+  // per run, ~30k decisions per metric) that complete in 30-90 seconds.
+  //
+  // To run production-scale Tour Standard, manually bump:
+  //   poolSize → 25000, seasons → 3, majors → 12, regulars → 40
+  //   majorField → 1024, regularField → 2048, mainQualifiersPerMajor → 512
+  poolSize: 1000, seasons: 30,
+  majors: 4, regulars: 25, mains: 1,
+  // v47 field sizes — quarter of Tour-Standard for ~16× faster sims:
+  //   Major: 256 — competitive prestige (top quartile of pool faces each other)
+  //   Regular: 512 — open grind (half pool, weekly accessibility)
+  //   Main: 128 — annual championship (Players-Championship invitational scale)
+  majorField: 256, regularField: 512, mainField: 128,
   exemptionYears: 3,
-  // SATELLITE / QUALIFIER MECHANIC: top-N finishers in every major earn a FREE Main
-  // Event seat (no buy-in). Default 128 = top half of a 256-player major. With 4
-  // majors per year that's up to 512 qualifier seats per Main — about 1.7% of a 30k
-  // Main field. Models WSOP satellite economics: cheap-effort path to the Main is
-  // "win deep in a major"; expensive path is paying buyInMain at the door.
-  mainQualifiersPerMajor: 512,
+  // v47: mainQualifiersPerMajor reduced from 512 → 64 to match smaller fields.
+  // 4 majors × 64 = 256 max satellite seats — but mainField=128 caps actual
+  // satellite seats at 128 × (1 - mainDirectEntryShare 0.5) = 64 satellite seats.
+  // Aligned with field size to avoid wasted qualifier slots.
+  mainQualifiersPerMajor: 64,
   // TOURNAMENT FORMAT — switches between two structurally different event types:
   //   'aggregate' (default, PGA Masters feel): regulars and majors play 4 rounds
   //     × 18 holes = 72 holes total, with rotating-partner pairings each round.
@@ -6864,11 +6966,16 @@ const DEFAULT_SIM_CONFIG = {
   // progression; cashing in majors counts as Tier-2/3; the mainQualifierUntil
   // flag (top finishers in this year's majors) is the top gate.
   progressiveSatelliteRequirement: true,
-  // Main field composition: 30% direct entry (champion exemptions + top season-
-  // points players); 70% via satellite ladder (mainQualifierUntil flag-holders +
-  // active cashers, in priority order). Set to 0 to disable the split (random
-  // fill); set to 1 to make the entire Main direct-entry-only.
-  mainDirectEntryShare: 0.30,
+  // Main field composition: direct entry vs satellite ladder split.
+  // v45: bumped from 0.30 → 0.50 to tighten the satellite tail-luck pipeline.
+  // Direct entry = champion exemptions + top season-points players (skill-correlated).
+  // Satellite ladder = mainQualifier flag-holders (variance-correlated, since
+  // satellite-qualifying often comes from one good Major run, not season-long
+  // skill expression). Lifting direct-entry share lifts the elite-skill share
+  // of Main fields, reducing tail-luck Main champions and aligning with
+  // the brief target eliteMajorDominance of 0.45-0.60.
+  // Set to 0 to disable the split (random fill); set to 1 for direct-entry-only.
+  mainDirectEntryShare: 0.50,
   // Match structure
   earlyRoundHoles: 9, lateRoundHoles: 18, finalsHoles: 72, strokeCap: 3,
   regularStrokeCap: 6,
@@ -6924,18 +7031,31 @@ const DEFAULT_SIM_CONFIG = {
   // skilled honey edge at ~5 strokes — washed out by single-hole swings.
   // Higher magnitude restores honey as a genuine skill axis. Range
   // recommended 1.0–4.0; values >4 risk honey dominating the scorecard.
-  honeyMagnitude: 1,
+  // v46 B3 scoring identity: champions go below par via skilled honey
+  // accumulation. Default magnitude raised from 1 → 2 (effective divisor
+  // halved). Population mean stays neutral (honey is zero-sum), but
+  // variance roughly doubles in honey-impact, pulling skilled winners
+  // deeper below their hand-only baseline. Combined with YJ's +1 loser
+  // rule and flat +1 fold cost, this targets champion scores in the
+  // −5 to −15 band (golf-realistic). Tunable: 1=legacy, 2=B3 default,
+  // 3=aggressive, 4+=experimental.
+  honeyMagnitude: 2,
   // POT-ELASTIC CAP MULTIPLIER (v43). When > 0, streetCap can exceed the
   // legacy progressive floor proportionally to current pot size. Default 3
   // calibrates: opener=2 → preflop cap = 6 (4 honey of preflop room, was 0);
   // carry pot of 8 → cap = 24 (massive late-street pressure). Hard ceiling
   // of 3× the global cap prevents runaway. Set to 0 for legacy behavior.
   potElasticK: 3,
+  // v45 Major field composition rebalanced — open share (lucky-tail entry)
+  // dropped from 0.22 → 0.10. The 0.12 redistributed into skill-correlated
+  // sources: ranking +0.04, season +0.04, career +0.04. This reduces
+  // variance-driven Major champions and lifts eliteMajorDominance toward
+  // the brief target of 0.45-0.60. Sum still = 1.00.
   majorChampShare: 0.14,
-  majorRankingShare: 0.24,
-  majorSeasonShare: 0.26,
-  majorCareerShare: 0.14,
-  majorOpenShare: 0.22,
+  majorRankingShare: 0.28,
+  majorSeasonShare: 0.30,
+  majorCareerShare: 0.18,
+  majorOpenShare: 0.10,
   // Economics — Yellow Jacket Inc. foundation
   // Tour Standard buy-ins (clean round numbers):
   //   Major: $1,000      — a serious-but-accessible prestige event
@@ -7496,7 +7616,7 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
       setStrokeCap(capPlan.finals); // use the finals cap throughout — every hole counts equally
       // Bracket-survival reaches still get marked so downstream metrics remain
       // populated. Aggregate mode treats r4 = top-16 finishers, r2 = top-2.
-      const aggResult = runStrokePlayEvent(players, 18, 4, cfg);
+      const aggResult = runStrokePlayEvent(players, 18, 4, cfg, eventType);
       const sorted = aggResult.sortedFinishers;
       // Backfill the placements buffer with the aggregate ranking.
       for (const plc of aggResult.placements) placements.push(plc);
@@ -7544,7 +7664,9 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
         remaining.forEach(p => p.poolRef.reaches.r2++);
         remaining.forEach(p => p.poolRef.reaches.finals++);
         setStrokeCap(capPlan.finals);
-        const aggResult = runStrokePlayEvent(remaining, 18, 4, cfg);
+        // v46: hybrid Main aggregate uses random pairing to preserve
+        // WSOP-Main lottery variance even post-cuts.
+        const aggResult = runStrokePlayEvent(remaining, 18, 4, cfg, 'main');
         const sorted = aggResult.sortedFinishers;
         for (const plc of aggResult.placements) placements.push(plc);
         const champWrap = sorted[0];
@@ -7690,7 +7812,22 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   // exemptSeats = count of waived buy-ins this event. Flows through to the
   // CSV economics block (totalExemptSeats) so the waiver volume is visible.
   const exemptSeats = perPlayerBuyIns.filter(v => v === 0).length;
-  const rake = cfg.rakePercent != null ? cfg.rakePercent : 0.03;
+  // v45 tier-progressive rake. Flat 3% across all event tiers was regressive:
+  // Bottom-tier players who entered fewer cheap events outperformed Elite-tier
+  // players in non-Main ROI because Elite paid more rake in absolute terms.
+  // Tier-progressive aligns rake with prestige & prize stakes — cheap accessible
+  // events tax less, expensive prestige events tax more.
+  //   Regular: 1% (broad-accessibility, weekly-grind feel)
+  //   Major:   2% (mid-prestige, professional tier)
+  //   Main:    4% (mass-prestige, capped via mainRake structure)
+  // cfg.rakePercent is preserved as the LEGACY flat-rake fallback when the
+  // tier-progressive overrides are explicitly nulled, so existing test configs
+  // still calibrate cleanly.
+  const baseRake = cfg.rakePercent != null ? cfg.rakePercent : 0.03;
+  const tierRakeMap = { regular: 0.01, major: 0.02, main: 0.04 };
+  const rake = (cfg.tierProgressiveRake !== false && tierRakeMap[eventType] != null)
+    ? tierRakeMap[eventType]
+    : baseRake;
   const revenue = grossPool * rake;
   // Sponsor purse: fixed prize-pool contribution from sponsors/TV (PGA Tour model). Rake does
   // not apply to sponsor money — it goes directly to the purse.
