@@ -174,6 +174,226 @@
     font-family: -apple-system, sans-serif;
     letter-spacing: 0.4px;
   }
+  /* === Nectar bankroll widget (sidebar footer) ============================ */
+  .nav-bankroll {
+    margin: 14px 0 6px; padding: 10px 12px;
+    background: linear-gradient(135deg, rgba(201,168,87,0.18), rgba(255,193,7,0.06));
+    border: 1px solid rgba(201,168,87,0.42);
+    border-radius: 8px;
+    font-family: -apple-system, sans-serif;
+    color: var(--text-on-dark);
+    position: relative; overflow: hidden; cursor: pointer;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .nav-bankroll:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
+  .nav-bankroll .nb-label { font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-on-dark-soft); opacity: 0.85; }
+  .nav-bankroll .nb-value { font-size: 20px; font-weight: 700; color: var(--gold, #C9A857); margin-top: 2px; font-variant-numeric: tabular-nums; letter-spacing: 0.5px; }
+  .nav-bankroll .nb-sub { font-size: 10px; opacity: 0.6; margin-top: 2px; }
+  .nectar-float {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    font-size: 12px; font-weight: 700; pointer-events: none;
+    animation: nectarFloat 1.4s cubic-bezier(.2,.8,.4,1) forwards;
+  }
+  .nectar-float.credit { color: #7ED6A0; }
+  .nectar-float.debit { color: #F3A889; }
+  @keyframes nectarFloat {
+    0%   { opacity: 0; transform: translateY(20px); }
+    20%  { opacity: 1; transform: translateY(-2px); }
+    100% { opacity: 0; transform: translateY(-30px); }
+  }
+  /* Honey-shimmer accent on bankroll header card */
+  .br-header {
+    position: relative; overflow: hidden;
+    background: linear-gradient(135deg, var(--bg-elevated, #fff) 0%, rgba(201,168,87,0.10) 100%);
+    border: 1px solid rgba(201,168,87,0.45);
+    border-radius: 14px; padding: 22px 26px; margin-bottom: 22px;
+  }
+  .br-header::before {
+    content: ''; position: absolute; inset: -2px -50% -2px auto; width: 50%;
+    background: linear-gradient(90deg, transparent, rgba(255,215,80,0.18), transparent);
+    transform: skewX(-22deg); animation: brShimmer 6s linear infinite; pointer-events: none;
+  }
+  @keyframes brShimmer { 0% { right: -50%; } 100% { right: 150%; } }
+  .br-bal-big { font-size: 44px; font-weight: 800; color: var(--gold, #C9A857); font-variant-numeric: tabular-nums; letter-spacing: -0.5px; line-height: 1; }
+  .br-bal-cur { font-size: 16px; opacity: 0.6; margin-left: 8px; }
+  .br-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; margin-top: 18px; }
+  .br-stat { padding: 12px 14px; background: rgba(0,0,0,0.04); border-radius: 8px; border: 1px solid var(--border, rgba(0,0,0,0.08)); }
+  .br-stat .lbl { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.6; }
+  .br-stat .val { font-size: 22px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .br-stat .val.pos { color: var(--chart-good, #1E7A4E); }
+  .br-stat .val.neg { color: var(--chart-bad, #B85A3A); }
+  /* Ledger row stagger-in animation */
+  .ledger-row { animation: ledgerSlideIn 0.4s cubic-bezier(.2,.7,.3,1) backwards; }
+  @keyframes ledgerSlideIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+  .ledger-type-pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; letter-spacing: 0.5px; font-weight: 600; }
+  .ledger-type-pill.tour { background: rgba(201,168,87,0.20); color: var(--gold, #C9A857); }
+  .ledger-type-pill.cash { background: rgba(30,122,78,0.16); color: var(--chart-good, #1E7A4E); }
+  .ledger-type-pill.transfer { background: rgba(110,90,180,0.18); color: #8E6FE0; }
+  .ledger-type-pill.staking { background: rgba(0,103,71,0.18); color: var(--primary, #006747); }
+  .ledger-type-pill.rake { background: rgba(184,90,58,0.16); color: var(--chart-bad, #B85A3A); }
+  .ledger-type-pill.promo { background: rgba(255,193,7,0.20); color: #DBA200; }
+  /* Cash table felt + chips ============================== (Phase 2/3 prep) */
+  .felt-table {
+    position: relative;
+    aspect-ratio: 16/9;
+    background: radial-gradient(ellipse at center, #0F6E50 0%, #084032 75%, #051a14 100%);
+    border-radius: 50% / 30%;
+    box-shadow: inset 0 0 60px rgba(0,0,0,0.55), 0 12px 30px rgba(0,0,0,0.4);
+    border: 8px solid #3a2410;
+    background-clip: padding-box;
+  }
+  .felt-table::before {
+    content: ''; position: absolute; inset: 16px;
+    border: 1px dashed rgba(255,215,80,0.20); border-radius: 50% / 30%; pointer-events: none;
+  }
+  .seat {
+    position: absolute; transform: translate(-50%, -50%);
+    width: 92px; padding: 8px 10px;
+    background: rgba(11,85,68,0.92); color: #F5F1E8;
+    border: 1px solid rgba(201,168,87,0.5); border-radius: 10px;
+    font-family: -apple-system, sans-serif; font-size: 11px; text-align: center;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .seat.acting { box-shadow: 0 0 0 3px rgba(255,215,80,0.65), 0 0 24px rgba(255,215,80,0.45); transform: translate(-50%, -50%) scale(1.04); }
+  .seat.folded { opacity: 0.35; filter: grayscale(0.7); }
+  .seat .seat-name { font-weight: 600; }
+  .seat .seat-stack { font-variant-numeric: tabular-nums; color: var(--gold, #C9A857); margin-top: 2px; }
+  .seat .seat-bet { display: inline-block; margin-top: 4px; padding: 1px 6px; background: rgba(201,168,87,0.25); border-radius: 8px; font-variant-numeric: tabular-nums; }
+  .pot-display {
+    position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%);
+    color: #F5F1E8; font-family: -apple-system, sans-serif;
+    text-align: center; pointer-events: none;
+  }
+  .pot-display .pot-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.7; }
+  .pot-display .pot-value { font-size: 28px; font-weight: 800; color: var(--gold, #C9A857); font-variant-numeric: tabular-nums; }
+  .board-row {
+    position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%);
+    display: flex; gap: 6px;
+  }
+  .pkr-card {
+    width: 44px; height: 62px; border-radius: 6px;
+    background: #fff; color: #1B1B1B;
+    display: flex; align-items: center; justify-content: center; flex-direction: column;
+    font-family: 'Times New Roman', serif; font-weight: 700;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    animation: cardDeal 0.4s cubic-bezier(.2,.7,.3,1) backwards;
+  }
+  .pkr-card.red { color: #c62828; }
+  .pkr-card.back { background: linear-gradient(135deg, #4a2010, #2a1006); color: #C9A857; }
+  .pkr-card.back::after { content: '◈'; font-size: 28px; }
+  @keyframes cardDeal { from { opacity: 0; transform: translateY(-30px) rotate(-12deg); } to { opacity: 1; transform: translateY(0) rotate(0); } }
+  .pkr-card .rank { font-size: 18px; line-height: 1; }
+  .pkr-card .suit { font-size: 14px; line-height: 1; margin-top: 2px; }
+  .chip-stack { display: inline-flex; align-items: center; gap: 2px; }
+  .chip { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.3); box-shadow: 0 1px 0 rgba(255,255,255,0.5) inset; }
+  .chip.c1  { background: #FFFFFF; }
+  .chip.c5  { background: #C62828; }
+  .chip.c25 { background: #1565C0; }
+  .chip.c100{ background: #2E7D32; }
+  .chip.c500{ background: #6A1B9A; }
+  /* Stroke ledger pill for HS cash */
+  .stroke-pill { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stroke-pill.pos { background: rgba(30,122,78,0.18); color: var(--chart-good, #1E7A4E); }
+  .stroke-pill.neg { background: rgba(184,90,58,0.18); color: var(--chart-bad, #B85A3A); }
+  .stroke-pill.flat { background: rgba(0,0,0,0.06); color: var(--text-secondary, #666); }
+  /* === Multi-table tab strip ============================================== */
+  .cash-tab-strip { display: flex; gap: 4px; padding: 4px; background: rgba(0,0,0,0.18); border-radius: 10px 10px 0 0; border-bottom: 2px solid var(--gold, #C9A857); flex-wrap: wrap; }
+  .cash-tab {
+    position: relative;
+    padding: 8px 14px; background: rgba(11,85,68,0.55); color: #F5F1E8;
+    border: 1px solid transparent; border-radius: 6px 6px 0 0; cursor: pointer;
+    font-family: -apple-system, sans-serif; font-size: 12px; font-weight: 600;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    transition: background 0.15s ease, transform 0.15s ease;
+  }
+  .cash-tab:hover { background: rgba(11,85,68,0.85); transform: translateY(-1px); }
+  .cash-tab.active { background: #0d2c20; border-color: var(--gold, #C9A857); color: var(--gold, #C9A857); }
+  .cash-tab-variant { font-size: 9px; opacity: 0.7; letter-spacing: 1px; text-transform: uppercase; }
+  .cash-tab-dot {
+    position: absolute; top: 6px; right: 6px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #ff5050;
+    box-shadow: 0 0 0 0 rgba(255,80,80,0.6);
+    animation: tabPulse 1.4s ease-out infinite;
+  }
+  @keyframes tabPulse {
+    0%   { box-shadow: 0 0 0 0 rgba(255,80,80,0.6); }
+    70%  { box-shadow: 0 0 0 8px rgba(255,80,80,0); }
+    100% { box-shadow: 0 0 0 0 rgba(255,80,80,0); }
+  }
+  .cash-table-card { border-radius: 0 12px 12px 12px; }
+  .cash-table-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+  .cash-log {
+    margin-top: 14px; padding: 10px 12px;
+    background: rgba(0,0,0,0.25); border-radius: 8px;
+    font-family: monospace; font-size: 11px; color: #E0C68C;
+    max-height: 200px; overflow-y: auto;
+  }
+  .cash-session-row { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .cash-stat { padding: 8px 10px; background: rgba(255,255,255,0.06); border-radius: 6px; }
+  .cash-stat .lbl { font-size: 10px; opacity: 0.7; }
+  .cash-stat .val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  /* === HUD pills on opponent seats ======================================== */
+  .hud-row { display: flex; gap: 3px; justify-content: center; margin-top: 4px; }
+  .hud-pill {
+    display: inline-block;
+    padding: 1px 5px;
+    background: rgba(0,0,0,0.55);
+    color: #E0C68C;
+    border: 1px solid rgba(201,168,87,0.35);
+    border-radius: 4px;
+    font-size: 9px;
+    font-family: monospace;
+    letter-spacing: 0.4px;
+  }
+  /* === Time-bank ring on the active user seat =========================== */
+  .tb-ring {
+    position: absolute; right: -10px; top: -10px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: conic-gradient(var(--gold,#C9A857) 360deg, rgba(0,0,0,0.4) 0);
+    box-shadow: 0 0 8px rgba(201,168,87,0.5);
+    pointer-events: none;
+  }
+  .tb-ring::after {
+    content: ''; position: absolute; inset: 4px;
+    border-radius: 50%; background: #0d2c20;
+  }
+  /* Empty seat reduced opacity but no greyscale (was confusing with folded) */
+  .seat.empty-seat { opacity: 0.45; filter: none; border-style: dashed; }
+  /* === Action panel ====================================================== */
+  .action-panel {
+    margin-top: 14px;
+    padding: 14px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.40), rgba(0,0,0,0.25));
+    border: 1px solid rgba(201,168,87,0.35);
+    border-radius: 10px;
+    display: grid; grid-template-columns: auto 1fr; gap: 18px;
+    align-items: center;
+  }
+  .action-left { display: flex; gap: 8px; }
+  .action-right { display: flex; flex-direction: column; gap: 8px; }
+  .action-presets { display: flex; gap: 4px; flex-wrap: wrap; }
+  .action-presets .preset-btn { padding: 4px 10px; font-size: 11px; min-width: 36px; }
+  .action-slider-row { display: flex; gap: 8px; align-items: center; }
+  .action-slider { flex: 1; -webkit-appearance: none; height: 6px; border-radius: 4px; background: rgba(255,255,255,0.10); }
+  .action-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--gold, #C9A857); cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
+  .action-slider::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--gold, #C9A857); cursor: pointer; border: none; }
+  .action-amount {
+    width: 100px; padding: 6px 8px;
+    background: rgba(255,255,255,0.06); color: var(--gold, #C9A857);
+    border: 1px solid rgba(201,168,87,0.4); border-radius: 6px;
+    font-family: monospace; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .btn.act-fold  { background: linear-gradient(180deg, #b13a3a, #7e2424); color: #fff; border-color: #7e2424; min-width: 80px; font-weight: 700; }
+  .btn.act-call  { background: linear-gradient(180deg, #2b6e7a, #144551); color: #fff; border-color: #144551; min-width: 100px; font-weight: 700; }
+  .btn.act-raise { background: linear-gradient(180deg, #d8a93a, #8e6f1c); color: #fff; border-color: #8e6f1c; min-width: 130px; font-weight: 700; }
+  .btn.act-fold:hover  { filter: brightness(1.1); }
+  .btn.act-call:hover  { filter: brightness(1.1); }
+  .btn.act-raise:hover { filter: brightness(1.1); }
+  .btn.act-raise:disabled { opacity: 0.4; }
+
+
   .sidebar-foot .kbd {
     display: inline-block;
     background: rgba(245, 241, 232, 0.15);
@@ -839,6 +1059,11 @@
       <a href="#simulator" data-route="simulator"><span class="ico">🎯</span> Simulator</a>
       <a href="#events" data-route="events"><span class="ico">📅</span> Events</a>
       <a href="#players" data-route="players"><span class="ico">👤</span> Players</a>
+      <a href="#bankroll" data-route="bankroll"><span class="ico">◈</span> Bankroll</a>
+      <a href="#tables" data-route="tables"><span class="ico">🃏</span> Cash Tables</a>
+      <a href="#staking" data-route="staking"><span class="ico">🤝</span> Staking</a>
+      <a href="#economy" data-route="economy"><span class="ico">📈</span> Economy</a>
+      <a href="#history" data-route="history"><span class="ico">⏪</span> Hand History</a>
       <a href="#hof" data-route="hof"><span class="ico">🏅</span> Hall of Fame</a>
       <a href="#analytics" data-route="analytics"><span class="ico">📊</span> Analytics</a>
       <a href="#compare" data-route="compare"><span class="ico">🆚</span> Compare</a>
@@ -849,6 +1074,7 @@
       <a href="#decisiontree" data-route="decisiontree"><span class="ico">🌳</span> Decision Tree</a>
       <a href="#codex" data-route="codex"><span class="ico">📖</span> Codex</a>
     </nav>
+    <div id="nav-bankroll" class="nav-bankroll" title="Your nectar bankroll"></div>
 
     <div class="sidebar-foot">
       <div style="margin-bottom: 6px;"><span class="kbd">Ctrl</span><span class="kbd">K</span> Search</div>
@@ -863,6 +1089,11 @@
     <div class="view" data-view="simulator"></div>
     <div class="view" data-view="events"></div>
     <div class="view" data-view="players"></div>
+    <div class="view" data-view="bankroll"></div>
+    <div class="view" data-view="tables"></div>
+    <div class="view" data-view="staking"></div>
+    <div class="view" data-view="economy"></div>
+    <div class="view" data-view="history"></div>
     <div class="view" data-view="hof"></div>
     <div class="view" data-view="analytics"></div>
     <div class="view" data-view="compare"></div>
@@ -893,7 +1124,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.28-v69.1";
+const APP_VERSION = "2026.04.28-v69.3-interactive";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1163,6 +1394,14 @@ function unifiedSave() {
         panelWidth: LabState.panelWidth,
       },
       moments: (BuzzKnowledge && Array.isArray(BuzzKnowledge.moments)) ? BuzzKnowledge.moments.slice(0, 50) : [],
+      nectar: (typeof NectarState === 'object' && NectarState) ? {
+        bankrolls: NectarState.bankrolls,
+        // Trim ledger to last 2000 entries on save to bound storage. The
+        // archive aggregates preserve totals across rollover.
+        ledger: Array.isArray(NectarState.ledger) ? NectarState.ledger.slice(-2000) : [],
+        archive: NectarState.archive,
+        config: NectarState.config,
+      } : null,
     };
     getStorage().setItem(UNIFIED_SAVE_KEY, JSON.stringify(payload));
     return true;
@@ -1215,6 +1454,13 @@ function unifiedRestore(payload) {
   }
   if (Array.isArray(payload.moments) && BuzzKnowledge) {
     BuzzKnowledge.moments = payload.moments;
+  }
+  if (payload.nectar && typeof payload.nectar === 'object' && typeof NectarState === 'object') {
+    if (payload.nectar.bankrolls && typeof payload.nectar.bankrolls === 'object') NectarState.bankrolls = payload.nectar.bankrolls;
+    if (Array.isArray(payload.nectar.ledger)) NectarState.ledger = payload.nectar.ledger;
+    if (payload.nectar.archive && typeof payload.nectar.archive === 'object') Object.assign(NectarState.archive, payload.nectar.archive);
+    if (payload.nectar.config && typeof payload.nectar.config === 'object') Object.assign(NectarState.config, payload.nectar.config);
+    ensureBankroll(0);
   }
   return payload.version || null;
 }
@@ -3357,6 +3603,49 @@ function runKnockoutRound(players, numHoles) {
 //   - placements: { id, rankFloor, tierSize } records (1 = champion, etc.)
 //   - playoffsRun: how many extra holes were needed to break a tie for first
 // =============================================================================
+// Phase-6 late-reg bookkeeping. Mutates activePlayers and agg in place;
+// returns the array of newly-added players (so callers can extend the
+// outer event loop's field if they want bookkeeping parity). New entrants
+// pay full buy-in and start with a handicapped score (leader + 0.6×cushion)
+// so they enter near the cut threshold but not over it. Their previous
+// rounds are recorded as 0-score entries so length-aligned iteration is
+// safe.
+function applyLateRegistration(r, cfg, activePlayers, agg, leaderScore, eventType, eventName, year, cushionForRound) {
+  const lateLast = +cfg.lateRegLastRound || 0;
+  const lateMax = +cfg.lateRegMaxEntries || 0;
+  const nextRound = r + 2; // we're about to enter round (r+2) — 1-indexed
+  if (lateLast <= 0 || lateMax <= 0) return [];
+  if (nextRound > lateLast) return [];
+  const pool = (typeof TourState === 'object' && Array.isArray(TourState.pool)) ? TourState.pool : null;
+  if (!pool || pool.length === 0) return [];
+  const presentIds = new Set(activePlayers.map(p => p.id));
+  for (const a of agg.values()) presentIds.add(a.player.id);
+  const candidates = pool.filter(p => !presentIds.has(p.id));
+  if (candidates.length === 0) return [];
+  // Random selection — no skill bias; in real poker, late-reg is who shows up.
+  const slots = Math.min(lateMax, candidates.length);
+  const picked = [];
+  for (let i = 0; i < slots; i++) {
+    const idx = Math.floor(Math.random() * candidates.length);
+    picked.push(candidates.splice(idx, 1)[0]);
+  }
+  const cushion = Number.isFinite(+cushionForRound) ? +cushionForRound : 8;
+  const handicap = leaderScore + cushion * 0.6;
+  const added = [];
+  for (const poolP of picked) {
+    // Wrap as a "field" entry analogous to selectField wrappers. Buy-in,
+    // bankroll, and bookkeeping are deferred to the outer event loop, which
+    // iterates `field` (extended by the caller after this runs).
+    const entry = { id: poolP.id, name: poolP.name, profile: poolP.profile, poolRef: poolP, skill: poolP.skill, lateEntry: true, lateRegRound: r + 1 };
+    const aggEntry = { player: entry, score: handicap, rounds: [], eliminatedAtRound: null, eliminationReason: null, lateEntry: true };
+    for (let pr = 0; pr <= r; pr++) aggEntry.rounds.push({ round: pr + 1, score: 0, opponent: null, lateBye: true });
+    agg.set(entry.id, aggEntry);
+    activePlayers.push(entry);
+    added.push(entry);
+  }
+  return added;
+}
+
 function runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
   holesPerRound = holesPerRound || 18;
   rounds = rounds || 4;
@@ -3467,6 +3756,7 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
   // sortedFinishers later combines: surviving players (by R-final score) +
   // eliminated players in reverse elimination order.
   const eliminatedHistory = []; // [{ player, round, score, reason }]
+  const lateEntrants = []; // v69.2 — players admitted after R1 via late-reg
   for (let r = 0; r < rounds; r++) {
     // Each round only the still-active players play. Eliminated players
     // record a "did not play" round so their rounds[] array stays len-aligned
@@ -3543,6 +3833,15 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
       } else {
         // No cut this round — still-active players continue.
         activePlayers = stillActive;
+      }
+      // v69.2 LATE REGISTRATION — admit new entrants from the pool if the
+      // late-reg window is still open. Mutates activePlayers + agg.
+      if (typeof applyLateRegistration === 'function') {
+        const newLeaderScore = activePlayers.length > 0
+          ? Math.min.apply(null, activePlayers.map(pp => agg.get(pp.id).score))
+          : 0;
+        const added = applyLateRegistration(r, cfg, activePlayers, agg, newLeaderScore, eventType, cfg.eventName, cfg.year || (TourState.currentSeason || 0), survivalCushion[r]);
+        if (added && added.length) lateEntrants.push.apply(lateEntrants, added);
       }
     }
   }
@@ -3658,7 +3957,7 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
   for (const e of eliminatedHistory) {
     if (e.round >= 1 && e.round <= 4) eliminationSummary.elimByRound[e.round - 1]++;
   }
-  return { sortedFinishers: sorted, placements, playoffsRun, aggregateMap: agg, eliminationSummary };
+  return { sortedFinishers: sorted, placements, playoffsRun, aggregateMap: agg, eliminationSummary, lateEntrants };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3905,6 +4204,7 @@ function runMultiwayStrokePlayEvent(players, holesPerRound, rounds, cfg, eventTy
   for (const p of players) agg.set(p.id, { player: p, score: 0, rounds: [], eliminatedAtRound: null, eliminationReason: null });
   let activePlayers = players.slice();
   const eliminatedHistory = [];
+  const lateEntrants = []; // v69.2 late-reg admit list (multi-way runner)
 
   function shuffleInPlace(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -3967,7 +4267,7 @@ function runMultiwayStrokePlayEvent(players, holesPerRound, rounds, cfg, eventTy
       });
       for (let i = 0; i < table.length; i++) {
         agg.get(table[i].id).score += result.totals[i];
-        agg.get(table[i].id).rounds.push({ round: r + 1, score: result.totals[i], opponent: 'table-' + table.map(p => p.id.slice(0, 4)).join('+') });
+        agg.get(table[i].id).rounds.push({ round: r + 1, score: result.totals[i], opponent: 'table-' + table.map(p => String(p.id).slice(0, 4)).join('+') });
       }
     }
 
@@ -4001,6 +4301,14 @@ function runMultiwayStrokePlayEvent(players, holesPerRound, rounds, cfg, eventTy
         activePlayers = stillActive.slice(0, keepCount);
       } else {
         activePlayers = stillActive;
+      }
+      // v69.2 LATE REGISTRATION (multi-way runner) — same admit logic.
+      if (typeof applyLateRegistration === 'function') {
+        const newLeaderScore = activePlayers.length > 0
+          ? Math.min.apply(null, activePlayers.map(pp => agg.get(pp.id).score))
+          : 0;
+        const added = applyLateRegistration(r, cfg, activePlayers, agg, newLeaderScore, eventType, cfg.eventName, cfg.year || (TourState.currentSeason || 0), survivalCushion[r]);
+        if (added && added.length) lateEntrants.push.apply(lateEntrants, added);
       }
     }
   }
@@ -4049,7 +4357,7 @@ function runMultiwayStrokePlayEvent(players, holesPerRound, rounds, cfg, eventTy
     else if (a.eliminationReason === 'cut') p.poolRef.cuts.cutElim++;
   }
 
-  return { sortedFinishers: sorted, placements, playoffsRun: 0, aggregateMap: agg, eliminationSummary: {
+  return { sortedFinishers: sorted, placements, playoffsRun: 0, aggregateMap: agg, lateEntrants, eliminationSummary: {
     totalCushionElim: eliminatedHistory.filter(e => e.reason === 'cushion').length,
     totalCutElim: eliminatedHistory.filter(e => e.reason === 'cut').length,
     elimByRound: [0, 1, 2, 3].map(r => eliminatedHistory.filter(e => e.round === r + 1).length),
@@ -4147,6 +4455,336 @@ const TourState = {
   achievements: {}, activeGame: null,
   preferences: { theme: 'day', speed: 'fast' },
 };
+
+// =============================================================================
+// NECTAR ECONOMY (Phase 1 — v69.1)
+// =============================================================================
+// Nectar is YJ's bankroll currency. Honey is the in-hand wager unit; nectar
+// is what players use to buy tour seats, sit at cash tables, and trade
+// between bankrolls. Every nectar movement is logged to a single append-only
+// ledger so the economy is fully auditable end-to-end. Tour buy-ins and
+// payouts (Phase 6), cash table settlements (Phase 2), staking marketplace
+// (Phase 5), and macro-economy meters (Phase 7) all read from this one source.
+// -----------------------------------------------------------------------------
+const NectarState = {
+  // bankroll keyed by pool player id (numeric). The user-controlled "you"
+  // record uses id=0 by convention so it never collides with pool ids (which
+  // start at 1). Initialised lazily by ensureBankroll().
+  bankrolls: {},
+  // Append-only ledger. Each entry: { id, ts, type, from, to, amount, reason, meta }.
+  // Bounded to LEDGER_MAX entries; older entries roll off (summary stats kept
+  // in NectarState.archive for long-term aggregation).
+  ledger: [],
+  // Long-term aggregates that survive ledger rollover.
+  archive: {
+    totalRakeCollected: 0,
+    totalBuyIns: 0,
+    totalPayouts: 0,
+    totalP2P: 0,
+    rolledOffEntries: 0,
+  },
+  // Macro-economy snapshot, recomputed on demand.
+  macro: { circulating: 0, gini: 0, velocity: 0, lastSnapshotAt: 0 },
+  // Config — overridable via Lab.
+  config: {
+    startingBankroll: 1000,         // every pool player + the user starts here
+    rakeStructurePct: 0.05,         // cash rake % of pot
+    rakeCapPerHand: 5,              // max nectar raked per hand
+    p2pTransferFeePct: 0.01,        // 1% house fee on peer-to-peer transfers
+    nectarPerStrokePoint: 0.5,      // dual-ledger HS settlement weight at cash
+    badBeatDropPerHand: 0.1,        // BB jackpot drop
+  },
+};
+const LEDGER_MAX = 10000;
+
+// Generate a short stable id for ledger entries. Combines timestamp + counter
+// so collisions are impossible within a single millisecond. Counter persists
+// across saves so re-loaded sessions don't reuse ids from the previous run.
+let _nectarLedgerCounter = 0;
+function nectarLedgerId() {
+  _nectarLedgerCounter = (_nectarLedgerCounter + 1) | 0;
+  return Date.now().toString(36) + '-' + _nectarLedgerCounter.toString(36);
+}
+
+// Ensure a bankroll exists for a player id. Returns the current balance.
+function ensureBankroll(playerId) {
+  if (!Object.prototype.hasOwnProperty.call(NectarState.bankrolls, playerId)) {
+    NectarState.bankrolls[playerId] = NectarState.config.startingBankroll;
+  }
+  return NectarState.bankrolls[playerId];
+}
+
+// Atomic ledger post. Returns the entry that was written, or null on failure
+// (e.g., insufficient funds when allowOverdraft=false). All side effects
+// (bankroll mutation, archive accumulation, optional foley) happen here so
+// every nectar movement is auditable from one code path.
+function nectarPost(opts) {
+  const entry = {
+    id: nectarLedgerId(),
+    ts: Date.now(),
+    type: opts.type || 'unknown',           // tour.buyin | tour.payout | cash.* | transfer.* | staking.* | promo.* | rake
+    from: opts.from != null ? opts.from : null, // null = house/system
+    to: opts.to != null ? opts.to : null,
+    amount: +opts.amount || 0,
+    reason: opts.reason || '',
+    meta: opts.meta || null,
+  };
+  if (entry.amount < 0) return null;          // amounts are unsigned; type encodes direction
+  if (entry.from != null) {
+    const balFrom = ensureBankroll(entry.from);
+    if (!opts.allowOverdraft && balFrom < entry.amount) return null;
+    NectarState.bankrolls[entry.from] = balFrom - entry.amount;
+  }
+  if (entry.to != null) {
+    ensureBankroll(entry.to);
+    NectarState.bankrolls[entry.to] += entry.amount;
+  }
+  // Archive aggregates.
+  if (entry.type === 'rake' || entry.type === 'cash.rake') NectarState.archive.totalRakeCollected += entry.amount;
+  if (entry.type === 'tour.buyin' || entry.type === 'cash.buyin') NectarState.archive.totalBuyIns += entry.amount;
+  if (entry.type === 'tour.payout' || entry.type === 'cash.cashout') NectarState.archive.totalPayouts += entry.amount;
+  if (entry.type === 'transfer.p2p') NectarState.archive.totalP2P += entry.amount;
+  // Push and roll off.
+  NectarState.ledger.push(entry);
+  if (NectarState.ledger.length > LEDGER_MAX) {
+    const dropped = NectarState.ledger.length - LEDGER_MAX;
+    NectarState.ledger.splice(0, dropped);
+    NectarState.archive.rolledOffEntries += dropped;
+  }
+  // Foley + UI animation hooks (only for "you" — id 0 — to avoid spam).
+  if (typeof window !== 'undefined' && (entry.from === 0 || entry.to === 0)) {
+    try { if (typeof onNectarMovement === 'function') onNectarMovement(entry); } catch (_) {}
+  }
+  return entry;
+}
+
+// Convenience: query the ledger for a player's history (incoming + outgoing).
+function nectarHistory(playerId, opts) {
+  opts = opts || {};
+  const out = [];
+  const limit = opts.limit || 200;
+  for (let i = NectarState.ledger.length - 1; i >= 0 && out.length < limit; i--) {
+    const e = NectarState.ledger[i];
+    if (e.from !== playerId && e.to !== playerId) continue;
+    if (opts.type && e.type !== opts.type) continue;
+    out.push(e);
+  }
+  return out;
+}
+
+// Current balance for a player (creates entry if missing).
+function nectarBalance(playerId) { return ensureBankroll(playerId); }
+
+// Macro-economy snapshot. Computes circulating supply, gini coefficient over
+// pool bankrolls, and velocity (transactions in last 24h / circulating).
+function nectarMacroSnapshot() {
+  const balances = Object.values(NectarState.bankrolls);
+  let circulating = 0; for (const b of balances) circulating += b;
+  // Gini.
+  let gini = 0;
+  if (balances.length > 1 && circulating > 0) {
+    const sorted = balances.slice().sort((a, b) => a - b);
+    let cum = 0;
+    for (let i = 0; i < sorted.length; i++) {
+      cum += sorted[i] * (i + 1);
+    }
+    gini = (2 * cum) / (sorted.length * circulating) - (sorted.length + 1) / sorted.length;
+  }
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  let txn = 0;
+  for (let i = NectarState.ledger.length - 1; i >= 0; i--) {
+    if (NectarState.ledger[i].ts < since) break;
+    txn++;
+  }
+  const velocity = circulating > 0 ? (txn / circulating) : 0;
+  NectarState.macro = { circulating, gini, velocity, lastSnapshotAt: Date.now() };
+  return NectarState.macro;
+}
+
+// Initialize the user-controlled "you" bankroll on first run. id=0 is the
+// reserved user slot; pool ids start at 1 so they never collide.
+ensureBankroll(0);
+
+// === Tour <-> Nectar bridge (Phase 6) =======================================
+// The tour engine runs at very high event volume (100yr × ~30 events × 256
+// players = ~750K player-events). Writing every entry to the ledger would
+// blow the LEDGER_MAX cap and waste storage. Strategy:
+//   - Bankrolls always update (cheap; one numeric mutation per player-event).
+//   - Ledger entries only post for the user-controlled id=0 record so the
+//     player's tour life is fully auditable in the bankroll tab.
+//   - Pool players' P/L stays canonical in their buyInsPaid/prizeEarned
+//     counters (already tracked by existing tour code) AND in their bankroll.
+//   - When silentSim is true (e.g., during multi-year batch runs from the
+//     simulator), even bankroll updates skip — they restore from the
+//     prizeEarned/buyInsPaid counters at end-of-run.
+let _silentTourSim = false;
+function setSilentTourSim(on) { _silentTourSim = !!on; }
+function nectarApplyTourBuyin(playerId, amount, eventName, year) {
+  if (!(amount > 0) || _silentTourSim) {
+    if (amount > 0) NectarState.archive.totalBuyIns += amount;
+    return;
+  }
+  ensureBankroll(playerId);
+  NectarState.bankrolls[playerId] -= amount;
+  NectarState.archive.totalBuyIns += amount;
+  if (playerId === 0) {
+    nectarPost({ type: 'tour.buyin', from: 0, to: null, amount, reason: eventName + ' buy-in · Y' + year, allowOverdraft: true, meta: { eventName, year } });
+  }
+}
+function nectarApplyTourPayout(playerId, amount, eventName, year, place) {
+  if (!(amount > 0) || _silentTourSim) {
+    if (amount > 0) NectarState.archive.totalPayouts += amount;
+    return;
+  }
+  ensureBankroll(playerId);
+  NectarState.bankrolls[playerId] += amount;
+  NectarState.archive.totalPayouts += amount;
+  if (playerId === 0) {
+    nectarPost({ type: 'tour.payout', from: null, to: 0, amount, reason: eventName + ' payout · Y' + year + (place ? ' · finish ' + place : ''), meta: { eventName, year, place } });
+  }
+  // Settle staking contracts for this pro/event combo.
+  if (typeof StakingState === 'object' && StakingState.contracts) {
+    for (const c of StakingState.contracts) {
+      if (c.status !== 'open') continue;
+      if (c.proId !== playerId) continue;
+      if (c.eventName !== eventName) continue;
+      // Backer's pro-rata share of payout, with markup repaid first to backer.
+      const grossShare = amount * c.percent;
+      // Markup-repaid model: backer gets max(cost-recovery, gross_share).
+      // Standard staking formula: backer pays cost = (buyIn × pct × markup);
+      // backer recovery = gross_share. Net = gross_share - cost.
+      // Pro keeps the markup premium (cost - buyIn × pct) regardless.
+      const proShareReturned = grossShare - (c.buyIn * c.percent); // subtract original stake portion already in backer's hands
+      const backerShare = grossShare;
+      if (backerShare > 0 && c.backerId !== playerId) {
+        ensureBankroll(c.backerId);
+        NectarState.bankrolls[c.backerId] += backerShare;
+        NectarState.bankrolls[playerId] -= backerShare; // pro forwards backer's share
+        if (c.backerId === 0) {
+          nectarPost({ type: 'staking.payout', from: playerId, to: 0, amount: backerShare, reason: 'Staking payout · ' + c.percent.toFixed(2) + '% of ' + eventName, meta: { contractId: c.id } });
+        }
+      }
+      c.status = backerShare >= c.cost ? 'won' : 'lost';
+      c.settledAmount = backerShare;
+      c.settledAt = Date.now();
+    }
+  }
+}
+
+// =============================================================================
+// FOLEY — synthesized UI sound (no external assets, opt-in via prefs)
+// =============================================================================
+// Web Audio synth for ambient interaction sounds. Honey-themed: warm sine /
+// triangle tones, brief envelope, low volume. Off by default; toggled via
+// TourState.preferences.foley.
+let _audioCtx = null;
+function getAudioCtx() {
+  if (_audioCtx) return _audioCtx;
+  try {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return null;
+    _audioCtx = new Ctor();
+  } catch (_) { _audioCtx = null; }
+  return _audioCtx;
+}
+function foley(kind, opts) {
+  if (!TourState.preferences || TourState.preferences.foley !== true) return;
+  const ctx = getAudioCtx(); if (!ctx) return;
+  opts = opts || {};
+  const now = ctx.currentTime;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.connect(ctx.destination);
+  // Each kind is a small voice configuration. Keep durations under 250ms
+  // and peak gain under 0.12 so layered events don't pile up.
+  if (kind === 'nectar-credit') {
+    // Two-note honey drop: warm rising blip.
+    const o1 = ctx.createOscillator(); o1.type = 'sine'; o1.frequency.setValueAtTime(660, now); o1.frequency.exponentialRampToValueAtTime(990, now + 0.10);
+    o1.connect(gain); o1.start(now); o1.stop(now + 0.18);
+    gain.gain.linearRampToValueAtTime(0.10, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+  } else if (kind === 'nectar-debit') {
+    const o1 = ctx.createOscillator(); o1.type = 'triangle'; o1.frequency.setValueAtTime(420, now); o1.frequency.exponentialRampToValueAtTime(280, now + 0.12);
+    o1.connect(gain); o1.start(now); o1.stop(now + 0.20);
+    gain.gain.linearRampToValueAtTime(0.08, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.20);
+  } else if (kind === 'card-deal') {
+    const o = ctx.createOscillator(); o.type = 'square'; o.frequency.setValueAtTime(1800, now); o.frequency.exponentialRampToValueAtTime(900, now + 0.04);
+    o.connect(gain); o.start(now); o.stop(now + 0.06);
+    gain.gain.linearRampToValueAtTime(0.04, now + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+  } else if (kind === 'chip-stack') {
+    const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.setValueAtTime(220, now);
+    o.connect(gain); o.start(now); o.stop(now + 0.10);
+    gain.gain.linearRampToValueAtTime(0.06, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.10);
+  } else if (kind === 'win-fanfare') {
+    const freqs = [523.25, 659.25, 783.99]; // C E G major triad
+    freqs.forEach((f, i) => {
+      const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(f, now + i * 0.06);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, now + i * 0.06); g.gain.linearRampToValueAtTime(0.08, now + i * 0.06 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.06 + 0.30);
+      o.connect(g); g.connect(ctx.destination); o.start(now + i * 0.06); o.stop(now + i * 0.06 + 0.30);
+    });
+  } else if (kind === 'bb-jackpot') {
+    // Jackpot: descending shimmer.
+    for (let i = 0; i < 6; i++) {
+      const o = ctx.createOscillator(); o.type = 'triangle';
+      const f = 1320 - i * 120;
+      o.frequency.setValueAtTime(f, now + i * 0.05);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, now + i * 0.05); g.gain.linearRampToValueAtTime(0.07, now + i * 0.05 + 0.01); g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.05 + 0.20);
+      o.connect(g); g.connect(ctx.destination); o.start(now + i * 0.05); o.stop(now + i * 0.05 + 0.20);
+    }
+  }
+}
+
+// Animated number counter — eases displayed text from current to target value.
+// Prevents stacking by keying off the element's data-anim-id.
+function animateCounter(el, target, opts) {
+  if (!el) return;
+  opts = opts || {};
+  const fmt = opts.fmt || (v => Math.round(v).toLocaleString());
+  const duration = opts.duration || 700;
+  const fromText = (el.textContent || '').replace(/[^0-9.\-]/g, '');
+  const from = +fromText || 0;
+  const start = performance.now();
+  const animId = (Date.now() & 0xfffff) + Math.random();
+  el.dataset.animId = animId;
+  function step(t) {
+    if (el.dataset.animId !== String(animId)) return; // superseded
+    const k = Math.min(1, (t - start) / duration);
+    const eased = 1 - Math.pow(1 - k, 3); // ease-out cubic
+    const v = from + (target - from) * eased;
+    el.textContent = fmt(v);
+    if (k < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+// Hook called from nectarPost when "you" (id=0) is involved. Updates the
+// bankroll widget badge with animation + foley.
+function onNectarMovement(entry) {
+  const direction = entry.to === 0 ? 'credit' : 'debit';
+  // Refresh nav bankroll widget if rendered.
+  const widget = document.getElementById('nav-bankroll-value');
+  if (widget) {
+    const newBal = nectarBalance(0);
+    animateCounter(widget, newBal, { fmt: v => Math.round(v).toLocaleString() + ' ◈' });
+    // Floating delta animation.
+    const w = document.getElementById('nav-bankroll');
+    if (w) {
+      const f = document.createElement('div');
+      f.className = 'nectar-float ' + direction;
+      f.textContent = (direction === 'credit' ? '+' : '-') + Math.round(entry.amount).toLocaleString();
+      w.appendChild(f);
+      setTimeout(() => f.remove(), 1400);
+    }
+  }
+  foley(direction === 'credit' ? 'nectar-credit' : 'nectar-debit');
+  // If the bankroll tab is open, refresh its ledger.
+  if (document.body.dataset.activeView === 'bankroll' && Views.bankroll) {
+    try { Views.bankroll(); } catch (_) {}
+  }
+}
 
 function buildPool(size) {
   const pool = [];
@@ -4676,8 +5314,10 @@ function onHashChange() {
     location.replace(location.pathname + location.search + '#simulator?mode=' + mode + extra);
     return;
   }
-  const valid = ['dashboard','simulator','events','players','hof','analytics','compare','rules','buzz','solo','multiplayer','decisiontree','codex'];
+  const valid = ['dashboard','simulator','events','players','bankroll','tables','staking','economy','history','hof','analytics','compare','rules','buzz','solo','multiplayer','decisiontree','codex'];
   const name = valid.indexOf(parsed.view) !== -1 ? parsed.view : 'dashboard';
+  document.body.dataset.activeView = name;
+  renderNavBankroll();
   if (name === 'players' && !parsed.params.profileId) PlayersState.profileId = null;
   if (document.startViewTransition) {
     document.startViewTransition(() => showView(name));
@@ -7645,6 +8285,1672 @@ function renderPlayerProfile(id, view) {
 }
 
 // =============================================================================
+// CASH ENGINE / STAKING / HISTORY / BB JACKPOT — supporting modules (v69.1)
+// =============================================================================
+// All in-memory, all session-scoped. Persistence only for staking contracts
+// (long-lived) and ledger; tables and hand history don't survive reload.
+// -----------------------------------------------------------------------------
+
+const CashLobby = {
+  tables: [],
+  // Multi-tabling support: every table the user is seated at goes into
+  // activeTableIds. focusedTableId is the one currently rendered in the
+  // focal felt area. Users tab between tables via the lobby's tab strip.
+  activeTableIds: [],
+  focusedTableId: null,
+  // AI tick pacing (ms between auto AI actions). Lower = snappier; higher =
+  // more dramatic. Configurable per-user-preference via Bankroll tab.
+  aiTickMs: 600,
+  // Time bank seconds for the user's turn. Auto-fold-or-check at 0.
+  timeBankSec: 30,
+};
+
+// === HUD stats — accumulate per-opponent so multi-tabling reveals reads ====
+// Keys are pool player ids (0 = you). Stats are tracked across every cash
+// hand at any table where the opponent has been seen. VPIP is "voluntarily
+// put money in pot" preflop (call or raise, not check or fold). PFR is
+// preflop raise rate. AF is bet/raise count divided by call count (postflop
+// aggression). Stats persist across the session but not across reloads (we
+// could persist; defer unless the user asks).
+const HUDStats = {};
+function ensureHUD(playerId) {
+  if (!HUDStats[playerId]) HUDStats[playerId] = {
+    handsDealt: 0,
+    handsVPIP: 0,
+    handsPFR: 0,
+    handsShown: 0,
+    seenPreflopAction: false,
+    seenPreflopRaise: false,
+    bets: 0, raises: 0, calls: 0, folds: 0,
+    postBets: 0, postRaises: 0, postCalls: 0,
+    lastUpdate: Date.now(),
+  };
+  return HUDStats[playerId];
+}
+function recordHUDAction(playerId, kind, isPreflop) {
+  const s = ensureHUD(playerId);
+  if (kind === 'dealt') {
+    // Commit prior hand's preflop flags.
+    if (s.seenPreflopAction) s.handsVPIP++;
+    if (s.seenPreflopRaise) s.handsPFR++;
+    s.handsDealt++;
+    s.seenPreflopAction = false;
+    s.seenPreflopRaise = false;
+    return;
+  }
+  if (kind === 'showdown') { s.handsShown++; return; }
+  if (kind === 'fold') { s.folds++; return; }
+  if (isPreflop) {
+    if (kind === 'call' || kind === 'bet' || kind === 'raise') s.seenPreflopAction = true;
+    if (kind === 'raise' || kind === 'bet') s.seenPreflopRaise = true;
+  }
+  if (kind === 'bet') { s.bets++; if (!isPreflop) s.postBets++; }
+  if (kind === 'raise') { s.raises++; if (!isPreflop) s.postRaises++; }
+  if (kind === 'call') { s.calls++; if (!isPreflop) s.postCalls++; }
+  s.lastUpdate = Date.now();
+}
+function hudPills(playerId) {
+  const s = HUDStats[playerId]; if (!s || s.handsDealt < 5) return null;
+  const vpip = s.handsDealt > 0 ? (s.handsVPIP / s.handsDealt) : 0;
+  const pfr = s.handsDealt > 0 ? (s.handsPFR / s.handsDealt) : 0;
+  const af = s.postCalls > 0 ? ((s.postBets + s.postRaises) / s.postCalls) : (s.postBets + s.postRaises);
+  return { vpip, pfr, af, hands: s.handsDealt };
+}
+
+function ensureCashLobby() {
+  if (CashLobby.tables.length > 0) return;
+  // Default lobby: 5 stake levels × 3 variants = 15 tables. AI seats fill
+  // most of them so the lobby looks alive on first visit.
+  const stakes = [
+    { sb: 1, bb: 2, label: 'Micro' },
+    { sb: 5, bb: 10, label: 'Low' },
+    { sb: 25, bb: 50, label: 'Mid' },
+    { sb: 100, bb: 200, label: 'High' },
+    { sb: 500, bb: 1000, label: 'Nosebleed' },
+  ];
+  const variants = [
+    { v: 'pure', label: 'Pure' },
+    { v: 'yj', label: 'YJ Honey-Stroke' },
+    { v: 'bb', label: 'Bumblebee Honey-Stroke' },
+  ];
+  let id = 0;
+  for (const s of stakes) {
+    for (const v of variants) {
+      const seats = new Array(6).fill(null);
+      // Pre-seat AI players from the pool to make tables look populated.
+      const pool = TourState.pool || [];
+      if (pool.length > 0) {
+        const aiCount = Math.min(4, Math.floor(Math.random() * 5) + 1);
+        for (let i = 0; i < aiCount; i++) {
+          const p = pool[Math.floor(Math.random() * pool.length)];
+          if (!p || seats.some(x => x && x.playerId === p.id)) continue;
+          // AI buy-in: 100bb default.
+          const buyIn = s.bb * 100;
+          seats[i] = { playerId: p.id, name: p.name, isAI: true, stack: buyIn, sittingOut: false, strokeLedger: 0, handsPlayed: 0, sessionBuyIn: buyIn };
+        }
+      }
+      CashLobby.tables.push({
+        id: ++id,
+        smallBlind: s.sb, bigBlind: s.bb,
+        minBuyIn: s.bb * 40, maxBuyIn: s.bb * 200,
+        variant: v.v,
+        maxSeats: 6,
+        seats,
+        button: 0,
+        handCount: 0,
+        currentHand: null,
+        stats: { avgPot: s.bb * (10 + Math.random() * 25), handsPerHour: 60 + Math.floor(Math.random() * 40), totalPot: 0 },
+      });
+    }
+  }
+}
+
+function openCashTable(tableId) {
+  const t = CashLobby.tables.find(x => x.id === tableId); if (!t) return;
+  if (CashLobby.activeTableIds.indexOf(tableId) !== -1) {
+    CashLobby.focusedTableId = tableId;
+    Views.tables();
+    return;
+  }
+  if (CashLobby.activeTableIds.length >= 6) { toast('Max 6 tables open at once'); return; }
+  const seatIdx = t.seats.indexOf(null); if (seatIdx === -1) { toast('Table full'); return; }
+  const suggested = t.bigBlind * 100;
+  const amt = +prompt('Buy-in (' + t.minBuyIn + ' .. ' + t.maxBuyIn + ', suggested ' + suggested + '):', String(suggested));
+  if (!(amt >= t.minBuyIn && amt <= t.maxBuyIn)) { toast('Invalid buy-in'); return; }
+  if (nectarBalance(0) < amt) { toast('Insufficient nectar'); return; }
+  nectarPost({ type: 'cash.buyin', from: 0, to: null, amount: amt, reason: 'Buy-in to ' + t.smallBlind + '/' + t.bigBlind + ' ' + t.variant + ' (table #' + t.id + ')', meta: { tableId: t.id } });
+  t.seats[seatIdx] = { playerId: 0, name: 'You', isAI: false, stack: amt, sittingOut: false, strokeLedger: 0, handsPlayed: 0, sessionBuyIn: amt };
+  CashLobby.activeTableIds.push(t.id);
+  CashLobby.focusedTableId = t.id;
+  Views.tables();
+  foley('chip-stack');
+}
+
+function standUpFromTable(tableId, seatIdx) {
+  const t = CashLobby.tables.find(x => x.id === tableId); if (!t) return;
+  const seat = t.seats[seatIdx]; if (!seat) return;
+  if (seat.playerId !== 0) return;
+  // Cancel any in-flight hand state belonging to this player.
+  if (t.handState) {
+    if (t.handState.timer) { clearTimeout(t.handState.timer); t.handState.timer = null; }
+    if (t.handState.tickTimer) { clearTimeout(t.handState.tickTimer); t.handState.tickTimer = null; }
+    t.handState = null;
+  }
+  let settlement = seat.stack;
+  let strokeAdjust = 0;
+  if (t.variant !== 'pure' && seat.handsPlayed > 0) {
+    strokeAdjust = (seat.strokeLedger / seat.handsPlayed) * NectarState.config.nectarPerStrokePoint * seat.handsPlayed;
+    settlement += strokeAdjust;
+  }
+  if (settlement > 0) {
+    nectarPost({ type: 'cash.cashout', from: null, to: 0, amount: Math.round(settlement), reason: 'Cashout from #' + t.id + ' (chip ' + Math.round(seat.stack) + (strokeAdjust ? ' + stroke ' + Math.round(strokeAdjust) : '') + ')', meta: { tableId: t.id, strokeLedger: seat.strokeLedger, handsPlayed: seat.handsPlayed } });
+  }
+  t.seats[seatIdx] = null;
+  CashLobby.activeTableIds = CashLobby.activeTableIds.filter(id => id !== t.id);
+  if (CashLobby.focusedTableId === t.id) {
+    CashLobby.focusedTableId = CashLobby.activeTableIds.length > 0 ? CashLobby.activeTableIds[0] : null;
+  }
+  toast('Stood up · settled ' + Math.round(settlement) + ' ◈');
+  Views.tables();
+}
+
+// === Cash table view (felt) =================================================
+function renderCashTableView(tableId) {
+  const t = CashLobby.tables.find(x => x.id === tableId);
+  if (!t) return el('div');
+  const youSeatIdx = t.seats.findIndex(s => s && s.playerId === 0);
+
+  const wrap = el('div', { style: 'margin-top: 18px;' });
+
+  // === Multi-table tab strip =================================================
+  if (CashLobby.activeTableIds.length > 1) {
+    const strip = el('div', { class: 'cash-tab-strip' });
+    CashLobby.activeTableIds.forEach(id => {
+      const tt = CashLobby.tables.find(x => x.id === id); if (!tt) return;
+      const tab = el('button', {
+        class: 'cash-tab' + (id === CashLobby.focusedTableId ? ' active' : ''),
+        onclick: () => { CashLobby.focusedTableId = id; Views.tables(); },
+      });
+      tab.appendChild(el('span', { text: tt.smallBlind + '/' + tt.bigBlind }));
+      tab.appendChild(el('span', { class: 'cash-tab-variant', text: tt.variant === 'pure' ? 'NLHE' : tt.variant === 'yj' ? 'YJ-HS' : 'BB-HS' }));
+      // Notification dot when this tab needs your action.
+      const tts = tt.handState;
+      if (tts && tts.phase === 'awaitingUser' && tts.actingSeat != null && tt.seats[tts.actingSeat] && tt.seats[tts.actingSeat].playerId === 0 && id !== CashLobby.focusedTableId) {
+        tab.appendChild(el('span', { class: 'cash-tab-dot', title: 'Your turn' }));
+      }
+      strip.appendChild(tab);
+    });
+    wrap.appendChild(strip);
+  }
+
+  const card = el('div', { class: 'card cash-table-card', style: 'background: #0d2c20; color: #F5F1E8;' });
+  const head = el('div', { class: 'cash-table-head' });
+  head.appendChild(el('h2', {
+    text: t.smallBlind + '/' + t.bigBlind + ' ' + (t.variant === 'pure' ? 'NLHE' : t.variant === 'yj' ? 'YJ Honey-Stroke' : 'Bumblebee HS') + ' · Table #' + t.id,
+    style: 'margin:0; color:#F5F1E8;'
+  }));
+  const ctrl = el('div', { style: 'display:flex; gap:8px; flex-wrap:wrap;' });
+  const handState = t.handState;
+  const handInProgress = handState && handState.phase !== 'complete';
+  const dealBtn = el('button', { class: 'btn gold', text: handInProgress ? 'Hand in progress' : (handState && handState.phase === 'complete') ? 'Next hand →' : 'Start hand →' });
+  dealBtn.disabled = handInProgress && handState.phase !== 'awaitingUser' && (handState.actingSeat == null || (t.seats[handState.actingSeat] && t.seats[handState.actingSeat].playerId !== 0));
+  if (!handInProgress) {
+    dealBtn.disabled = false;
+    dealBtn.onclick = () => { startCashHand(t); };
+  } else {
+    dealBtn.disabled = true;
+  }
+  const standBtn = el('button', { class: 'btn ghost', text: 'Stand up' });
+  standBtn.onclick = () => { standUpFromTable(t.id, youSeatIdx); };
+  ctrl.appendChild(dealBtn);
+  ctrl.appendChild(standBtn);
+  head.appendChild(ctrl);
+  card.appendChild(head);
+
+  // === Felt visualization ====================================================
+  const feltWrap = el('div', { style: 'max-width: 720px; margin: 0 auto;' });
+  const felt = el('div', { class: 'felt-table' });
+  // Pot.
+  const pot = el('div', { class: 'pot-display' });
+  const potVal = (handState && handState.pot) || 0;
+  pot.appendChild(el('div', { class: 'pot-label', text: 'Pot' }));
+  pot.appendChild(el('div', { class: 'pot-value', text: Math.round(potVal).toLocaleString() + ' ◈' }));
+  felt.appendChild(pot);
+  // Board.
+  const board = el('div', { class: 'board-row' });
+  const boardCards = (handState && handState.board) || [];
+  for (const c of boardCards) board.appendChild(renderCard(c));
+  felt.appendChild(board);
+  // Seats around the felt.
+  for (let i = 0; i < t.maxSeats; i++) {
+    const angle = (i / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
+    const x = 50 + Math.cos(angle) * 44;
+    const y = 50 + Math.sin(angle) * 38;
+    const s = t.seats[i];
+    const seatEl = el('div', { class: 'seat' + (s ? '' : ' empty-seat'), style: 'left: ' + x + '%; top: ' + y + '%;' });
+    if (s) {
+      seatEl.appendChild(el('div', { class: 'seat-name', text: s.name + (i === t.button ? ' ⚪' : '') }));
+      seatEl.appendChild(el('div', { class: 'seat-stack', text: Math.round(s.stack).toLocaleString() }));
+      if (handState && handState.bets && handState.bets[i]) {
+        seatEl.appendChild(el('div', { class: 'seat-bet', text: handState.bets[i].toLocaleString() }));
+      }
+      if (handState && handState.actingSeat === i && handState.phase !== 'complete') seatEl.classList.add('acting');
+      if (handState && handState.folded && handState.folded[i]) seatEl.classList.add('folded');
+      // Stroke pill (HS variants only).
+      if (t.variant !== 'pure') {
+        const sl = s.strokeLedger;
+        const cls = sl > 0.5 ? 'pos' : sl < -0.5 ? 'neg' : 'flat';
+        const pill = el('div', { class: 'stroke-pill ' + cls, style: 'margin-top:3px;', text: (sl > 0 ? '+' : '') + sl.toFixed(1) + 'σ' });
+        seatEl.appendChild(pill);
+      }
+      // HUD pills (opponents only, not yourself).
+      if (s.playerId !== 0) {
+        const hud = hudPills(s.playerId);
+        if (hud) {
+          const hudWrap = el('div', { class: 'hud-row', title: 'VPIP / PFR / AF · ' + hud.hands + ' hands' });
+          hudWrap.appendChild(el('span', { class: 'hud-pill', text: 'V' + Math.round(hud.vpip * 100) }));
+          hudWrap.appendChild(el('span', { class: 'hud-pill', text: 'P' + Math.round(hud.pfr * 100) }));
+          hudWrap.appendChild(el('span', { class: 'hud-pill', text: 'A' + hud.af.toFixed(1) }));
+          seatEl.appendChild(hudWrap);
+        }
+      }
+      // Time-bank ring on user's seat when awaiting.
+      if (s.playerId === 0 && handState && handState.phase === 'awaitingUser' && handState.actingSeat === i) {
+        const remaining = Math.max(0, (handState.timeBankExp - Date.now()) / 1000);
+        const pctLeft = Math.max(0, Math.min(1, remaining / CashLobby.timeBankSec));
+        const ring = el('div', { class: 'tb-ring', title: Math.ceil(remaining) + 's' });
+        ring.style.background = 'conic-gradient(var(--gold,#C9A857) ' + (pctLeft * 360).toFixed(0) + 'deg, rgba(0,0,0,0.4) 0)';
+        seatEl.appendChild(ring);
+      }
+    } else {
+      seatEl.appendChild(el('div', { style: 'opacity:0.5; font-size:10px;', text: 'empty' }));
+    }
+    felt.appendChild(seatEl);
+  }
+  feltWrap.appendChild(felt);
+  card.appendChild(feltWrap);
+
+  // === Your hole cards (visible only to you) ================================
+  if (youSeatIdx >= 0 && handState && handState.hole && handState.hole[youSeatIdx]) {
+    const yourCards = el('div', { style: 'display:flex; gap:8px; justify-content:center; margin-top: 12px;' });
+    for (const c of handState.hole[youSeatIdx]) yourCards.appendChild(renderCard(c));
+    card.appendChild(yourCards);
+  }
+
+  // === Interactive action panel =============================================
+  if (handState && handState.phase === 'awaitingUser' && handState.actingSeat === youSeatIdx) {
+    card.appendChild(renderActionPanel(t));
+  }
+
+  // === Action log ===========================================================
+  const logWrap = el('div', { class: 'cash-log' });
+  const logLines = (handState && handState.log) || [];
+  logLines.forEach(l => logWrap.appendChild(el('div', { text: l })));
+  if (logLines.length === 0) logWrap.appendChild(el('div', { style: 'opacity:0.5;', text: 'Click "Start hand" to deal.' }));
+  card.appendChild(logWrap);
+
+  // === Session stats ========================================================
+  const me = youSeatIdx >= 0 ? t.seats[youSeatIdx] : null;
+  if (me) {
+    const sess = el('div', { class: 'cash-session-row' });
+    sess.appendChild(el('div', { class: 'cash-stat' },
+      el('div', { class: 'lbl', text: 'Hands played' }),
+      el('div', { class: 'val', text: me.handsPlayed.toString() })
+    ));
+    const chipPL = me.stack - me.sessionBuyIn;
+    sess.appendChild(el('div', { class: 'cash-stat' },
+      el('div', { class: 'lbl', text: 'Chip P/L' }),
+      el('div', { class: 'val', style: 'color:' + (chipPL >= 0 ? '#7ED6A0' : '#F3A889') + ';',
+        text: (chipPL >= 0 ? '+' : '') + Math.round(chipPL).toLocaleString() })
+    ));
+    if (t.variant !== 'pure') {
+      sess.appendChild(el('div', { class: 'cash-stat' },
+        el('div', { class: 'lbl', text: 'Stroke ledger (Σ)' }),
+        el('div', { class: 'val', style: 'color:' + (me.strokeLedger >= 0 ? '#7ED6A0' : '#F3A889') + ';',
+          text: (me.strokeLedger >= 0 ? '+' : '') + me.strokeLedger.toFixed(1) })
+      ));
+      const projected = (me.strokeLedger) * NectarState.config.nectarPerStrokePoint;
+      sess.appendChild(el('div', { class: 'cash-stat' },
+        el('div', { class: 'lbl', text: 'Projected stroke ◈' }),
+        el('div', { class: 'val', style: 'color:' + (projected >= 0 ? '#7ED6A0' : '#F3A889') + ';',
+          text: (projected >= 0 ? '+' : '') + Math.round(projected) })
+      ));
+    }
+    card.appendChild(sess);
+  }
+
+  wrap.appendChild(card);
+  return wrap;
+}
+
+// === Action panel: fold / check-call / bet-raise + sizing presets ==========
+function renderActionPanel(t) {
+  const h = t.handState;
+  const seatIdx = h.actingSeat;
+  const seat = t.seats[seatIdx];
+  const callAmt = h.currentBet - h.bets[seatIdx];
+  const minRaiseTo = h.currentBet > 0 ? h.currentBet + h.minRaise : t.bigBlind;
+  const maxTo = seat.stack + h.bets[seatIdx];
+  const minSafe = Math.min(minRaiseTo, maxTo);
+
+  const panel = el('div', { class: 'action-panel' });
+  const left = el('div', { class: 'action-left' });
+
+  // Fold.
+  const foldBtn = el('button', { class: 'btn act-fold', text: 'Fold' });
+  foldBtn.onclick = () => submitUserAction(t, { kind: 'fold' });
+  left.appendChild(foldBtn);
+
+  // Check or Call.
+  const callBtn = el('button', { class: 'btn act-call', text: callAmt === 0 ? 'Check' : 'Call ' + callAmt });
+  callBtn.onclick = () => submitUserAction(t, callAmt === 0 ? { kind: 'check' } : { kind: 'call' });
+  left.appendChild(callBtn);
+
+  // Bet/Raise.
+  const raiseBtn = el('button', { class: 'btn act-raise', text: h.currentBet > 0 ? 'Raise' : 'Bet' });
+  panel.appendChild(left);
+
+  // Right side: slider + presets + amount input.
+  const right = el('div', { class: 'action-right' });
+  let sliderValue = minSafe;
+  const presets = el('div', { class: 'action-presets' });
+  const presetDefs = [
+    { label: '⅓', frac: 0.33 },
+    { label: '½', frac: 0.5 },
+    { label: '⅔', frac: 0.67 },
+    { label: '¾', frac: 0.75 },
+    { label: 'Pot', frac: 1.0 },
+    { label: 'All-in', frac: 999 },
+  ];
+  const slider = el('input', { type: 'range', min: String(minSafe), max: String(maxTo), step: String(Math.max(1, Math.floor((maxTo - minSafe) / 100) || 1)), value: String(minSafe), class: 'action-slider' });
+  const amtInput = el('input', { type: 'number', min: String(minSafe), max: String(maxTo), step: '1', value: String(minSafe), class: 'action-amount' });
+  function clampSet(v) {
+    v = Math.max(minSafe, Math.min(maxTo, Math.round(+v || minSafe)));
+    sliderValue = v;
+    slider.value = String(v);
+    amtInput.value = String(v);
+    raiseBtn.textContent = (h.currentBet > 0 ? 'Raise to ' : 'Bet ') + v;
+    if (v >= maxTo) raiseBtn.textContent = 'All-in ' + v;
+  }
+  slider.oninput = () => clampSet(slider.value);
+  amtInput.oninput = () => clampSet(amtInput.value);
+  presetDefs.forEach(p => {
+    const b = el('button', { class: 'btn ghost preset-btn', text: p.label });
+    b.onclick = () => {
+      let v;
+      if (p.frac >= 999) v = maxTo;
+      else {
+        // Bet sized as fraction of effective pot. For raise, target = pot + frac*pot then add the call.
+        const potNow = h.pot;
+        const desired = Math.round(potNow * p.frac);
+        v = h.currentBet + Math.max(t.bigBlind, desired);
+      }
+      clampSet(v);
+    };
+    presets.appendChild(b);
+  });
+  right.appendChild(presets);
+  const sliderRow = el('div', { class: 'action-slider-row' });
+  sliderRow.appendChild(slider);
+  sliderRow.appendChild(amtInput);
+  right.appendChild(sliderRow);
+  raiseBtn.onclick = () => submitUserAction(t, { kind: h.currentBet > 0 ? 'raise' : 'bet', amount: sliderValue });
+  // If can't raise (already all-in or no chips left), disable.
+  if (maxTo <= h.currentBet) raiseBtn.disabled = true;
+  right.appendChild(raiseBtn);
+  panel.appendChild(right);
+
+  clampSet(minSafe);
+  return panel;
+}
+
+function renderCard(card) {
+  if (!card) return el('div', { class: 'pkr-card back' });
+  const rankCh = card.rank;
+  const suitCh = card.suit;
+  const red = (suitCh === '♥' || suitCh === '♦');
+  const c = el('div', { class: 'pkr-card' + (red ? ' red' : '') });
+  c.appendChild(el('div', { class: 'rank', text: rankCh }));
+  c.appendChild(el('div', { class: 'suit', text: suitCh }));
+  return c;
+}
+
+// === Cash hand engine — STATE MACHINE (Phase 2 follow-up) ====================
+// startCashHand initializes per-hand state on t.handState and triggers the
+// first auto-advance. advanceCashHand processes AI actions one at a time
+// with a small visual delay (CashLobby.aiTickMs) and pauses when the user's
+// seat is up, awaiting submitUserAction(). dealCashHand is preserved as a
+// "drive to completion" helper for stress runs and the legacy "Deal hand"
+// button on shared / observer flows.
+function startCashHand(t) {
+  if (t.handState && t.handState.phase !== 'complete') { toast('Hand in progress'); return; }
+  if (t.handState) {
+    if (t.handState.timer) clearTimeout(t.handState.timer);
+    if (t.handState.tickTimer) clearTimeout(t.handState.tickTimer);
+  }
+  const seated = [];
+  for (let i = 0; i < t.seats.length; i++) if (t.seats[i] && !t.seats[i].sittingOut && t.seats[i].stack >= t.bigBlind) seated.push(i);
+  if (seated.length < 2) { toast('Need 2+ active seats with stack >= BB'); return; }
+  t.button = (t.button + 1) % t.maxSeats;
+  while (!seated.includes(t.button)) t.button = (t.button + 1) % t.maxSeats;
+  const deck = makeDeck(); shuffleDeck(deck);
+  const hole = {};
+  for (const i of seated) hole[i] = [deck.pop(), deck.pop()];
+  const sbIdx = nextActive(seated, t.button);
+  const bbIdx = nextActive(seated, sbIdx);
+  const bets = new Array(t.maxSeats).fill(0);
+  const folded = new Array(t.maxSeats).fill(false);
+  const contributed = new Array(t.maxSeats).fill(0);
+  const log = [];
+  function postBlind(idx, amt, label) {
+    const real = Math.min(amt, t.seats[idx].stack);
+    t.seats[idx].stack -= real; bets[idx] += real; contributed[idx] += real;
+    log.push(t.seats[idx].name + ' posts ' + label + ' ' + real);
+  }
+  postBlind(sbIdx, t.smallBlind, 'SB');
+  postBlind(bbIdx, t.bigBlind, 'BB');
+  ensureBBJackpot(); BBJackpot.pool += NectarState.config.badBeatDropPerHand;
+  // toAct: preflop order is UTG..button..SB..BB (BB acts last).
+  const preflopOrder = [];
+  let cursor = bbIdx;
+  for (let i = 0; i < t.maxSeats * 2 && preflopOrder.length < seated.length; i++) {
+    cursor = (cursor + 1) % t.maxSeats;
+    if (seated.indexOf(cursor) !== -1 && preflopOrder.indexOf(cursor) === -1) preflopOrder.push(cursor);
+  }
+  t.handState = {
+    deck, hole, board: [],
+    seated, activeMask: seated.slice(),
+    bets, contributed, folded, log,
+    sbIdx, bbIdx,
+    pot: bets.reduce((a, b) => a + b, 0),
+    currentBet: t.bigBlind,
+    minRaise: t.bigBlind,
+    actingSeat: preflopOrder[0],
+    toAct: preflopOrder,
+    street: 0,
+    phase: 'auto',
+    timer: null, tickTimer: null,
+    timeBankExp: 0,
+    handId: 'H-' + Date.now().toString(36) + '-' + (t.handCount + 1),
+    startedAt: Date.now(),
+  };
+  for (const i of seated) recordHUDAction(t.seats[i].playerId, 'dealt', true);
+  if (typeof Views.tables === 'function' && document.body.dataset.activeView === 'tables') Views.tables();
+  scheduleCashTick(t);
+  foley('card-deal');
+}
+
+function scheduleCashTick(t) {
+  if (!t.handState || t.handState.phase === 'complete') return;
+  if (t.handState.tickTimer) clearTimeout(t.handState.tickTimer);
+  if (CashLobby.aiTickMs <= 0) { advanceCashHand(t); return; }
+  t.handState.tickTimer = setTimeout(() => advanceCashHand(t), CashLobby.aiTickMs);
+}
+
+function advanceCashHand(t) {
+  const h = t.handState; if (!h || h.phase === 'complete') return;
+  h.tickTimer = null;
+  if (h.activeMask.length <= 1) return resolveCashHand(t);
+  while (h.toAct.length > 0 && h.folded[h.toAct[0]]) h.toAct.shift();
+  if (h.toAct.length === 0) return advanceStreet(t);
+  h.actingSeat = h.toAct[0];
+  const seat = t.seats[h.actingSeat];
+  if (!seat || seat.stack <= 0) {
+    h.toAct.shift();
+    return scheduleCashTick(t);
+  }
+  if (seat.playerId === 0) {
+    h.phase = 'awaitingUser';
+    h.timeBankExp = Date.now() + CashLobby.timeBankSec * 1000;
+    if (h.timer) clearTimeout(h.timer);
+    h.timer = setTimeout(() => {
+      const callAmt = h.currentBet - h.bets[h.actingSeat];
+      submitUserAction(t, callAmt === 0 ? { kind: 'check' } : { kind: 'fold' });
+    }, CashLobby.timeBankSec * 1000);
+    if (typeof Views.tables === 'function' && document.body.dataset.activeView === 'tables' && CashLobby.focusedTableId === t.id) Views.tables();
+    foley('chip-stack');
+    return;
+  }
+  const callAmt = h.currentBet - h.bets[h.actingSeat];
+  const action = decideCashAction(seat, h.hole[h.actingSeat], h.board, callAmt, h.currentBet, t.bigBlind, h.pot, t.variant, h.street);
+  applyCashAction(t, h.actingSeat, action);
+  if (CashLobby.focusedTableId === t.id && document.body.dataset.activeView === 'tables') Views.tables();
+  scheduleCashTick(t);
+}
+
+function applyCashAction(t, seatIdx, action) {
+  const h = t.handState; if (!h) return;
+  const seat = t.seats[seatIdx];
+  const callAmt = h.currentBet - h.bets[seatIdx];
+  const isPreflop = h.street === 0;
+  if (action.kind === 'fold') {
+    h.folded[seatIdx] = true;
+    h.activeMask = h.activeMask.filter(x => x !== seatIdx);
+    h.log.push(seat.name + ' folds');
+    recordHUDAction(seat.playerId, 'fold', isPreflop);
+  } else if (action.kind === 'check') {
+    h.log.push(seat.name + ' checks');
+    recordHUDAction(seat.playerId, 'check', isPreflop);
+  } else if (action.kind === 'call') {
+    const real = Math.min(callAmt, seat.stack);
+    seat.stack -= real; h.bets[seatIdx] += real; h.contributed[seatIdx] += real; h.pot += real;
+    h.log.push(seat.name + ' calls ' + real);
+    recordHUDAction(seat.playerId, 'call', isPreflop);
+  } else if (action.kind === 'raise' || action.kind === 'bet') {
+    const targetTotal = action.amount;
+    const cap = seat.stack + h.bets[seatIdx];
+    const total = Math.min(targetTotal, cap);
+    const real = total - h.bets[seatIdx];
+    seat.stack -= real; h.bets[seatIdx] = total; h.contributed[seatIdx] += real; h.pot += real;
+    const wasReraise = h.currentBet > 0;
+    h.minRaise = Math.max(h.minRaise, total - h.currentBet);
+    h.currentBet = total;
+    h.log.push(seat.name + ' ' + (wasReraise ? 'raises to ' : 'bets ') + total);
+    recordHUDAction(seat.playerId, wasReraise ? 'raise' : 'bet', isPreflop);
+    const others = h.activeMask.filter(x => x !== seatIdx && !h.folded[x]);
+    h.toAct = others.concat([]);
+  }
+  if (h.toAct[0] === seatIdx) h.toAct.shift();
+  h.phase = 'auto';
+}
+
+function advanceStreet(t) {
+  const h = t.handState; if (!h) return;
+  if (h.activeMask.length <= 1) return resolveCashHand(t);
+  if (h.street >= 3) return resolveCashHand(t);
+  h.street++;
+  h.bets.fill(0);
+  h.currentBet = 0;
+  h.minRaise = t.bigBlind;
+  h.deck.pop();
+  const cards = [0, 3, 1, 1][h.street];
+  for (let n = 0; n < cards; n++) h.board.push(h.deck.pop());
+  h.log.push('--- ' + ['Preflop','Flop','Turn','River'][h.street] + ': ' + h.board.map(c => c.rank + c.suit).join(' '));
+  // Postflop: action starts left of button.
+  const order = [];
+  let cursor = t.button;
+  for (let i = 0; i < t.maxSeats * 2 && order.length < h.activeMask.length; i++) {
+    cursor = (cursor + 1) % t.maxSeats;
+    if (h.activeMask.indexOf(cursor) !== -1 && order.indexOf(cursor) === -1) order.push(cursor);
+  }
+  h.toAct = order;
+  h.phase = 'auto';
+  foley('card-deal');
+  scheduleCashTick(t);
+}
+
+function resolveCashHand(t) {
+  const h = t.handState; if (!h) return;
+  if (h.timer) { clearTimeout(h.timer); h.timer = null; }
+  if (h.tickTimer) { clearTimeout(h.tickTimer); h.tickTimer = null; }
+  let winnerIdx = null, winnerName = null, isShowdown = false, winnerHandClass = null;
+  if (h.activeMask.length === 1) {
+    winnerIdx = h.activeMask[0];
+    winnerName = t.seats[winnerIdx].name;
+    h.log.push(winnerName + ' wins ' + Math.round(h.pot) + ' (uncontested)');
+  } else {
+    isShowdown = true;
+    let best = null;
+    for (const i of h.activeMask) {
+      const ev = evalSevenCard(h.hole[i].concat(h.board));
+      if (!best || ev.value > best.ev.value) best = { i, ev };
+    }
+    winnerIdx = best.i; winnerName = t.seats[winnerIdx].name; winnerHandClass = best.ev.className;
+    h.log.push('--- Showdown ---');
+    for (const i of h.activeMask) {
+      const ev = evalSevenCard(h.hole[i].concat(h.board));
+      h.log.push(t.seats[i].name + ' shows ' + h.hole[i].map(c => c.rank + c.suit).join(' ') + ' (' + ev.className + ')');
+      recordHUDAction(t.seats[i].playerId, 'showdown', false);
+    }
+    h.log.push(winnerName + ' wins ' + Math.round(h.pot) + ' with ' + winnerHandClass);
+  }
+  const rakeAmt = Math.min(h.pot * NectarState.config.rakeStructurePct, NectarState.config.rakeCapPerHand);
+  const rakedPot = h.pot - rakeAmt;
+  if (rakeAmt > 0) {
+    nectarPost({ type: 'cash.rake', from: null, to: null, amount: rakeAmt, reason: 'Rake from cash hand', meta: { tableId: t.id, handCount: t.handCount + 1 } });
+  }
+  if (winnerIdx != null) t.seats[winnerIdx].stack += rakedPot;
+  if (t.variant !== 'pure' && isShowdown) {
+    for (const i of h.activeMask) {
+      const ev = evalSevenCard(h.hole[i].concat(h.board));
+      const golfScore = cashGolfScoreFromClassName(ev.className);
+      let strokeForSeat;
+      if (i === winnerIdx) strokeForSeat = -golfScore;
+      else if (t.variant === 'yj') strokeForSeat = -1;
+      else strokeForSeat = -golfScore;
+      t.seats[i].strokeLedger += strokeForSeat;
+    }
+  }
+  for (const i of h.seated) t.seats[i].handsPlayed++;
+  if (isShowdown && h.activeMask.length >= 2) checkBadBeatTrigger(h.activeMask, h.hole, h.board, t, winnerIdx);
+  t.handCount++;
+  t.stats.totalPot += h.pot;
+  t.stats.avgPot = t.stats.totalPot / Math.max(1, t.handCount);
+  ensureHistoryStore();
+  HistoryStore.hands.push({
+    id: h.handId, ts: Date.now(), context: 'cash', tableId: t.id, variant: t.variant,
+    playerCount: h.seated.length, pot: rakedPot, rake: rakeAmt, winnerName, winnerHandClass,
+    showdown: isShowdown, board: h.board.slice(), holeCards: Object.assign({}, h.hole),
+    log: h.log.slice(), seated: h.seated.slice(), folded: h.folded.slice(),
+  });
+  if (HistoryStore.hands.length > 1000) HistoryStore.hands.splice(0, HistoryStore.hands.length - 1000);
+  h.phase = 'complete';
+  h.winnerIdx = winnerIdx;
+  h.winnerHandClass = winnerHandClass;
+  if (CashLobby.focusedTableId === t.id && document.body.dataset.activeView === 'tables') Views.tables();
+  foley(isShowdown ? 'win-fanfare' : 'chip-stack');
+  // Refresh nav widget if user was at the table.
+  if (h.seated.findIndex(s => t.seats[s] && t.seats[s].playerId === 0) !== -1) renderNavBankroll();
+}
+
+function submitUserAction(t, action) {
+  const h = t.handState; if (!h || h.phase !== 'awaitingUser') return;
+  const seatIdx = h.actingSeat;
+  if (t.seats[seatIdx].playerId !== 0) return;
+  const callAmt = h.currentBet - h.bets[seatIdx];
+  const seat = t.seats[seatIdx];
+  if (action.kind === 'check' && callAmt > 0) action = { kind: 'fold' };
+  if (action.kind === 'call' && callAmt === 0) action = { kind: 'check' };
+  if (action.kind === 'raise' || action.kind === 'bet') {
+    const minTo = h.currentBet > 0 ? h.currentBet + h.minRaise : t.bigBlind;
+    const maxTo = seat.stack + h.bets[seatIdx];
+    if (action.amount < minTo) action.amount = Math.min(minTo, maxTo);
+    if (action.amount > maxTo) action.amount = maxTo;
+  }
+  if (h.timer) { clearTimeout(h.timer); h.timer = null; }
+  applyCashAction(t, seatIdx, action);
+  if (CashLobby.focusedTableId === t.id && document.body.dataset.activeView === 'tables') Views.tables();
+  scheduleCashTick(t);
+}
+
+// Legacy synchronous runner — drives a hand to completion with no UI delay.
+// Useful for stress-testing or "deal N hands" buttons. AI seats decide
+// normally; the user's seat (if any) auto-decides via decideCashAction.
+function dealCashHand(t) {
+  const seated = [];
+  for (let i = 0; i < t.seats.length; i++) if (t.seats[i] && !t.seats[i].sittingOut && t.seats[i].stack >= t.bigBlind) seated.push(i);
+  if (seated.length < 2) { toast('Need 2+ active seats with stack >= BB'); return; }
+
+  // Rotate button.
+  t.button = (t.button + 1) % t.maxSeats;
+  while (!seated.includes(t.button)) t.button = (t.button + 1) % t.maxSeats;
+
+  // Build a fresh deck and deal hole cards.
+  const deck = makeDeck();
+  shuffleDeck(deck);
+  const hole = {};
+  for (const i of seated) hole[i] = [deck.pop(), deck.pop()];
+
+  // Blinds.
+  const sbIdx = nextActive(seated, t.button);
+  const bbIdx = nextActive(seated, sbIdx);
+  const bets = new Array(t.maxSeats).fill(0);
+  const folded = new Array(t.maxSeats).fill(false);
+  const log = [];
+  function postBlind(idx, amt, label) {
+    const real = Math.min(amt, t.seats[idx].stack);
+    t.seats[idx].stack -= real;
+    bets[idx] += real;
+    log.push(t.seats[idx].name + ' posts ' + label + ' ' + real);
+  }
+  postBlind(sbIdx, t.smallBlind, 'SB');
+  postBlind(bbIdx, t.bigBlind, 'BB');
+  let pot = bets.reduce((a, b) => a + b, 0);
+  let currentBet = t.bigBlind;
+  let actingSeat = nextActive(seated, bbIdx);
+  let bbJackpotDrop = NectarState.config.badBeatDropPerHand;
+  ensureBBJackpot(); BBJackpot.pool += bbJackpotDrop;
+
+  // Action loop — one round per street: preflop, flop, turn, river.
+  // For UX brevity (this is a sim, not an interactive client), AI drives all
+  // actions; the user's seat uses an auto-decide based on hand strength
+  // unless a player-action toggle is later added. This MVP is end-to-end
+  // playable; deeper interactive control can layer on top.
+  const board = [];
+  const streetCards = [0, 3, 1, 1]; // preflop, flop, turn, river
+  let activeMask = seated.slice();
+  for (let street = 0; street < 4; street++) {
+    if (activeMask.length <= 1) break;
+    if (street > 0) {
+      // Burn + deal the street.
+      deck.pop();
+      for (let n = 0; n < streetCards[street]; n++) board.push(deck.pop());
+      // Reset bets for new street; aggressor restarts.
+      bets.fill(0);
+      currentBet = 0;
+      log.push('--- ' + ['Preflop', 'Flop', 'Turn', 'River'][street] + ': ' + board.map(c => c.rank + c.suit).join(' '));
+      actingSeat = nextActive(activeMask, t.button);
+    }
+    // Each active seat gets at most one decision per street unless a raise re-opens action.
+    let toAct = activeMask.slice();
+    let safety = 50;
+    while (toAct.length > 0 && activeMask.length > 1 && safety-- > 0) {
+      if (folded[actingSeat]) { actingSeat = nextActive(activeMask, actingSeat); continue; }
+      const seat = t.seats[actingSeat];
+      const callAmount = currentBet - bets[actingSeat];
+      const action = decideCashAction(seat, hole[actingSeat], board, callAmount, currentBet, t.bigBlind, pot, t.variant, street);
+      if (action.kind === 'fold') {
+        folded[actingSeat] = true;
+        activeMask = activeMask.filter(x => x !== actingSeat);
+        log.push(seat.name + ' folds');
+      } else if (action.kind === 'call' || action.kind === 'check') {
+        const real = Math.min(callAmount, seat.stack);
+        seat.stack -= real; bets[actingSeat] += real; pot += real;
+        log.push(seat.name + ' ' + (callAmount === 0 ? 'checks' : 'calls ' + real));
+      } else if (action.kind === 'raise') {
+        const totalRaiseTo = action.amount;
+        const real = Math.min(totalRaiseTo - bets[actingSeat], seat.stack);
+        seat.stack -= real; bets[actingSeat] += real; pot += real;
+        currentBet = bets[actingSeat];
+        log.push(seat.name + ' raises to ' + currentBet);
+        // Re-open action for everyone else still in.
+        toAct = activeMask.filter(x => x !== actingSeat);
+      }
+      toAct = toAct.filter(x => x !== actingSeat);
+      actingSeat = nextActive(activeMask, actingSeat);
+    }
+  }
+
+  // Resolution.
+  let winnerIdx = null, winnerName = null, isShowdown = false, winnerHandClass = null, winnerHandValue = null;
+  if (activeMask.length === 1) {
+    winnerIdx = activeMask[0];
+    winnerName = t.seats[winnerIdx].name;
+    log.push(winnerName + ' wins ' + Math.round(pot) + ' (uncontested)');
+  } else {
+    isShowdown = true;
+    // Evaluate everyone's hand and pick the best.
+    let best = null;
+    for (const i of activeMask) {
+      const allCards = hole[i].concat(board);
+      const ev = evalSevenCard(allCards);
+      if (!best || ev.value > best.ev.value) best = { i, ev };
+    }
+    winnerIdx = best.i;
+    winnerName = t.seats[winnerIdx].name;
+    winnerHandClass = best.ev.className;
+    winnerHandValue = best.ev.value;
+    log.push('--- Showdown ---');
+    for (const i of activeMask) {
+      const ev = evalSevenCard(hole[i].concat(board));
+      log.push(t.seats[i].name + ' shows ' + hole[i].map(c => c.rank + c.suit).join(' ') + ' (' + ev.className + ')');
+    }
+    log.push(winnerName + ' wins ' + Math.round(pot) + ' with ' + winnerHandClass);
+  }
+
+  // Rake.
+  const rakeAmt = Math.min(pot * NectarState.config.rakeStructurePct, NectarState.config.rakeCapPerHand);
+  const rakedPot = pot - rakeAmt;
+  if (rakeAmt > 0 && winnerIdx != null) {
+    const winnerPlayerId = t.seats[winnerIdx].playerId;
+    nectarPost({ type: 'cash.rake', from: null, to: null, amount: rakeAmt, reason: 'Rake from cash hand', meta: { tableId: t.id, handCount: t.handCount + 1 } });
+  }
+
+  // Pay winner.
+  if (winnerIdx != null) {
+    t.seats[winnerIdx].stack += rakedPot;
+  }
+
+  // Stroke ledger update for HS variants.
+  if (t.variant !== 'pure' && isShowdown) {
+    for (const i of activeMask) {
+      const seat = t.seats[i];
+      const ev = evalSevenCard(hole[i].concat(board));
+      // Adapter: map evalSevenCard's className to the YJ golf-score table.
+      const golfScore = cashGolfScoreFromClassName(ev.className);
+      // YJ variant: loser fixed +1; winner own score. Bumblebee: both own.
+      let strokeForSeat;
+      if (i === winnerIdx) {
+        strokeForSeat = -golfScore; // negative golf score = good (under par); flip so positive = good for stroke ledger
+      } else {
+        if (t.variant === 'yj') strokeForSeat = -1; // bogey loss
+        else strokeForSeat = -golfScore; // honored loss
+      }
+      seat.strokeLedger += strokeForSeat;
+    }
+  }
+  // All seats that played a hand get hands++.
+  for (const i of seated) t.seats[i].handsPlayed++;
+
+  // Bad beat jackpot trigger check.
+  if (isShowdown && activeMask.length >= 2) {
+    checkBadBeatTrigger(activeMask, hole, board, t, winnerIdx);
+  }
+
+  t.handCount++;
+  t.currentHand = { board, pot, log, bets: new Array(t.maxSeats).fill(0), folded, actingSeat: null };
+  t.stats.totalPot += pot;
+  t.stats.avgPot = t.stats.totalPot / Math.max(1, t.handCount);
+
+  // Record to history store.
+  ensureHistoryStore();
+  HistoryStore.hands.push({
+    id: 'H-' + Date.now().toString(36) + '-' + t.handCount,
+    ts: Date.now(),
+    context: 'cash',
+    tableId: t.id,
+    variant: t.variant,
+    playerCount: seated.length,
+    pot: rakedPot,
+    rake: rakeAmt,
+    winnerName,
+    winnerHandClass,
+    showdown: isShowdown,
+    board: board.slice(),
+    holeCards: Object.assign({}, hole),
+    log: log.slice(),
+    seated: seated.slice(),
+    folded: folded.slice(),
+  });
+  if (HistoryStore.hands.length > 1000) HistoryStore.hands.splice(0, HistoryStore.hands.length - 1000);
+
+  // Sound.
+  foley(isShowdown ? 'win-fanfare' : 'card-deal');
+}
+
+function makeDeck() {
+  const ranks = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'];
+  const suits = ['♣','♦','♥','♠'];
+  const deck = [];
+  for (const r of ranks) for (const s of suits) deck.push({ rank: r, suit: s });
+  return deck;
+}
+function shuffleDeck(d) {
+  for (let i = d.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = d[i]; d[i] = d[j]; d[j] = tmp;
+  }
+}
+function nextActive(activeMask, fromIdx) {
+  // Returns the next seat in activeMask after fromIdx (cyclic).
+  const sortedSeats = activeMask.slice().sort((a, b) => a - b);
+  for (const s of sortedSeats) if (s > fromIdx) return s;
+  return sortedSeats[0];
+}
+
+// Lightweight 7-card evaluator. Returns { value, className }. Value monotone
+// over hand strength (higher = better). Classes: HC, P, 2P, 3K, ST, FL, FH, 4K, SF.
+function evalSevenCard(cards) {
+  const rankOrder = { '2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'T':10,'J':11,'Q':12,'K':13,'A':14 };
+  const counts = {}, suitCounts = {};
+  const ranks = [];
+  for (const c of cards) {
+    counts[c.rank] = (counts[c.rank] || 0) + 1;
+    suitCounts[c.suit] = (suitCounts[c.suit] || 0) + 1;
+    ranks.push(rankOrder[c.rank]);
+  }
+  ranks.sort((a, b) => b - a);
+  const uniq = Array.from(new Set(ranks)).sort((a, b) => b - a);
+  // Straight detection (with wheel).
+  let straightHigh = 0;
+  const padded = uniq.concat(uniq.includes(14) ? [1] : []);
+  for (let i = 0; i + 4 < padded.length; i++) {
+    if (padded[i] - padded[i + 4] === 4) { straightHigh = padded[i]; break; }
+  }
+  // Flush detection.
+  let flushSuit = null, flushCards = null;
+  for (const s in suitCounts) if (suitCounts[s] >= 5) { flushSuit = s; flushCards = cards.filter(c => c.suit === s).map(c => rankOrder[c.rank]).sort((a, b) => b - a); break; }
+  // Straight flush.
+  let straightFlushHigh = 0;
+  if (flushCards) {
+    const flushUniq = Array.from(new Set(flushCards)).sort((a, b) => b - a);
+    const padded2 = flushUniq.concat(flushUniq.includes(14) ? [1] : []);
+    for (let i = 0; i + 4 < padded2.length; i++) {
+      if (padded2[i] - padded2[i + 4] === 4) { straightFlushHigh = padded2[i]; break; }
+    }
+  }
+  // Pair / trip / quad counts.
+  const pairs = [], trips = [], quads = [];
+  for (const r in counts) {
+    if (counts[r] === 2) pairs.push(rankOrder[r]);
+    if (counts[r] === 3) trips.push(rankOrder[r]);
+    if (counts[r] === 4) quads.push(rankOrder[r]);
+  }
+  pairs.sort((a, b) => b - a); trips.sort((a, b) => b - a); quads.sort((a, b) => b - a);
+
+  let value = 0, className = 'High Card';
+  if (straightFlushHigh) { value = 800 + straightFlushHigh; className = straightFlushHigh === 14 ? 'Royal Flush' : 'Straight Flush'; }
+  else if (quads.length) { value = 700 + quads[0]; className = 'Four of a Kind'; }
+  else if (trips.length && (pairs.length || trips.length >= 2)) { value = 600 + trips[0]; className = 'Full House'; }
+  else if (flushCards) { value = 500 + flushCards[0]; className = 'Flush'; }
+  else if (straightHigh) { value = 400 + straightHigh; className = 'Straight'; }
+  else if (trips.length) { value = 300 + trips[0]; className = 'Three of a Kind'; }
+  else if (pairs.length >= 2) { value = 200 + pairs[0] * 14 + pairs[1]; className = 'Two Pair'; }
+  else if (pairs.length === 1) { value = 100 + pairs[0]; className = 'One Pair'; }
+  else { value = ranks[0]; className = 'High Card'; }
+  // Tiebreak kicker injection.
+  value = value * 100 + (ranks[0] || 0);
+  return { value, className };
+}
+
+// Lightweight cash decision policy. Reuses tour decideFor for hand-strength
+// estimate but tunes thresholds for cash-game (no ICM / survival pressure).
+function decideCashAction(seat, hole, board, callAmount, currentBet, bb, pot, variant, street) {
+  // Simple strength estimate: combine current 2/5/6/7-card hand value with
+  // a rough win-probability heuristic. Real GTO solver is out-of-scope here;
+  // this is a calibrated approximation.
+  const visible = hole.concat(board);
+  const ev = evalSevenCard(visible.length >= 5 ? visible : hole.concat(hole)); // pre-flop fallback uses hole twice
+  let strength;
+  if (board.length === 0) {
+    // Preflop: rank tiers.
+    const r1 = hole[0].rank, r2 = hole[1].rank;
+    const high = r1 === r2 ? rankVal(r1) : Math.max(rankVal(r1), rankVal(r2));
+    const low = r1 === r2 ? rankVal(r1) : Math.min(rankVal(r1), rankVal(r2));
+    const suited = hole[0].suit === hole[1].suit;
+    const pair = (r1 === r2) ? high : 0;
+    if (pair >= 12) strength = 0.85;
+    else if (pair >= 10) strength = 0.72;
+    else if (pair) strength = 0.55 + pair * 0.01;
+    else if (high === 14 && low >= 10) strength = 0.65;
+    else if (high === 14 && suited) strength = 0.55;
+    else if (high >= 12 && low >= 10) strength = 0.50;
+    else if (suited && (high - low) <= 4) strength = 0.40;
+    else strength = 0.20 + Math.random() * 0.15;
+  } else {
+    const v = ev.value;
+    // Map evaluator value (~0..90000) to 0..1.
+    if (v < 200) strength = 0.20 + (v % 100) / 200;
+    else if (v < 30000) strength = 0.45 + Math.min(0.35, (v - 200) / 80000);
+    else if (v < 50000) strength = 0.75;
+    else if (v < 70000) strength = 0.88;
+    else strength = 0.95;
+  }
+  // Random bluff/passive noise.
+  const noise = (Math.random() - 0.5) * 0.10;
+  const adj = Math.max(0.02, Math.min(0.99, strength + noise));
+  const callRatio = callAmount > 0 ? callAmount / Math.max(1, pot) : 0;
+  // Decision.
+  if (callAmount === 0) {
+    // Check or bet.
+    if (adj > 0.65 && Math.random() < 0.6) return { kind: 'raise', amount: Math.min(seat.stack + 0, currentBet + Math.max(bb * 2, Math.round(pot * 0.6))) };
+    return { kind: 'check' };
+  }
+  // Pot odds.
+  const potOdds = callAmount / (pot + callAmount);
+  if (adj < potOdds - 0.05) return { kind: 'fold' };
+  if (adj > 0.78 && Math.random() < 0.5) return { kind: 'raise', amount: Math.min(seat.stack + bets_safe(seat), currentBet + Math.max(bb * 2, Math.round(pot * 0.8))) };
+  if (adj > 0.55) return { kind: 'call' };
+  if (Math.random() < 0.20) return { kind: 'call' };
+  return { kind: 'fold' };
+}
+function bets_safe(seat) { return 0; }
+function rankVal(r) { return ({ '2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'T':10,'J':11,'Q':12,'K':13,'A':14 })[r] || 0; }
+
+// Adapter: cash-engine evaluator className -> YJ golf score table. Mirrors
+// the bucket logic in golfScoreFromHandValue without requiring a packed hv.
+// Premium-kicker buckets are simplified (use class-only midpoint) since at
+// cash we don't pre-compute the packed value.
+function cashGolfScoreFromClassName(name) {
+  switch (name) {
+    case 'Royal Flush':
+    case 'Straight Flush': return -5;
+    case 'Four of a Kind': return -4;
+    case 'Full House':     return -2;
+    case 'Flush':          return -1;
+    case 'Straight':       return -1;
+    case 'Three of a Kind':return -1;
+    case 'Two Pair':       return 0;
+    case 'One Pair':       return 1;
+    case 'High Card':      return 2;
+    default: return 0;
+  }
+}
+
+// === Bad Beat Jackpot =======================================================
+const BBJackpot = { pool: 0, lastHit: null, history: [] };
+function ensureBBJackpot() {
+  if (typeof BBJackpot.pool !== 'number') BBJackpot.pool = 0;
+}
+function checkBadBeatTrigger(active, hole, board, t, winnerIdx) {
+  // Trigger conditions (any of):
+  //   - Quads-over-quads: two quads in same hand
+  //   - Royal flush cracked: someone has royal flush AND someone has straight flush
+  //   - Straight flush vs straight flush: two SFs same hand
+  let quadsCount = 0, sfCount = 0, royalCount = 0;
+  for (const i of active) {
+    const ev = evalSevenCard(hole[i].concat(board));
+    if (ev.className === 'Four of a Kind') quadsCount++;
+    if (ev.className === 'Straight Flush') sfCount++;
+    if (ev.className === 'Royal Flush') royalCount++;
+  }
+  const trigger = (quadsCount >= 2) || (sfCount + royalCount >= 2) || (royalCount >= 1 && sfCount >= 1);
+  if (!trigger) return;
+  // Pay out: 50% to loser, 25% to winner, 25% rolls forward.
+  const total = BBJackpot.pool;
+  const loserShare = total * 0.5;
+  const winnerShare = total * 0.25;
+  // Pay to all losers proportionally.
+  const losers = active.filter(i => i !== winnerIdx);
+  if (losers.length > 0 && loserShare > 0) {
+    const each = loserShare / losers.length;
+    for (const i of losers) {
+      const seat = t.seats[i];
+      seat.stack += each;
+      nectarPost({ type: 'promo.bonus', from: null, to: seat.playerId, amount: each, reason: 'BB Jackpot loser share', meta: { tableId: t.id } });
+    }
+  }
+  if (winnerShare > 0) {
+    const seat = t.seats[winnerIdx];
+    seat.stack += winnerShare;
+    nectarPost({ type: 'promo.bonus', from: null, to: seat.playerId, amount: winnerShare, reason: 'BB Jackpot winner share', meta: { tableId: t.id } });
+  }
+  BBJackpot.pool = total * 0.25;
+  BBJackpot.lastHit = Date.now();
+  BBJackpot.history.push({ ts: Date.now(), payout: total * 0.75, tableId: t.id });
+  if (BBJackpot.history.length > 100) BBJackpot.history.splice(0, BBJackpot.history.length - 100);
+  toast('🏆 BAD BEAT JACKPOT — ' + Math.round(total * 0.75).toLocaleString() + ' ◈ paid out!', 5000);
+  foley('bb-jackpot');
+}
+
+// === Staking marketplace ====================================================
+const StakingState = { offerings: [], contracts: [] };
+function ensureStakingState() {
+  if (!Array.isArray(StakingState.offerings)) StakingState.offerings = [];
+  if (!Array.isArray(StakingState.contracts)) StakingState.contracts = [];
+}
+function generateSampleOfferings() {
+  const pool = TourState.pool || [];
+  if (pool.length === 0) { toast('Build a pool first'); return; }
+  // Top 20 players by skill list action in upcoming events.
+  const top = pool.slice().sort((a, b) => b.skill - a.skill).slice(0, 20);
+  const events = ['Hive Open Major', 'Buzz Classic Major', 'Drone Cup Regular', 'Honey Bowl Main Event'];
+  for (let i = 0; i < 8; i++) {
+    const pro = top[Math.floor(Math.random() * top.length)];
+    const ev = events[Math.floor(Math.random() * events.length)];
+    const buyIn = ev.indexOf('Main') >= 0 ? 10000 : ev.indexOf('Major') >= 0 ? 1000 : 100;
+    const markup = +(1.0 + Math.random() * 0.4).toFixed(2);
+    const pct = +(0.20 + Math.random() * 0.40).toFixed(2);
+    StakingState.offerings.push({
+      id: 'O-' + Date.now().toString(36) + '-' + i,
+      proId: pro.id, eventName: ev, buyIn, markup,
+      percentAvailable: pct,
+      listedAt: Date.now(),
+    });
+  }
+  toast('Generated ' + 8 + ' sample offerings');
+}
+
+// === Hand history store =====================================================
+const HistoryStore = { hands: [] };
+function ensureHistoryStore() {
+  if (!Array.isArray(HistoryStore.hands)) HistoryStore.hands = [];
+}
+function openHandReplay(h) {
+  // Modal replay: show board + showdown with all hole cards revealed.
+  const m = $('#modal-body'); if (!m) return;
+  clear(m);
+  m.appendChild(el('h2', { text: 'Hand replay · ' + (h.id || 'unknown') }));
+  m.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-bottom: 12px;', text: new Date(h.ts).toLocaleString() + ' · ' + h.context + ' · ' + h.playerCount + '-way · pot ' + Math.round(h.pot).toLocaleString() }));
+  // Board.
+  const boardWrap = el('div', { style: 'display:flex; gap:6px; padding: 12px; background: #0d2c20; border-radius: 8px; justify-content:center; margin-bottom: 12px;' });
+  for (const c of (h.board || [])) boardWrap.appendChild(renderCard(c));
+  m.appendChild(boardWrap);
+  // Players' hole cards.
+  if (h.holeCards) {
+    const grid = el('div', { style: 'display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 12px;' });
+    for (const seat of h.seated || []) {
+      const cell = el('div', { style: 'padding: 10px; background: rgba(0,0,0,0.04); border-radius: 8px; text-align:center;' });
+      cell.appendChild(el('div', { style: 'font-size: 11px; opacity:0.7; margin-bottom: 6px;', text: 'Seat ' + seat + (h.folded && h.folded[seat] ? ' (folded)' : '') }));
+      const hcWrap = el('div', { style: 'display:flex; gap:4px; justify-content:center;' });
+      const hc = h.holeCards[seat]; if (hc) for (const c of hc) hcWrap.appendChild(renderCard(c));
+      cell.appendChild(hcWrap);
+      grid.appendChild(cell);
+    }
+    m.appendChild(grid);
+  }
+  // Action log.
+  const logWrap = el('div', { style: 'padding: 10px; background: rgba(0,0,0,0.04); border-radius: 6px; font-family: monospace; font-size: 11px; max-height: 240px; overflow-y: auto;' });
+  for (const ln of (h.log || [])) logWrap.appendChild(el('div', { text: ln }));
+  m.appendChild(logWrap);
+  m.appendChild(el('button', { class: 'btn ghost', style: 'margin-top: 14px;', text: 'Close', onclick: () => { document.getElementById('modal-root').classList.remove('open'); } }));
+  document.getElementById('modal-root').classList.add('open');
+}
+
+// === Economy stress test ====================================================
+function runEconomyStressTest(outEl) {
+  // Project 1 yr at current rates: 50 cash hands/day per seated AI × pool size /
+  // 6 (seats per table) × rake; tour buy-ins per the current LabState; promo
+  // bonuses if claim-daily simulated.
+  const pool = TourState.pool || [];
+  const seatedAI = Math.min(pool.length, 60); // cap simulation
+  const handsPerDayPerSeat = 80; const days = 365;
+  const avgPotByStake = 80;
+  const projectedRake = seatedAI * handsPerDayPerSeat * days * Math.min(avgPotByStake * NectarState.config.rakeStructurePct, NectarState.config.rakeCapPerHand);
+  const projectedPromo = 365 * 50; // user claims daily 50
+  const projectedBuyins = (LabState?.config?.regulars || 25) * 365 * (LabState?.config?.regularField || 256) * (LabState?.config?.buyInRegular || 100);
+  const projectedPayouts = projectedBuyins * 0.97; // after rake
+  const projectedBBJackpotDrop = seatedAI * handsPerDayPerSeat * days * NectarState.config.badBeatDropPerHand;
+  // Inflation = (sources - sinks) / circulating.
+  const m = nectarMacroSnapshot();
+  const sources = projectedPayouts + projectedPromo;
+  const sinks = projectedRake + projectedBBJackpotDrop + projectedBuyins;
+  const net = sources - sinks;
+  const lines = [
+    'Projected over 365 days:',
+    '  + Tour payouts:     ' + Math.round(projectedPayouts).toLocaleString().padStart(12),
+    '  + Promo bonuses:    ' + Math.round(projectedPromo).toLocaleString().padStart(12),
+    '  - Tour buy-ins:     ' + Math.round(projectedBuyins).toLocaleString().padStart(12),
+    '  - Cash rake:        ' + Math.round(projectedRake).toLocaleString().padStart(12),
+    '  - BB jackpot drop:  ' + Math.round(projectedBBJackpotDrop).toLocaleString().padStart(12),
+    '',
+    '  Net flow:  ' + (net >= 0 ? '+' : '') + Math.round(net).toLocaleString() + ' (' + (m.circulating > 0 ? ((net / m.circulating) * 100).toFixed(2) : 'NaN') + '% of current circulating)',
+    '',
+    '  Verdict: ' + (Math.abs(net / Math.max(1, m.circulating)) < 0.10 ? 'STABLE — economy in healthy band' :
+      net > 0 ? 'INFLATIONARY — too much promo/payout vs sinks' :
+      'DEFLATIONARY — players will run out; reduce rake or raise promos'),
+  ];
+  outEl.textContent = lines.join('\n');
+}
+
+// =============================================================================
+// NECTAR ECONOMY — BANKROLL, TABLES, STAKING, ECONOMY, HISTORY (v69.1)
+// =============================================================================
+
+// Sidebar bankroll widget — re-rendered on every route change so the value
+// stays fresh after tour events / cash sessions run.
+function renderNavBankroll() {
+  const w = document.getElementById('nav-bankroll'); if (!w) return;
+  const bal = nectarBalance(0);
+  // 7-day delta from the ledger.
+  const since = Date.now() - 7 * 86400000;
+  let delta = 0;
+  for (let i = NectarState.ledger.length - 1; i >= 0; i--) {
+    const e = NectarState.ledger[i];
+    if (e.ts < since) break;
+    if (e.to === 0) delta += e.amount;
+    if (e.from === 0) delta -= e.amount;
+  }
+  w.innerHTML = '';
+  w.appendChild(el('div', { class: 'nb-label', text: '◈ Your Nectar' }));
+  w.appendChild(el('div', { class: 'nb-value', id: 'nav-bankroll-value', text: Math.round(bal).toLocaleString() + ' ◈' }));
+  const sub = el('div', { class: 'nb-sub' });
+  if (Math.abs(delta) < 1) sub.textContent = '7d · flat';
+  else sub.innerHTML = '7d · <span style="color:' + (delta >= 0 ? '#7ED6A0' : '#F3A889') + '">' + (delta >= 0 ? '+' : '') + Math.round(delta).toLocaleString() + '</span>';
+  w.appendChild(sub);
+  w.onclick = () => { location.hash = '#bankroll'; };
+}
+
+Views.bankroll = function() {
+  const view = $('[data-view="bankroll"]'); clear(view);
+  view.appendChild(el('div', { class: 'crumb' }, el('a', { href: '#dashboard', text: 'Tour Home' }), ' · Bankroll'));
+  view.appendChild(el('div', { class: 'page-header' },
+    el('div', null,
+      el('h1', { text: 'Bankroll' }),
+      el('div', { class: 'sub', text: 'Nectar — your tour life in one ledger' }))
+  ));
+
+  // === Header card with animated balance =================================
+  const bal = nectarBalance(0);
+  const hist = nectarHistory(0, { limit: 10000 });
+  let lifeIn = 0, lifeOut = 0, lifeRake = 0, lifeStaking = 0;
+  for (const e of hist) {
+    if (e.to === 0) lifeIn += e.amount;
+    if (e.from === 0) lifeOut += e.amount;
+    if (e.type === 'rake' || e.type === 'cash.rake') lifeRake += e.amount;
+    if (e.type.indexOf('staking') === 0) lifeStaking += e.amount;
+  }
+  const net = lifeIn - lifeOut;
+  const roi = lifeOut > 0 ? (net / lifeOut) : 0;
+
+  const header = el('div', { class: 'br-header' });
+  header.appendChild(el('div', { style: 'font-size:11px;letter-spacing:1.4px;text-transform:uppercase;opacity:0.6;', text: 'Current bankroll' }));
+  const big = el('div', { style: 'margin-top:8px;' });
+  big.appendChild(el('span', { class: 'br-bal-big', id: 'br-bal-anim', text: Math.round(bal).toLocaleString() }));
+  big.appendChild(el('span', { class: 'br-bal-cur', text: '◈ nectar' }));
+  header.appendChild(big);
+  const statRow = el('div', { class: 'br-stat-row' });
+  statRow.appendChild(el('div', { class: 'br-stat' },
+    el('div', { class: 'lbl', text: 'Lifetime in' }),
+    el('div', { class: 'val pos', text: '+' + Math.round(lifeIn).toLocaleString() })
+  ));
+  statRow.appendChild(el('div', { class: 'br-stat' },
+    el('div', { class: 'lbl', text: 'Lifetime out' }),
+    el('div', { class: 'val neg', text: '-' + Math.round(lifeOut).toLocaleString() })
+  ));
+  statRow.appendChild(el('div', { class: 'br-stat' },
+    el('div', { class: 'lbl', text: 'Net P/L' }),
+    el('div', { class: 'val ' + (net >= 0 ? 'pos' : 'neg'), text: (net >= 0 ? '+' : '') + Math.round(net).toLocaleString() })
+  ));
+  statRow.appendChild(el('div', { class: 'br-stat' },
+    el('div', { class: 'lbl', text: 'ROI' }),
+    el('div', { class: 'val ' + (roi >= 0 ? 'pos' : 'neg'), text: (roi * 100).toFixed(1) + '%' })
+  ));
+  statRow.appendChild(el('div', { class: 'br-stat' },
+    el('div', { class: 'lbl', text: 'Rake paid' }),
+    el('div', { class: 'val', text: Math.round(lifeRake).toLocaleString() })
+  ));
+  statRow.appendChild(el('div', { class: 'br-stat' },
+    el('div', { class: 'lbl', text: 'Ledger entries' }),
+    el('div', { class: 'val', text: hist.length.toLocaleString() })
+  ));
+  header.appendChild(statRow);
+  view.appendChild(header);
+
+  // === P2P transfer + actions ============================================
+  const actions = el('div', { class: 'card', style: 'margin-bottom: 18px;' });
+  actions.appendChild(el('h2', { text: 'Actions' }));
+  const actRow = el('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;align-items:center;' });
+  const xferBtn = el('button', { class: 'btn' }, 'Transfer to player');
+  xferBtn.onclick = () => {
+    const pool = TourState.pool || [];
+    if (pool.length === 0) { toast('Build a pool first (Simulator → Run)'); return; }
+    const id = +prompt('Player id (1..' + pool.length + '):'); if (!id || id < 1 || id > pool.length) return;
+    const amt = +prompt('Amount to transfer (◈):'); if (!(amt > 0)) return;
+    const fee = Math.ceil(amt * NectarState.config.p2pTransferFeePct);
+    if (nectarBalance(0) < amt + fee) { toast('Insufficient bankroll (need ' + (amt + fee) + ' incl. fee)'); return; }
+    nectarPost({ type: 'transfer.p2p', from: 0, to: id, amount: amt, reason: 'P2P transfer' });
+    if (fee > 0) nectarPost({ type: 'rake', from: 0, to: null, amount: fee, reason: 'Transfer fee' });
+    toast('Sent ' + amt + ' ◈ (fee ' + fee + ')');
+    Views.bankroll();
+  };
+  const promoBtn = el('button', { class: 'btn' }, 'Daily login (+50 ◈)');
+  promoBtn.onclick = () => {
+    const last = +localStorage.getItem('yj-last-promo') || 0;
+    if (Date.now() - last < 24 * 3600000) { toast('Already claimed today'); return; }
+    nectarPost({ type: 'promo.bonus', from: null, to: 0, amount: 50, reason: 'Daily login bonus' });
+    localStorage.setItem('yj-last-promo', String(Date.now()));
+    Views.bankroll();
+  };
+  const grantBtn = el('button', { class: 'btn ghost' }, 'Top-up (debug · +1000 ◈)');
+  grantBtn.onclick = () => {
+    nectarPost({ type: 'promo.bonus', from: null, to: 0, amount: 1000, reason: 'Debug top-up' });
+    Views.bankroll();
+  };
+  actRow.appendChild(xferBtn);
+  actRow.appendChild(promoBtn);
+  actRow.appendChild(grantBtn);
+  actions.appendChild(actRow);
+  view.appendChild(actions);
+
+  // === Foley toggle ======================================================
+  const foleyCard = el('div', { class: 'card', style: 'margin-bottom: 18px; display:flex; align-items:center; justify-content:space-between; gap: 12px;' });
+  foleyCard.appendChild(el('div', null,
+    el('div', { style: 'font-weight: 600; font-size: 14px;', text: '🔊 Foley sound' }),
+    el('div', { style: 'font-size: 11px; opacity: 0.65; margin-top: 3px;', text: 'Honey-themed UI sounds on nectar credits, deals, and wins. Synthesized in-app, no external assets.' })
+  ));
+  const foleyTog = el('button', { class: 'btn' }, TourState.preferences.foley ? 'On — disable' : 'Off — enable');
+  foleyTog.onclick = () => {
+    TourState.preferences.foley = !TourState.preferences.foley;
+    if (TourState.preferences.foley) { foley('nectar-credit'); }
+    unifiedSave(); Views.bankroll();
+  };
+  foleyCard.appendChild(foleyTog);
+  view.appendChild(foleyCard);
+
+  // === Ledger ============================================================
+  const ledgerCard = el('div', { class: 'card' });
+  const head2 = el('div', { style: 'display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px;' });
+  head2.appendChild(el('h2', { text: 'Ledger', style: 'margin:0;' }));
+  // Filter pills.
+  const filters = ['all', 'tour', 'cash', 'transfer', 'staking', 'rake', 'promo'];
+  const filterRow = el('div', { style: 'display:flex; gap:6px; flex-wrap: wrap;' });
+  let activeFilter = 'all';
+  function renderRows() {
+    const tableBody = ledgerCard.querySelector('tbody'); if (!tableBody) return;
+    clear(tableBody);
+    const rows = activeFilter === 'all' ? hist.slice(0, 200) : hist.filter(e => e.type.indexOf(activeFilter) === 0).slice(0, 200);
+    rows.forEach((e, i) => {
+      const tr = el('tr', { class: 'ledger-row', style: 'animation-delay:' + Math.min(i * 8, 240) + 'ms;' });
+      const dt = new Date(e.ts);
+      tr.appendChild(el('td', { style: 'font-size:11px; opacity:0.7; white-space:nowrap;', text: dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }));
+      const typeKind = e.type.split('.')[0];
+      tr.appendChild(el('td', null, el('span', { class: 'ledger-type-pill ' + typeKind, text: e.type })));
+      tr.appendChild(el('td', { style: 'font-size:12px;', text: e.reason || '' }));
+      const direction = e.to === 0 ? 'in' : 'out';
+      const amtCell = el('td', { class: 'num', style: 'font-variant-numeric: tabular-nums; font-weight:700; color:' + (direction === 'in' ? 'var(--chart-good, #1E7A4E)' : 'var(--chart-bad, #B85A3A)') + ';',
+        text: (direction === 'in' ? '+' : '-') + Math.round(e.amount).toLocaleString() });
+      tr.appendChild(amtCell);
+      tableBody.appendChild(tr);
+    });
+    if (rows.length === 0) {
+      const tr = el('tr'); tr.appendChild(el('td', { colspan: 4, style: 'text-align:center; padding:18px; opacity:0.6; font-style:italic;', text: 'No ' + (activeFilter === 'all' ? '' : activeFilter + ' ') + 'entries yet.' }));
+      tableBody.appendChild(tr);
+    }
+  }
+  filters.forEach(f => {
+    const pill = el('button', { class: 'btn ghost', style: 'padding: 4px 10px; font-size: 11px;', text: f });
+    pill.onclick = () => { activeFilter = f; filterRow.querySelectorAll('button').forEach(b => b.classList.toggle('gold', b === pill)); renderRows(); };
+    if (f === 'all') pill.classList.add('gold');
+    filterRow.appendChild(pill);
+  });
+  head2.appendChild(filterRow);
+  ledgerCard.appendChild(head2);
+  const tbl = el('table');
+  tbl.appendChild(el('thead', null, el('tr', null,
+    el('th', { text: 'When', style: 'width: 130px;' }),
+    el('th', { text: 'Type', style: 'width: 110px;' }),
+    el('th', { text: 'Reason' }),
+    el('th', { class: 'num', text: 'Amount', style: 'width: 110px;' })
+  )));
+  tbl.appendChild(el('tbody'));
+  ledgerCard.appendChild(tbl);
+  view.appendChild(ledgerCard);
+  renderRows();
+};
+
+// === Views.tables — Cash Tables Lobby (Phase 3 UI · engine wired in 2) ====
+Views.tables = function() {
+  const view = $('[data-view="tables"]'); clear(view);
+  view.appendChild(el('div', { class: 'crumb' }, el('a', { href: '#dashboard', text: 'Tour Home' }), ' · Cash Tables'));
+  view.appendChild(el('div', { class: 'page-header' },
+    el('div', null,
+      el('h1', { text: 'Cash Tables' }),
+      el('div', { class: 'sub', text: 'Sit · stand · grind · live ring games' }))
+  ));
+
+  // Bankroll stripe
+  const stripe = el('div', { class: 'card', style: 'display:flex; align-items:center; justify-content:space-between; margin-bottom: 18px;' });
+  stripe.appendChild(el('div', null,
+    el('div', { style: 'font-size: 11px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.6;', text: 'Your bankroll' }),
+    el('div', { style: 'font-size: 26px; font-weight: 800; color: var(--gold, #C9A857); font-variant-numeric: tabular-nums;', text: Math.round(nectarBalance(0)).toLocaleString() + ' ◈' })
+  ));
+  stripe.appendChild(el('button', { class: 'btn ghost', onclick: () => location.hash = '#bankroll' }, 'Manage bankroll →'));
+  view.appendChild(stripe);
+
+  // === Lobby ===========================================================
+  ensureCashLobby();
+  const lobby = el('div', { class: 'card' });
+  lobby.appendChild(el('h2', { text: 'Lobby', style: 'margin: 0 0 12px;' }));
+  const tbl = el('table');
+  tbl.appendChild(el('thead', null, el('tr', null,
+    el('th', { text: 'Stakes' }),
+    el('th', { text: 'Variant' }),
+    el('th', { text: 'Format' }),
+    el('th', { class: 'num', text: 'Seats' }),
+    el('th', { class: 'num', text: 'Avg pot' }),
+    el('th', { class: 'num', text: 'Hands/hr' }),
+    el('th', { text: '' })
+  )));
+  const tb = el('tbody');
+  CashLobby.tables.forEach(t => {
+    const tr = el('tr');
+    tr.appendChild(el('td', null, el('strong', { text: t.smallBlind + '/' + t.bigBlind + ' ◈' })));
+    const variantPill = el('span', { class: 'ledger-type-pill ' + (t.variant === 'pure' ? 'cash' : 'tour'), text: t.variant === 'pure' ? 'Pure' : (t.variant === 'yj' ? 'YJ Honey-Stroke' : 'Bumblebee') });
+    tr.appendChild(el('td', null, variantPill));
+    tr.appendChild(el('td', { text: t.maxSeats + '-max' }));
+    const seatedCount = t.seats.filter(s => s).length;
+    const seatTd = el('td', { class: 'num', text: seatedCount + ' / ' + t.maxSeats });
+    if (seatedCount === t.maxSeats) seatTd.style.color = 'var(--chart-bad, #B85A3A)';
+    else if (seatedCount >= t.maxSeats - 2) seatTd.style.color = 'var(--gold, #C9A857)';
+    tr.appendChild(seatTd);
+    tr.appendChild(el('td', { class: 'num', text: Math.round(t.stats.avgPot).toLocaleString() + ' ◈' }));
+    tr.appendChild(el('td', { class: 'num', text: t.stats.handsPerHour.toFixed(0) }));
+    const sitBtn = el('button', { class: 'btn gold', text: 'Sit →' });
+    sitBtn.disabled = seatedCount >= t.maxSeats;
+    sitBtn.onclick = () => { openCashTable(t.id); };
+    tr.appendChild(el('td', null, sitBtn));
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  lobby.appendChild(tbl);
+
+  const hint = el('div', { class: 'ui-sans', style: 'font-size:11px; opacity:0.65; margin-top:14px; line-height:1.5;' });
+  hint.innerHTML = '<strong>Variants.</strong> Pure: standard NLHE — chip P/L only. ' +
+    '<strong>YJ Honey-Stroke</strong>: dual-ledger — chip P/L + per-hand stroke score, settled at session end with stroke-weight × hands<sup>-1</sup>. Skill-revealing, variance-softening. ' +
+    '<strong>Bumblebee Honey-Stroke</strong>: same dual ledger, Honored Loss (loser scores own hand class).';
+  lobby.appendChild(hint);
+  view.appendChild(lobby);
+
+  // === Active session panel (multi-table aware) =======================
+  if (CashLobby.activeTableIds && CashLobby.activeTableIds.length > 0) {
+    if (!CashLobby.focusedTableId || CashLobby.activeTableIds.indexOf(CashLobby.focusedTableId) === -1) {
+      CashLobby.focusedTableId = CashLobby.activeTableIds[0];
+    }
+    view.appendChild(renderCashTableView(CashLobby.focusedTableId));
+  }
+  // Time-bank tick: when any active table is awaiting user input, refresh
+  // every 250ms so the ring drains visually. Reset on view re-render.
+  if (typeof window !== 'undefined' && window._yjTbInterval) { clearInterval(window._yjTbInterval); window._yjTbInterval = null; }
+  const anyAwaiting = CashLobby.activeTableIds.some(id => {
+    const tt = CashLobby.tables.find(x => x.id === id); return tt && tt.handState && tt.handState.phase === 'awaitingUser';
+  });
+  if (anyAwaiting) {
+    window._yjTbInterval = setInterval(() => {
+      if (document.body.dataset.activeView !== 'tables') { clearInterval(window._yjTbInterval); window._yjTbInterval = null; return; }
+      // Update only the time-bank ring + dot indicators rather than full re-render to avoid flicker.
+      const ring = document.querySelector('.tb-ring');
+      const focus = CashLobby.focusedTableId;
+      const tt = CashLobby.tables.find(x => x.id === focus);
+      if (ring && tt && tt.handState && tt.handState.phase === 'awaitingUser') {
+        const remaining = Math.max(0, (tt.handState.timeBankExp - Date.now()) / 1000);
+        const pctLeft = Math.max(0, Math.min(1, remaining / CashLobby.timeBankSec));
+        ring.style.background = 'conic-gradient(var(--gold,#C9A857) ' + (pctLeft * 360).toFixed(0) + 'deg, rgba(0,0,0,0.4) 0)';
+        ring.title = Math.ceil(remaining) + 's';
+      }
+    }, 250);
+  }
+};
+
+// === Views.staking — pro-action marketplace ============================
+Views.staking = function() {
+  const view = $('[data-view="staking"]'); clear(view);
+  view.appendChild(el('div', { class: 'crumb' }, el('a', { href: '#dashboard', text: 'Tour Home' }), ' · Staking'));
+  view.appendChild(el('div', { class: 'page-header' },
+    el('div', null,
+      el('h1', { text: 'Staking Marketplace' }),
+      el('div', { class: 'sub', text: 'Buy a piece of a pro · auto-settled on the ledger' }))
+  ));
+
+  ensureStakingState();
+
+  // === Stripe ===========================================================
+  const stripe = el('div', { class: 'card', style: 'margin-bottom:18px;' });
+  stripe.appendChild(el('h2', { text: 'How it works', style: 'margin:0 0 8px;' }));
+  stripe.appendChild(el('div', { style: 'font-size:12px; line-height:1.6; opacity:0.85;' },
+    document.createTextNode('Pros sell percentage of action in upcoming events at a markup (1.0 = at cost, 1.2 = 20% premium for star power). Backers buy chunks; the contract sits in escrow. When the event resolves, the smart-ledger automatically distributes payouts pro-rata with markup repaid first.')
+  ));
+  view.appendChild(stripe);
+
+  // === Open offerings ===================================================
+  const open = el('div', { class: 'card', style: 'margin-bottom:18px;' });
+  open.appendChild(el('h2', { text: 'Open offerings', style: 'margin:0 0 12px;' }));
+  if (StakingState.offerings.length === 0) {
+    open.appendChild(el('div', { style: 'font-style:italic; opacity:0.6; padding:14px 0;', text: 'No offerings — pros list action when events approach. Try "Generate sample offerings".' }));
+    const sampleBtn = el('button', { class: 'btn ghost', text: 'Generate sample offerings' });
+    sampleBtn.onclick = () => { generateSampleOfferings(); Views.staking(); };
+    open.appendChild(sampleBtn);
+  } else {
+    const tbl = el('table');
+    tbl.appendChild(el('thead', null, el('tr', null,
+      el('th', { text: 'Pro' }),
+      el('th', { text: 'Event' }),
+      el('th', { class: 'num', text: 'Buy-in' }),
+      el('th', { class: 'num', text: 'Markup' }),
+      el('th', { class: 'num', text: 'Avail %' }),
+      el('th', { class: 'num', text: 'Cost / 1%' }),
+      el('th', { text: '' })
+    )));
+    const tb = el('tbody');
+    StakingState.offerings.forEach(o => {
+      const tr = el('tr');
+      const player = (TourState.pool || []).find(p => p.id === o.proId);
+      tr.appendChild(el('td', null, el('strong', { text: player ? player.name : 'Pro #' + o.proId })));
+      tr.appendChild(el('td', { text: o.eventName }));
+      tr.appendChild(el('td', { class: 'num', text: o.buyIn.toLocaleString() + ' ◈' }));
+      tr.appendChild(el('td', { class: 'num', text: o.markup.toFixed(2) + 'x' }));
+      tr.appendChild(el('td', { class: 'num', text: (o.percentAvailable * 100).toFixed(1) + '%' }));
+      const costPerPercent = (o.buyIn / 100) * o.markup;
+      tr.appendChild(el('td', { class: 'num', text: Math.round(costPerPercent).toLocaleString() + ' ◈' }));
+      const buyBtn = el('button', { class: 'btn gold', text: 'Buy →' });
+      buyBtn.onclick = () => {
+        const pct = +prompt('% to buy (max ' + (o.percentAvailable * 100).toFixed(1) + '%):'); if (!(pct > 0)) return;
+        const cost = Math.ceil(costPerPercent * pct);
+        if (nectarBalance(0) < cost) { toast('Insufficient nectar (need ' + cost + ')'); return; }
+        if (pct / 100 > o.percentAvailable + 1e-6) { toast('Exceeds available'); return; }
+        nectarPost({ type: 'staking.sell', from: 0, to: o.proId, amount: cost, reason: 'Bought ' + pct.toFixed(2) + '% of ' + (player ? player.name : 'pro') + ' @ ' + o.eventName });
+        o.percentAvailable -= pct / 100;
+        StakingState.contracts.push({ id: 'C-' + Date.now().toString(36), backerId: 0, proId: o.proId, eventName: o.eventName, buyIn: o.buyIn, markup: o.markup, percent: pct / 100, cost, status: 'open', boughtAt: Date.now() });
+        toast('Bought ' + pct.toFixed(2) + '% — ledger updated');
+        Views.staking();
+      };
+      tr.appendChild(el('td', null, buyBtn));
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    open.appendChild(tbl);
+  }
+  view.appendChild(open);
+
+  // === Your contracts ===================================================
+  const yours = el('div', { class: 'card' });
+  yours.appendChild(el('h2', { text: 'Your contracts', style: 'margin:0 0 12px;' }));
+  const myContracts = StakingState.contracts.filter(c => c.backerId === 0);
+  if (myContracts.length === 0) {
+    yours.appendChild(el('div', { style: 'font-style:italic; opacity:0.6; padding:14px 0;', text: 'No contracts yet.' }));
+  } else {
+    const tbl = el('table');
+    tbl.appendChild(el('thead', null, el('tr', null,
+      el('th', { text: 'Contract' }),
+      el('th', { text: 'Pro' }),
+      el('th', { text: 'Event' }),
+      el('th', { class: 'num', text: 'Cost' }),
+      el('th', { class: 'num', text: '%' }),
+      el('th', { text: 'Status' })
+    )));
+    const tb = el('tbody');
+    myContracts.forEach(c => {
+      const tr = el('tr');
+      const player = (TourState.pool || []).find(p => p.id === c.proId);
+      tr.appendChild(el('td', { style: 'font-family: monospace; font-size: 11px;', text: c.id }));
+      tr.appendChild(el('td', { text: player ? player.name : 'Pro #' + c.proId }));
+      tr.appendChild(el('td', { text: c.eventName }));
+      tr.appendChild(el('td', { class: 'num', text: c.cost.toLocaleString() }));
+      tr.appendChild(el('td', { class: 'num', text: (c.percent * 100).toFixed(2) + '%' }));
+      tr.appendChild(el('td', null, el('span', { class: 'ledger-type-pill ' + (c.status === 'open' ? 'staking' : c.status === 'won' ? 'cash' : 'rake'), text: c.status })));
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    yours.appendChild(tbl);
+  }
+  view.appendChild(yours);
+};
+
+// === Views.economy — macro economic dashboard =========================
+Views.economy = function() {
+  const view = $('[data-view="economy"]'); clear(view);
+  view.appendChild(el('div', { class: 'crumb' }, el('a', { href: '#dashboard', text: 'Tour Home' }), ' · Economy'));
+  view.appendChild(el('div', { class: 'page-header' },
+    el('div', null,
+      el('h1', { text: 'Macro-Economy' }),
+      el('div', { class: 'sub', text: 'Nectar circulation · health metrics · stress tests' }))
+  ));
+
+  const m = nectarMacroSnapshot();
+  const stats = el('div', { class: 'stat-grid', style: 'margin-bottom: 22px;' });
+  stats.appendChild(statCard('Total nectar circulating', Math.round(m.circulating).toLocaleString() + ' ◈'));
+  stats.appendChild(statCard('Gini coefficient', m.gini.toFixed(3), m.gini < 0.5 ? 'egalitarian' : m.gini < 0.7 ? 'concentrated' : 'highly concentrated', 'gold'));
+  stats.appendChild(statCard('Velocity (24h)', m.velocity.toFixed(4), 'transactions / circulating'));
+  stats.appendChild(statCard('Bankrolls', Object.keys(NectarState.bankrolls).length.toLocaleString()));
+  stats.appendChild(statCard('Total rake collected', Math.round(NectarState.archive.totalRakeCollected).toLocaleString() + ' ◈'));
+  stats.appendChild(statCard('Total payouts', Math.round(NectarState.archive.totalPayouts).toLocaleString() + ' ◈'));
+  view.appendChild(stats);
+
+  // BB jackpot pool
+  ensureBBJackpot();
+  const bb = el('div', { class: 'card', style: 'margin-bottom: 18px; background: linear-gradient(135deg, rgba(255,193,7,0.12), rgba(0,103,71,0.05));' });
+  bb.appendChild(el('h2', { text: '🏆 Bad Beat Jackpot', style: 'margin: 0 0 8px;' }));
+  bb.appendChild(el('div', { style: 'font-size: 36px; font-weight: 800; color: var(--gold, #C9A857); font-variant-numeric: tabular-nums;', text: Math.round(BBJackpot.pool).toLocaleString() + ' ◈' }));
+  bb.appendChild(el('div', { style: 'font-size: 11px; opacity: 0.7;', text: 'Drops on every cash hand. Pays out when quad-over-quad, royal-flush-cracked, or straight-flush-vs-straight-flush triggers.' }));
+  bb.appendChild(el('div', { style: 'font-size: 11px; opacity: 0.6; margin-top: 4px;', text: 'Last hit: ' + (BBJackpot.lastHit ? new Date(BBJackpot.lastHit).toLocaleString() : 'never') }));
+  view.appendChild(bb);
+
+  // Distribution chart
+  const distCard = el('div', { class: 'card', style: 'margin-bottom: 18px;' });
+  distCard.appendChild(el('h2', { text: 'Bankroll distribution', style: 'margin:0 0 8px;' }));
+  const cv = el('canvas', { width: '900', height: '260' });
+  distCard.appendChild(cv);
+  view.appendChild(distCard);
+  setTimeout(() => {
+    const balances = Object.values(NectarState.bankrolls).filter(b => b > 0);
+    drawHistogram(cv, balances, 0, Math.max(1000, Math.max.apply(null, balances) * 1.05), 25);
+  }, 10);
+
+  // Stress test
+  const stress = el('div', { class: 'card' });
+  stress.appendChild(el('h2', { text: 'Stress test', style: 'margin:0 0 8px;' }));
+  stress.appendChild(el('div', { style: 'font-size: 12px; opacity: 0.75; margin-bottom: 10px;', text: 'Project 1 year of activity at current rake / staking / promo rates and report nectar inflation/deflation vs current circulating.' }));
+  const out = el('div', { style: 'font-family: monospace; font-size: 12px; padding: 10px; background: rgba(0,0,0,0.04); border-radius: 6px; min-height: 60px; white-space: pre-wrap;', id: 'stress-out', text: 'Click "Run" to project.' });
+  const runBtn = el('button', { class: 'btn gold', text: 'Run 1-year projection' });
+  runBtn.onclick = () => { runEconomyStressTest(out); };
+  stress.appendChild(runBtn);
+  stress.appendChild(out);
+  view.appendChild(stress);
+};
+
+// === Views.history — hand history viewer + replayer ====================
+Views.history = function() {
+  const view = $('[data-view="history"]'); clear(view);
+  view.appendChild(el('div', { class: 'crumb' }, el('a', { href: '#dashboard', text: 'Tour Home' }), ' · Hand History'));
+  view.appendChild(el('div', { class: 'page-header' },
+    el('div', null,
+      el('h1', { text: 'Hand History' }),
+      el('div', { class: 'sub', text: 'Every hand · cross-format · searchable · replayable' }))
+  ));
+
+  ensureHistoryStore();
+  const filterCard = el('div', { class: 'card', style: 'margin-bottom: 18px;' });
+  filterCard.appendChild(el('h2', { text: 'Filter', style: 'margin: 0 0 10px;' }));
+  const fr = el('div', { style: 'display:flex; gap:10px; align-items:center; flex-wrap:wrap;' });
+  const ctxSel = el('select');
+  ['all', 'cash', 'tour'].forEach(o => { const op = el('option', { value: o, text: o }); ctxSel.appendChild(op); });
+  fr.appendChild(el('label', { text: 'Context' }));
+  fr.appendChild(ctxSel);
+  const handSel = el('select');
+  ['any', 'showdown', 'fold-win'].forEach(o => { const op = el('option', { value: o, text: o }); handSel.appendChild(op); });
+  fr.appendChild(el('label', { text: 'Result' }));
+  fr.appendChild(handSel);
+  filterCard.appendChild(fr);
+  view.appendChild(filterCard);
+
+  const list = el('div', { class: 'card' });
+  list.appendChild(el('h2', { text: 'Recent hands', style: 'margin:0 0 12px;' }));
+  if (HistoryStore.hands.length === 0) {
+    list.appendChild(el('div', { style: 'font-style:italic; opacity:0.6; padding:14px 0;', text: 'No hands recorded yet — play a cash table or run a sim.' }));
+  } else {
+    const tbl = el('table');
+    tbl.appendChild(el('thead', null, el('tr', null,
+      el('th', { text: 'When' }),
+      el('th', { text: 'Context' }),
+      el('th', { text: 'Players' }),
+      el('th', { class: 'num', text: 'Pot' }),
+      el('th', { text: 'Winner' }),
+      el('th', { text: '' })
+    )));
+    const tb = el('tbody');
+    function refresh() {
+      clear(tb);
+      const ctx = ctxSel.value, res = handSel.value;
+      const filtered = HistoryStore.hands.filter(h => {
+        if (ctx !== 'all' && h.context !== ctx) return false;
+        if (res === 'showdown' && !h.showdown) return false;
+        if (res === 'fold-win' && h.showdown) return false;
+        return true;
+      }).slice(-100).reverse();
+      filtered.forEach((h, i) => {
+        const tr = el('tr', { class: 'ledger-row', style: 'animation-delay:' + Math.min(i * 6, 200) + 'ms;' });
+        tr.appendChild(el('td', { style: 'font-size: 11px; white-space: nowrap;', text: new Date(h.ts).toLocaleTimeString() }));
+        tr.appendChild(el('td', null, el('span', { class: 'ledger-type-pill ' + (h.context === 'cash' ? 'cash' : 'tour'), text: h.context })));
+        tr.appendChild(el('td', { text: h.playerCount + '-way' }));
+        tr.appendChild(el('td', { class: 'num', text: Math.round(h.pot).toLocaleString() }));
+        tr.appendChild(el('td', { text: h.winnerName || '—' }));
+        const replayBtn = el('button', { class: 'btn ghost', style: 'padding: 3px 10px; font-size: 11px;', text: 'Replay →' });
+        replayBtn.onclick = () => { openHandReplay(h); };
+        tr.appendChild(el('td', null, replayBtn));
+        tb.appendChild(tr);
+      });
+      if (filtered.length === 0) {
+        const tr = el('tr'); tr.appendChild(el('td', { colspan: 6, style: 'text-align:center; padding:18px; opacity:0.6; font-style:italic;', text: 'No hands match these filters.' }));
+        tb.appendChild(tr);
+      }
+    }
+    ctxSel.onchange = refresh; handSel.onchange = refresh;
+    tbl.appendChild(tb); list.appendChild(tbl); refresh();
+  }
+  view.appendChild(list);
+};
+
+// =============================================================================
 // PHASE 2b.3 — HALL OF FAME
 // =============================================================================
 
@@ -8806,6 +11112,16 @@ const DEFAULT_SIM_CONFIG = {
   // secondary cut at R3 (50% of remainder). null/0/undefined disables cut for
   // that round. R4 cut is moot (final round — winner determined by score).
   cutSchedule: [null, 0.50, 0.50, null],
+  // v69.2 LATE REGISTRATION — when lateRegLastRound > 0, additional players
+  // from the pool can enter the event mid-flight at round boundaries up to
+  // and including round number lateRegLastRound (1-indexed). lateRegMaxEntries
+  // caps how many late entrants are admitted per round. Late entrants pay
+  // full buy-in (no exemption) and start at score = leader + 0.6×cushion[r]
+  // so they enter near the cushion threshold. Set lateRegLastRound=0 to
+  // disable (default). Models WSOP "register through end of Day 1" structures
+  // and the Hellmuth-show-up-late phenomenon.
+  lateRegLastRound: 0,
+  lateRegMaxEntries: 0,
   // v69 MULTIPLAYER TABLE SIZE (FUTURE) — when > 2, switches the engine to
   // multi-way matched-contribution wagering. Default 2 = HU (current engine).
   // 6 / 9 = table-format play. Multi-way engine is NOT YET IMPLEMENTED in v69;
@@ -9420,9 +11736,20 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
       // Bracket-survival reaches still get marked so downstream metrics remain
       // populated. Aggregate mode treats r4 = top-16 finishers, r2 = top-2.
       const useMultiway = (cfg.tableSize || 2) > 2;
+      // Phase-6 late-reg: ensure eventName/year are visible to the runner so
+      // late entrants can be charged through the nectar bridge.
+      const cfgRunner = Object.assign({}, cfg, { eventName, year });
       const aggResult = useMultiway
-        ? runMultiwayStrokePlayEvent(players, 18, 4, cfg, eventType)
-        : runStrokePlayEvent(players, 18, 4, cfg, eventType);
+        ? runMultiwayStrokePlayEvent(players, 18, 4, cfgRunner, eventType)
+        : runStrokePlayEvent(players, 18, 4, cfgRunner, eventType);
+      // v69.2 late-reg: extend field + wrapperById with admitted entrants so
+      // the outer per-player loop (buy-ins, ITM, payouts) processes them.
+      if (aggResult.lateEntrants && aggResult.lateEntrants.length) {
+        for (const le of aggResult.lateEntrants) {
+          if (field.indexOf(le) === -1) field.push(le);
+          if (typeof wrapperById === 'object' && wrapperById && !wrapperById[le.id]) wrapperById[le.id] = le;
+        }
+      }
       const sorted = aggResult.sortedFinishers;
       // Backfill the placements buffer with the aggregate ranking.
       for (const plc of aggResult.placements) placements.push(plc);
@@ -9680,6 +12007,12 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
       p.buyInsPaid += 0;
     } else {
       p.buyInsPaid += seatCost;
+      // Phase 6: route the buy-in through the nectar ledger. Silent during
+      // batch sim runs to avoid 100K+ ledger entries; updates the bankroll
+      // unconditionally so the macro economy reflects the activity.
+      if (typeof nectarApplyTourBuyin === 'function') {
+        nectarApplyTourBuyin(p.id, seatCost, eventName || (eventType + ' event'), year);
+      }
     }
     p.eventsEntered++;
     p.eventsThisYear = (p.eventsThisYear || 0) + 1;
@@ -9693,6 +12026,10 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
       p.prizeEarned += prize;
       p.itmCount++;
       itmCount++;
+      // Phase 6: payout through the nectar ledger.
+      if (typeof nectarApplyTourPayout === 'function') {
+        nectarApplyTourPayout(p.id, prize, eventName || (eventType + ' event'), year, p.eliminatedAtBracket || null);
+      }
     }
     // Non-Main economics — used for skill-edge KPIs that aren't dominated by
     // the 25k-field Main lottery (top-64 ITM cap means 99.7% of Main entrants
@@ -11951,6 +14288,41 @@ function renderConfigPanel(panel, mode) {
     text: 'HU (2) is the canonical engine. 6 / 9 route aggregate stroke-play events through the multi-way matched-contribution runner — R1-R3 played at tables of N, then R4 collapses to a heads-up final between the top-2 survivors. Per-player honey caps auto-scale to keep per-pair stroke variance comparable to HU. Bracket format ignores this setting.'
   }));
 
+  // === LATE REGISTRATION (v69.2) =============================================
+  const lrRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  lrRow.appendChild(el('label', { text: 'Late reg', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const lrSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 0, label: 'Closed — field locked at R1 start' },
+    { v: 1, label: 'Open through R1' },
+    { v: 2, label: 'Open through R2 (WSOP-style Day 2)' },
+    { v: 3, label: 'Open through R3' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if ((+LabState.config.lateRegLastRound || 0) === o.v) opt.selected = true;
+    lrSel.appendChild(opt);
+  });
+  lrSel.onchange = () => {
+    LabState.config.lateRegLastRound = +lrSel.value;
+    if (LabState.config.lateRegLastRound > 0 && (+LabState.config.lateRegMaxEntries || 0) === 0) LabState.config.lateRegMaxEntries = 8;
+    saveLabState();
+    toast('Late reg: ' + (lrSel.value === '0' ? 'closed' : 'open through R' + lrSel.value));
+  };
+  lrRow.appendChild(lrSel);
+  evSec.appendChild(lrRow);
+
+  const lrEntriesRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  lrEntriesRow.appendChild(el('label', { text: 'Max late', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const lrInp = el('input', { type: 'number', min: '0', max: '256', step: '1', style: 'width: 100%; padding: 6px 8px;', value: String(LabState.config.lateRegMaxEntries || 0) });
+  lrInp.oninput = () => { LabState.config.lateRegMaxEntries = Math.max(0, +lrInp.value || 0); saveLabState(); };
+  lrEntriesRow.appendChild(lrInp);
+  evSec.appendChild(lrEntriesRow);
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Late entrants are sampled from the broader pool, pay full buy-in, and start at score = leader + 0.6 × cushion[r] (handicapped near the cut threshold). Models WSOP "register through end of Day 1" structures. Hellmuth-style: arrive late, eat the deficit, try to chip up. Closes after the configured round; field locks for the remaining rounds.'
+  }));
+
   const simpleCfg = [
     ['seasons', 'Seasons to run', 1, 100, 1],
   ];
@@ -12438,6 +14810,8 @@ async function simulatorRunClicked() {
     SUPPRESS_ALL_SAVES_DURING_RUN = true;
     LARGE_SIM_RUN_IN_PROGRESS = true;
   }
+  // Phase 6: silence per-event ledger writes during batch sim runs.
+  if (typeof setSilentTourSim === 'function') setSilentTourSim(true);
   try {
     const cfg = JSON.parse(JSON.stringify(LabState.config));
     const repeats = Math.max(1, Math.min(20, cfg.repeatRuns || 1));
@@ -12557,6 +14931,7 @@ async function simulatorRunClicked() {
     // otherwise stay true and silently disable saves until next reload.
     SUPPRESS_ALL_SAVES_DURING_RUN = false;
     LARGE_SIM_RUN_IN_PROGRESS = false;
+    if (typeof setSilentTourSim === 'function') setSilentTourSim(false);
     if (!handedToBackground) {
       LabState.busy = false;
       if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Run Simulation →'; }
@@ -14042,6 +16417,8 @@ function init() {
       survivalCushion: [12, 8, 5, 3],         // v69 cushion mechanic
       cutSchedule: [null, 0.50, 0.50, null],  // v69 round-boundary cuts
       tableSize: 2,                           // v69 multi-way table size: 2 (HU) | 6 | 9
+      lateRegLastRound: 0,                    // v69.2 late reg window (0=disabled, 1..3 = open through that round)
+      lateRegMaxEntries: 0,                   // v69.2 max late entrants per event
       payoutDecay: 0.74,
       buyInRegular: 100, buyInMajor: 1000, buyInMain: 10000,
       rakePercent: 0.03,
