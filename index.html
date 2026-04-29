@@ -1293,7 +1293,8 @@
       <a href="#events" data-route="events"><span class="ico">📅</span> Events</a>
       <a href="#players" data-route="players"><span class="ico">👤</span> Players</a>
       <a href="#bankroll" data-route="bankroll"><span class="ico">◈</span> Bankroll</a>
-      <a href="#tables" data-route="tables"><span class="ico">🃏</span> Cash Tables</a>
+      <a href="#tables" data-route="tables"><span class="ico">🐝</span> Yellow Jacket Cash</a>
+      <a href="#bumblebee" data-route="bumblebee"><span class="ico">🌼</span> Bumblebee Cash</a>
       <a href="#staking" data-route="staking"><span class="ico">🤝</span> Staking</a>
       <a href="#economy" data-route="economy"><span class="ico">📈</span> Economy</a>
       <a href="#history" data-route="history"><span class="ico">⏪</span> Hand History</a>
@@ -1324,6 +1325,7 @@
     <div class="view" data-view="players"></div>
     <div class="view" data-view="bankroll"></div>
     <div class="view" data-view="tables"></div>
+    <div class="view" data-view="bumblebee"></div>
     <div class="view" data-view="staking"></div>
     <div class="view" data-view="economy"></div>
     <div class="view" data-view="history"></div>
@@ -1357,7 +1359,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.28-v69.6-grok-polish";
+const APP_VERSION = "2026.04.28-v69.7-multiway-calib";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3086,15 +3088,21 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   const callAmount = Math.max(0, currentProposal - agreedTotal);
   const potAfterCall = Math.max(1, 2 * currentProposal - agreedTotal);
   const reqEquity = callAmount / potAfterCall;
-  const slack = Number.isFinite(profile.foldThreshold) ? profile.foldThreshold : 0.05;
-  // v68 HARD LOW-EQUITY FOLD FLOOR — fires before the slack-based check so
-  // genuinely hopeless spots (adj < 0.05) get aggressive folding regardless
-  // of slack/pot-odds math. The slack-based trigger lives at negative adj at
-  // YJ's flat divisor=9 (structural limit), so without this floor the v66/v67
-  // sweeps showed only 13-14% fold rate at adj 0.00-0.05 — too light for
-  // genuinely hopeless equity. With foldOpt=0.20 + this floor, predicted v68
-  // fold rates: 0.00-0.05 → 80-90%, 0.05-0.10 → 10-15%, 0.10+ unchanged.
-  const HARD_FOLD_FLOOR = 0.05;
+  const slackBase = Number.isFinite(profile.foldThreshold) ? profile.foldThreshold : 0.05;
+  // v69.7 TABLE-SIZE SCALING (calibration #1) — at multi-way the same "adj"
+  // value vs a single villain dramatically overstates real equity vs the
+  // field. v69.6 sim showed preflop fold rate ~0.01% at 9-way and 0.234
+  // eliteMajorDominance_nonMain — clear under-folding signal. Scaling rule:
+  //   slack    = slackBase − 0.025 × (N − 2)   [lower slack → more folds]
+  //   floor    = 0.05 + 0.025 × (N − 2)         [wider hopeless band]
+  // 4-way:  slack 0.150, floor 0.10
+  // 6-way:  slack 0.100, floor 0.15
+  // 9-way:  slack 0.025, floor 0.225
+  // HU (N=2):    slack unchanged at 0.20, floor 0.05 (no behavioral change)
+  const N_table = +(gameContext && gameContext.tableSize) || 2;
+  const tableScale = Math.max(0, N_table - 2);
+  const slack = slackBase - 0.025 * tableScale;
+  const HARD_FOLD_FLOOR = 0.05 + 0.025 * tableScale;
   if (callAmount > 0 && adjRead < HARD_FOLD_FLOOR) {
     return wrap({ action: 'fold' });
   }
@@ -4444,8 +4452,12 @@ function runMultiwayStrokePlayEvent(players, holesPerRound, rounds, cfg, eventTy
     return runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType);
   }
 
+  // v69.7 calibration #2 — tighter cushion at multi-way. The HU default leaves
+  // weak players too long under multi-way's faster stroke accumulation.
+  const tableSizeForCushion = +cfg.tableSize || 2;
+  const defaultCushion = tableSizeForCushion > 2 ? [8, 5, 3, 2] : [12, 8, 5, 3];
   const survivalCushion = (cfg && Array.isArray(cfg.survivalCushion))
-    ? cfg.survivalCushion : [12, 8, 5, 3];
+    ? cfg.survivalCushion : defaultCushion;
   const cutSchedule = (cfg && Array.isArray(cfg.cutSchedule))
     ? cfg.cutSchedule : [null, 0.50, 0.50, null];
 
@@ -5563,7 +5575,7 @@ function onHashChange() {
     location.replace(location.pathname + location.search + '#simulator?mode=' + mode + extra);
     return;
   }
-  const valid = ['dashboard','simulator','events','players','bankroll','tables','staking','economy','history','hof','analytics','compare','rules','buzz','solo','multiplayer','decisiontree','codex'];
+  const valid = ['dashboard','simulator','events','players','bankroll','tables','bumblebee','staking','economy','history','hof','analytics','compare','rules','buzz','solo','multiplayer','decisiontree','codex'];
   const name = valid.indexOf(parsed.view) !== -1 ? parsed.view : 'dashboard';
   document.body.dataset.activeView = name;
   renderNavBankroll();
@@ -8572,6 +8584,10 @@ const CashLobby = {
   // focal felt area. Users tab between tables via the lobby's tab strip.
   activeTableIds: [],
   focusedTableId: null,
+  // v69.7 — when seated, the lobby hides by default so the table view is
+  // the dedicated gaming environment (WSOP-app style). Toggle via the
+  // "Browse other tables" / "Hide lobby" button in the page header.
+  lobbyHidden: true,
   // AI tick pacing (ms between auto AI actions). Lower = snappier; higher =
   // more dramatic. Configurable per-user-preference via Bankroll tab.
   aiTickMs: 600,
@@ -8723,7 +8739,7 @@ function openCashTable(tableId) {
   const t = CashLobby.tables.find(x => x.id === tableId); if (!t) return;
   if (CashLobby.activeTableIds.indexOf(tableId) !== -1) {
     CashLobby.focusedTableId = tableId;
-    Views.tables();
+    refreshCashView();
     return;
   }
   if (CashLobby.activeTableIds.length >= 6) { toast('Max 6 tables open at once'); return; }
@@ -8736,7 +8752,14 @@ function openCashTable(tableId) {
   t.seats[seatIdx] = { playerId: 0, name: 'You', isAI: false, stack: amt, sittingOut: false, strokeLedger: 0, handsPlayed: 0, sessionBuyIn: amt };
   CashLobby.activeTableIds.push(t.id);
   CashLobby.focusedTableId = t.id;
-  Views.tables();
+  CashLobby.lobbyHidden = true; // dedicated environment — hide lobby on sit
+  // Route to the correct view (yj or bb) for the table's variant.
+  const targetHash = t.variant === 'bb' ? '#bumblebee' : '#tables';
+  if (location.hash !== targetHash) {
+    location.hash = targetHash;
+  } else {
+    if (t.variant === 'bb') Views.bumblebee(); else Views.tables();
+  }
   foley('chip-stack');
 }
 
@@ -8764,8 +8787,12 @@ function standUpFromTable(tableId, seatIdx) {
   if (CashLobby.focusedTableId === t.id) {
     CashLobby.focusedTableId = CashLobby.activeTableIds.length > 0 ? CashLobby.activeTableIds[0] : null;
   }
+  // Show lobby again when fully unseated.
+  if (CashLobby.activeTableIds.length === 0) CashLobby.lobbyHidden = false;
   toast('Stood up · settled ' + Math.round(settlement) + ' ◈');
-  Views.tables();
+  // Re-render whichever lobby we're in.
+  const av = document.body.dataset.activeView;
+  if (av === 'bumblebee') Views.bumblebee(); else Views.tables();
 }
 
 // === Cash table view (felt) =================================================
@@ -8783,7 +8810,7 @@ function renderCashTableView(tableId) {
       const tt = CashLobby.tables.find(x => x.id === id); if (!tt) return;
       const tab = el('button', {
         class: 'cash-tab' + (id === CashLobby.focusedTableId ? ' active' : ''),
-        onclick: () => { CashLobby.focusedTableId = id; Views.tables(); },
+        onclick: () => { CashLobby.focusedTableId = id; refreshCashView(); },
       });
       tab.appendChild(el('span', { text: tt.smallBlind + '/' + tt.bigBlind }));
       tab.appendChild(el('span', { class: 'cash-tab-variant', text: tt.variant === 'pure' ? 'NLHE' : tt.variant === 'yj' ? 'YJ-HS' : 'BB-HS' }));
@@ -8894,7 +8921,7 @@ function renderCashTableView(tableId) {
             e.stopPropagation();
             const idx = notes.tags.indexOf(tag.key);
             if (idx === -1) notes.tags.push(tag.key); else notes.tags.splice(idx, 1);
-            Views.tables();
+            refreshCashView();
           };
           tagRow.appendChild(pill);
         });
@@ -8905,7 +8932,7 @@ function renderCashTableView(tableId) {
           nameEl.style.cursor = 'pointer';
           nameEl.onclick = () => {
             const newText = prompt('Note for ' + s.name + ':', notes.text || '');
-            if (newText !== null) { notes.text = newText.trim(); Views.tables(); }
+            if (newText !== null) { notes.text = newText.trim(); refreshCashView(); }
           };
         }
       }
@@ -9137,7 +9164,7 @@ function renderActionPanel(t) {
       t.preActions = {};
       if (cb.checked) t.preActions[key] = true;
       // Re-render to update other checkboxes.
-      Views.tables();
+      refreshCashView();
     };
     lbl.appendChild(cb);
     lbl.appendChild(document.createTextNode(label));
@@ -9162,7 +9189,7 @@ function renderActionPanel(t) {
 // Space=size to pot, ↑/↓ adjust slider, Enter=confirm raise. Handlers no-op
 // outside the active hand so they don't fight other UI.
 function _isCashTableContext() {
-  if (document.body.dataset.activeView !== 'tables') return false;
+  if (!isCashViewActive()) return false;
   const tag = document.activeElement && document.activeElement.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return false;
   const id = CashLobby.focusedTableId; if (id == null) return false;
@@ -9533,7 +9560,7 @@ function startCashHand(t) {
     goldenCard,
   };
   for (const i of seated) recordHUDAction(t.seats[i].playerId, 'dealt', true);
-  if (typeof Views.tables === 'function' && document.body.dataset.activeView === 'tables') Views.tables();
+  if (isCashViewActive()) refreshCashView();
   scheduleCashTick(t);
   foley('card-deal');
 }
@@ -9599,14 +9626,14 @@ function advanceCashHand(t) {
       const callAmt = h.currentBet - h.bets[h.actingSeat];
       submitUserAction(t, callAmt === 0 ? { kind: 'check' } : { kind: 'fold' });
     }, CashLobby.timeBankSec * 1000);
-    if (typeof Views.tables === 'function' && document.body.dataset.activeView === 'tables' && CashLobby.focusedTableId === t.id) Views.tables();
+    if (isCashViewActive() && CashLobby.focusedTableId === t.id) refreshCashView();
     foley('chip-stack');
     return;
   }
   const callAmt = h.currentBet - h.bets[h.actingSeat];
   const action = decideCashAction(seat, h.hole[h.actingSeat], h.board, callAmt, h.currentBet, t.bigBlind, h.pot, t.variant, h.street);
   applyCashAction(t, h.actingSeat, action);
-  if (CashLobby.focusedTableId === t.id && document.body.dataset.activeView === 'tables') Views.tables();
+  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView();
   scheduleCashTick(t);
 }
 
@@ -9748,7 +9775,7 @@ function runItTwiceResolve(t, h, stillIn) {
   h.phase = 'complete';
   h.winnerIdx = r1.winnerIdx; // arbitrary primary
   h.winnerHandClass = 'RIT';
-  if (CashLobby.focusedTableId === t.id && document.body.dataset.activeView === 'tables') Views.tables();
+  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView();
   foley('win-fanfare');
   renderNavBankroll();
 }
@@ -9916,7 +9943,7 @@ function resolveCashHand(t) {
   h.phase = 'complete';
   h.winnerIdx = winnerIdx;
   h.winnerHandClass = winnerHandClass;
-  if (CashLobby.focusedTableId === t.id && document.body.dataset.activeView === 'tables') Views.tables();
+  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView();
   foley(isShowdown ? 'win-fanfare' : 'chip-stack');
   // Refresh nav widget if user was at the table.
   if (h.seated.findIndex(s => t.seats[s] && t.seats[s].playerId === 0) !== -1) renderNavBankroll();
@@ -9951,7 +9978,7 @@ function submitUserAction(t, action) {
   }
   if (h.timer) { clearTimeout(h.timer); h.timer = null; }
   applyCashAction(t, seatIdx, action);
-  if (CashLobby.focusedTableId === t.id && document.body.dataset.activeView === 'tables') Views.tables();
+  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView();
   scheduleCashTick(t);
 }
 
@@ -10826,18 +10853,60 @@ Views.bankroll = function() {
   renderRows();
 };
 
-// === Views.tables — Cash Tables Lobby (Phase 3 UI · engine wired in 2) ====
-Views.tables = function() {
+// === Views.tables / Views.bumblebee — dedicated gaming environments =====
+// One renderer parameterized by gameMode. 'yj' shows Yellow Jacket + Pure
+// NLHE tables; 'bb' shows Bumblebee tables. Each is a top-level menu entry
+// with its own aesthetic. When seated at a table the lobby is hidden and
+// only the felt + action panel render, with a back-to-lobby button — WSOP
+// app style. Scroll position is preserved across re-renders so action
+// clicks don't bounce you to the top.
+const _yjLastScroll = { y: 0 };
+function renderCashView(gameMode) {
   bindCashKeyboard();
-  const view = $('[data-view="tables"]'); clear(view);
-  view.appendChild(el('div', { class: 'crumb' }, el('a', { href: '#dashboard', text: 'Tour Home' }), ' · Cash Tables'));
-  view.appendChild(el('div', { class: 'page-header' },
-    el('div', null,
-      el('h1', { text: 'Cash Tables' }),
-      el('div', { class: 'sub', text: 'Sit · stand · grind · live ring games' }))
+  const viewName = gameMode === 'bb' ? 'bumblebee' : 'tables';
+  const view = $('[data-view="' + viewName + '"]');
+  if (!view) return;
+  // Save scroll before clear; restore after rebuild.
+  _yjLastScroll.y = window.scrollY || document.documentElement.scrollTop || 0;
+  clear(view);
+  ensureCashLobby();
+  const isBB = gameMode === 'bb';
+  const variantFilter = isBB ? ['bb'] : ['pure', 'yj'];
+  const filteredTables = CashLobby.tables.filter(t => variantFilter.indexOf(t.variant) !== -1);
+  const labelTitle = isBB ? '🌼 Bumblebee Cash' : '🐝 Yellow Jacket Cash';
+  const labelSub = isBB
+    ? 'Honored Loss · loser scores own hand · gentler ledger'
+    : 'Bogey Loss · loser fixed +1 · sharper skill expression';
+  // Determine if user is currently seated at a table in THIS gameMode.
+  const seatedHere = CashLobby.activeTableIds
+    .map(id => CashLobby.tables.find(x => x.id === id))
+    .filter(t => t && variantFilter.indexOf(t.variant) !== -1);
+  const hasSeated = seatedHere.length > 0;
+  if (hasSeated) {
+    if (!CashLobby.focusedTableId || !seatedHere.find(t => t.id === CashLobby.focusedTableId)) {
+      CashLobby.focusedTableId = seatedHere[0].id;
+    }
+  }
+  // === HEADER ===========================================================
+  const crumbWrap = el('div', { class: 'crumb' }, el('a', { href: '#dashboard', text: 'Tour Home' }), ' · ' + (isBB ? 'Bumblebee Cash' : 'Yellow Jacket Cash'));
+  view.appendChild(crumbWrap);
+  const headerWrap = el('div', { class: 'page-header' });
+  headerWrap.appendChild(el('div', null,
+    el('h1', { text: labelTitle, style: isBB ? 'color: #f6c84c;' : '' }),
+    el('div', { class: 'sub', text: labelSub })
   ));
+  // If seated, header carries a "Back to lobby" or "Browse other tables" toggle.
+  if (hasSeated) {
+    const browseBtn = el('button', { class: 'btn ghost', text: CashLobby.lobbyHidden === false ? 'Hide lobby ▲' : 'Browse other tables ▼' });
+    browseBtn.onclick = () => {
+      CashLobby.lobbyHidden = !CashLobby.lobbyHidden;
+      renderCashView(gameMode);
+    };
+    headerWrap.appendChild(browseBtn);
+  }
+  view.appendChild(headerWrap);
 
-  // Bankroll stripe
+  // === BANKROLL STRIPE (always visible) ================================
   const stripe = el('div', { class: 'card', style: 'display:flex; align-items:center; justify-content:space-between; margin-bottom: 18px;' });
   stripe.appendChild(el('div', null,
     el('div', { style: 'font-size: 11px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.6;', text: 'Your bankroll' }),
@@ -10846,67 +10915,92 @@ Views.tables = function() {
   stripe.appendChild(el('button', { class: 'btn ghost', onclick: () => location.hash = '#bankroll' }, 'Manage bankroll →'));
   view.appendChild(stripe);
 
-  // === Lobby ===========================================================
-  ensureCashLobby();
-  const lobby = el('div', { class: 'card' });
-  lobby.appendChild(el('h2', { text: 'Lobby', style: 'margin: 0 0 12px;' }));
-  const tbl = el('table');
-  tbl.appendChild(el('thead', null, el('tr', null,
-    el('th', { text: 'Stakes' }),
-    el('th', { text: 'Variant' }),
-    el('th', { text: 'Format' }),
-    el('th', { class: 'num', text: 'Seats' }),
-    el('th', { class: 'num', text: 'Avg pot' }),
-    el('th', { class: 'num', text: 'Hands/hr' }),
-    el('th', { text: '' })
-  )));
-  const tb = el('tbody');
-  CashLobby.tables.forEach(t => {
-    const tr = el('tr');
-    tr.appendChild(el('td', null, el('strong', { text: t.smallBlind + '/' + t.bigBlind + ' ◈' })));
-    const variantPill = el('span', { class: 'ledger-type-pill ' + (t.variant === 'pure' ? 'cash' : 'tour'), text: t.variant === 'pure' ? 'Pure' : (t.variant === 'yj' ? 'YJ Honey-Stroke' : 'Bumblebee') });
-    tr.appendChild(el('td', null, variantPill));
-    tr.appendChild(el('td', { text: t.maxSeats + '-max' }));
-    const seatedCount = t.seats.filter(s => s).length;
-    const seatTd = el('td', { class: 'num', text: seatedCount + ' / ' + t.maxSeats });
-    if (seatedCount === t.maxSeats) seatTd.style.color = 'var(--chart-bad, #B85A3A)';
-    else if (seatedCount >= t.maxSeats - 2) seatTd.style.color = 'var(--gold, #C9A857)';
-    tr.appendChild(seatTd);
-    tr.appendChild(el('td', { class: 'num', text: Math.round(t.stats.avgPot).toLocaleString() + ' ◈' }));
-    tr.appendChild(el('td', { class: 'num', text: t.stats.handsPerHour.toFixed(0) }));
-    const sitBtn = el('button', { class: 'btn gold', text: 'Sit →' });
-    sitBtn.disabled = seatedCount >= t.maxSeats;
-    sitBtn.onclick = () => { openCashTable(t.id); };
-    tr.appendChild(el('td', null, sitBtn));
-    tb.appendChild(tr);
-  });
-  tbl.appendChild(tb);
-  lobby.appendChild(tbl);
-
-  const hint = el('div', { class: 'ui-sans', style: 'font-size:11px; opacity:0.65; margin-top:14px; line-height:1.5;' });
-  hint.innerHTML = '<strong>Variants.</strong> Pure: standard NLHE — chip P/L only. ' +
-    '<strong>YJ Honey-Stroke</strong>: dual-ledger — chip P/L + per-hand stroke score, settled at session end with stroke-weight × hands<sup>-1</sup>. Skill-revealing, variance-softening. ' +
-    '<strong>Bumblebee Honey-Stroke</strong>: same dual ledger, Honored Loss (loser scores own hand class).';
-  lobby.appendChild(hint);
-  view.appendChild(lobby);
-
-  // === Active session panel (multi-table aware) =======================
-  if (CashLobby.activeTableIds && CashLobby.activeTableIds.length > 0) {
-    if (!CashLobby.focusedTableId || CashLobby.activeTableIds.indexOf(CashLobby.focusedTableId) === -1) {
-      CashLobby.focusedTableId = CashLobby.activeTableIds[0];
-    }
+  // === DEDICATED IN-TABLE MODE ==========================================
+  // When seated AND the user hasn't asked to browse the lobby, show ONLY
+  // the focused table — the felt becomes the primary content. WSOP-app feel.
+  const showLobby = !hasSeated || CashLobby.lobbyHidden === false;
+  if (hasSeated) {
     view.appendChild(renderCashTableView(CashLobby.focusedTableId));
   }
-  // Time-bank tick: when any active table is awaiting user input, refresh
-  // every 250ms so the ring drains visually. Reset on view re-render.
+
+  // === LOBBY ============================================================
+  if (showLobby) {
+    const lobby = el('div', { class: 'card' });
+    const lobbyHead = el('div', { style: 'display:flex; align-items:center; justify-content:space-between; margin-bottom: 12px;' });
+    lobbyHead.appendChild(el('h2', { text: hasSeated ? 'Other tables' : 'Lobby', style: 'margin: 0;' }));
+    if (hasSeated) {
+      const closeLobby = el('button', { class: 'btn ghost', text: 'Close ✕', onclick: () => { CashLobby.lobbyHidden = true; renderCashView(gameMode); } });
+      lobbyHead.appendChild(closeLobby);
+    }
+    lobby.appendChild(lobbyHead);
+    const tbl = el('table');
+    tbl.appendChild(el('thead', null, el('tr', null,
+      el('th', { text: 'Stakes' }),
+      el('th', { text: 'Variant' }),
+      el('th', { text: 'Format' }),
+      el('th', { class: 'num', text: 'Seats' }),
+      el('th', { class: 'num', text: 'Avg pot' }),
+      el('th', { class: 'num', text: 'Hands/hr' }),
+      el('th', { text: '' })
+    )));
+    const tb = el('tbody');
+    filteredTables.forEach(t => {
+      const tr = el('tr');
+      tr.appendChild(el('td', null, el('strong', { text: t.smallBlind + '/' + t.bigBlind + ' ◈' })));
+      const variantLabel = t.variant === 'pure' ? 'Pure' : t.variant === 'yj' ? 'YJ Honey-Stroke' : 'Bumblebee';
+      const variantPill = el('span', { class: 'ledger-type-pill ' + (t.variant === 'pure' ? 'cash' : 'tour'), text: variantLabel });
+      tr.appendChild(el('td', null, variantPill));
+      tr.appendChild(el('td', { text: t.maxSeats + '-max' }));
+      const seatedCount = t.seats.filter(s => s).length;
+      const seatTd = el('td', { class: 'num', text: seatedCount + ' / ' + t.maxSeats });
+      if (seatedCount === t.maxSeats) seatTd.style.color = 'var(--chart-bad, #B85A3A)';
+      else if (seatedCount >= t.maxSeats - 2) seatTd.style.color = 'var(--gold, #C9A857)';
+      tr.appendChild(seatTd);
+      tr.appendChild(el('td', { class: 'num', text: Math.round(t.stats.avgPot).toLocaleString() + ' ◈' }));
+      tr.appendChild(el('td', { class: 'num', text: t.stats.handsPerHour.toFixed(0) }));
+      const isMine = CashLobby.activeTableIds.indexOf(t.id) !== -1;
+      const sitBtn = el('button', { class: 'btn gold', text: isMine ? 'Resume →' : 'Sit →' });
+      sitBtn.disabled = !isMine && seatedCount >= t.maxSeats;
+      sitBtn.onclick = () => {
+        if (isMine) {
+          CashLobby.focusedTableId = t.id;
+          CashLobby.lobbyHidden = true;
+        } else {
+          openCashTable(t.id);
+          CashLobby.lobbyHidden = true;
+        }
+        renderCashView(gameMode);
+      };
+      tr.appendChild(el('td', null, sitBtn));
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    lobby.appendChild(tbl);
+
+    const hint = el('div', { class: 'ui-sans', style: 'font-size:11px; opacity:0.65; margin-top:14px; line-height:1.5;' });
+    if (isBB) {
+      hint.innerHTML = '<strong>Bumblebee.</strong> The casual league. Showdown losers score their own hand class (-5..+2) — flush-loser still posts -1 birdie. Gentler ledger, golf-realistic scoring band. Dual-ledger Honey-Stroke applies — chip P/L + per-hand stroke score, settled at session end with stroke-weight × hands<sup>-1</sup>.';
+    } else {
+      hint.innerHTML = '<strong>Yellow Jacket Cash.</strong> Two variants. <strong>Pure NLHE</strong>: chip P/L only — standard online poker. <strong>YJ Honey-Stroke</strong>: dual-ledger — chip P/L + per-hand stroke score, with Bogey Loss (loser fixed +1). Sharper skill expression. Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a>.';
+    }
+    lobby.appendChild(hint);
+    view.appendChild(lobby);
+  }
+
+  // Restore scroll position so action clicks don't bounce to top.
+  setTimeout(() => {
+    if (_yjLastScroll.y > 0) window.scrollTo({ top: _yjLastScroll.y, behavior: 'instant' });
+  }, 0);
+
+  // Time-bank tick.
   if (typeof window !== 'undefined' && window._yjTbInterval) { clearInterval(window._yjTbInterval); window._yjTbInterval = null; }
   const anyAwaiting = CashLobby.activeTableIds.some(id => {
     const tt = CashLobby.tables.find(x => x.id === id); return tt && tt.handState && tt.handState.phase === 'awaitingUser';
   });
   if (anyAwaiting) {
     window._yjTbInterval = setInterval(() => {
-      if (document.body.dataset.activeView !== 'tables') { clearInterval(window._yjTbInterval); window._yjTbInterval = null; return; }
-      // Update only the time-bank ring + dot indicators rather than full re-render to avoid flicker.
+      const av = document.body.dataset.activeView;
+      if (av !== 'tables' && av !== 'bumblebee') { clearInterval(window._yjTbInterval); window._yjTbInterval = null; return; }
       const ring = document.querySelector('.tb-ring');
       const focus = CashLobby.focusedTableId;
       const tt = CashLobby.tables.find(x => x.id === focus);
@@ -10918,7 +11012,27 @@ Views.tables = function() {
       }
     }, 250);
   }
-};
+}
+Views.tables = function() { renderCashView('yj'); };
+Views.bumblebee = function() { renderCashView('bb'); };
+// Helper used by the engine to re-render whichever cash view is active.
+// Looks at the current focused table's variant, OR falls back to the
+// active view in document.body.dataset, so engine ticks always re-render
+// the correct lobby without needing to know which menu the user is in.
+function refreshCashView() {
+  const av = document.body.dataset.activeView;
+  if (av !== 'tables' && av !== 'bumblebee') return;
+  const focus = CashLobby.focusedTableId;
+  const t = focus != null ? CashLobby.tables.find(x => x.id === focus) : null;
+  if (t && t.variant === 'bb') Views.bumblebee();
+  else if (t && (t.variant === 'yj' || t.variant === 'pure')) Views.tables();
+  else if (av === 'bumblebee') Views.bumblebee();
+  else Views.tables();
+}
+function isCashViewActive() {
+  const av = document.body.dataset.activeView;
+  return av === 'tables' || av === 'bumblebee';
+}
 
 // === Views.staking — pro-action marketplace ============================
 Views.staking = function() {
@@ -15476,9 +15590,10 @@ function renderConfigPanel(panel, mode) {
   tsRow.appendChild(el('label', { text: 'Table size', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
   const tsSel = el('select', { style: 'width: 100%;' });
   [
-    { v: 2, label: '2 — Heads-up (canonical)' },
-    { v: 6, label: '6 — Multi-way short table' },
-    { v: 9, label: '9 — Multi-way full table' },
+    { v: 2, label: '2 — Heads-up (canonical · max skill expression)' },
+    { v: 4, label: '4 — Foursome (golf-realistic groups)' },
+    { v: 6, label: '6 — Six-max (recommended · online poker SOTA)' },
+    { v: 9, label: '9 — Full table (live tournament drama · variance-heavy)' },
   ].forEach(o => {
     const opt = el('option', { value: o.v, text: o.label });
     if ((+LabState.config.tableSize || 2) === o.v) opt.selected = true;
@@ -15494,7 +15609,7 @@ function renderConfigPanel(panel, mode) {
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'HU (2) is the canonical engine. 6 / 9 route aggregate stroke-play events through the multi-way matched-contribution runner — R1-R3 played at tables of N, then R4 collapses to a heads-up final between the top-2 survivors. Per-player honey caps auto-scale to keep per-pair stroke variance comparable to HU. Bracket format ignores this setting.'
+    text: 'HU (2) is the canonical engine. 4 / 6 / 9 route aggregate stroke-play events through the multi-way matched-contribution runner — R1-R3 played at tables of N, then R4 collapses to a heads-up final between the top-2 survivors. Per-player honey caps auto-scale and v69.7 fold thresholds tighten with N to maintain skill expression. Bracket format ignores this setting. Recommendation: 6-max for general use, 4-max for golf-realistic foursome flavor, 9 for tournament drama (variance-heavy — Elite dominance suffers vs HU baseline).'
   }));
 
   // === LATE REGISTRATION (v69.2) =============================================
