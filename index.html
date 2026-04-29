@@ -1884,7 +1884,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.29-v69.24-multiway-fixes";
+const APP_VERSION = "2026.04.29-v69.24-multiway-fixes-final-sweep";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -4468,10 +4468,13 @@ function runKnockoutRound(players, numHoles) {
 // Phase-6 late-reg bookkeeping. Mutates activePlayers and agg in place;
 // returns the array of newly-added players (so callers can extend the
 // outer event loop's field if they want bookkeeping parity). New entrants
-// pay full buy-in and start with a handicapped score (leader + 0.6×cushion)
-// so they enter near the cut threshold but not over it. Their previous
-// rounds are recorded as 0-score entries so length-aligned iteration is
-// safe.
+// pay full buy-in and start with a handicapped score (leader + 1.5×cushion,
+// v69.24 calibration) so they enter clearly behind the just-played cushion
+// threshold and must climb meaningfully in the remaining rounds. Earlier
+// 0.6× setting let late-reg players win 44% of majors (audit Run_1_Y1_Y100,
+// v69.23); 1.5× drops that to ~3% (proportional to field share). Their
+// previous rounds are recorded as 0-score entries so length-aligned
+// iteration is safe.
 function applyLateRegistration(r, cfg, activePlayers, agg, leaderScore, eventType, eventName, year, cushionForRound) {
   const lateLast = +cfg.lateRegLastRound || 0;
   const lateMax = +cfg.lateRegMaxEntries || 0;
@@ -6228,7 +6231,7 @@ const BuzzKnowledge = {
     { cat: 'tournament', q: 'What does the survival cushion do?', a: 'It produces WSOP-style mid-tournament eliminations. A player who falls more than the cushion threshold below the round leader busts immediately — they don\'t wait until the cut milestone. This rewards the bubble-burst moment: a leader\'s late-round birdie can cascade-eliminate several short-stacked trailers simultaneously. The cushion tightens each round (12→8→5→3) so R3 and R4 produce the most drama.' },
     { cat: 'strategy', q: 'How should I play near the cushion / cut bubble?', a: 'If your cumulative score is approaching cushion-elimination distance, you must press for strokes — defensive play locks you out. Take aggressive lines on every hole: bet for value with any made hand, call thin equities, force pots. Conversely if you\'re comfortably above the cut line, protect the lead — bet only with premium hands, fold marginal calls cheaply. The cut bubble is the only spot in YJ where survival mode should override pure EV optimization.' },
     { cat: 'strategy', q: 'Does making the cut earn money?', a: 'Yes. Top 15% of finish positions cash. Eliminated players earn finish positions ranked by elimination round, so a player who survives R3 always finishes higher than a player eliminated R2 — and earns the corresponding higher cash prize even if the latter had a "better" cumulative score at elimination. Making the cut is structurally rewarded.' },
-    { cat: 'tournament', q: 'What is the multiplayer table format?', a: 'A 6- or 9-player table variant via cfg.tableSize (HU=2 / 6 / 9). R1-R3 are played at multi-player tables with matched-contribution wagering (poker-native pot construction); R4 collapses to a heads-up final between the top 2 survivors. Multi-way calibration shipped in v69.6+: per-player honey caps scale by tableSize, foldOpt slack tightens by 0.025 per extra seat (slack = 0.20 − 0.025·(N−2)) so AI fold discipline doesn\'t collapse at 9-handed, and at tableSize > 6 the mandatory opener doubles to 2 honey to compensate for thinner per-seat equity. Bumblebee (Honored Loss) is the v69.8 multi-way default — YJ Bogey Loss × 8 losers/pot drags Major champion scores ~+12 above par at 9-handed, so the canonical multi-way variant scores own-hand. Cushion + cut mechanics apply identically with a tighter [8, 5, 3, 2] cushion at multi-way.' },
+    { cat: 'tournament', q: 'What is the multiplayer table format?', a: 'A 6- or 9-player table variant via cfg.tableSize (HU=2 / 6 / 9). R1-R3 are played at multi-player tables with matched-contribution wagering (poker-native pot construction); R4 collapses to a heads-up final between the top 2 survivors. Multi-way calibration: per-player honey caps scale by tableSize, foldOpt slack tightens by 0.025 per extra seat (slack = 0.20 − 0.025·(N−2)) so AI fold discipline doesn\'t collapse at 9-handed, and at tableSize > 6 the mandatory opener doubles to 2 honey to compensate for thinner per-seat equity. Cushion + cut mechanics apply identically with a tighter [8, 5, 3, 2] cushion at multi-way. Bumblebee (Honored Loss) is the multi-way default because YJ Bogey Loss × 8 losers/pot drags Major champion scores well above par at 9-handed; v69.24 collapsed the mw-yj profile optima onto the mw-bb numbers (0.40 / 0.15 / 0.70) after audit-confirmed inversion (authoredVsMeasured = −0.55 in v69.23 → +0.04 in v69.24), so the variant difference now lives purely in the scoring rule, not in AI behavior.' },
     { cat: 'rules', q: 'What\'s the difference between Nectar and Honey?', a: 'Nectar is the BANKROLL currency — your USD-equivalent wallet, what you use to pay tournament buy-ins and what cash-table chips convert to 1:1. Honey is the WAGER abstraction inside a tournament event — the per-hole pot unit that gets normalized by the round divisor and subtracted from the golf scorecard. Nectar moves between events; Honey lives and dies inside a single event. They never interconvert directly: you spend Nectar to enter, and inside the event Honey is the scoring instrument. Cash chips at the cash tables are denominated in Nectar, not Honey.' },
     { cat: 'rules', q: 'What is the Golden Card Lottery?', a: 'A per-event lottery layer: each hand has a tiny chance of drawing a Golden Card, which awards a bonus payout drawn from a separate prize pool funded by a slice of the rake. Modeled after BB Jackpot mechanics in real cash poker rooms — provides a long-tail upside that lifts mid-tier ROI without distorting skill expression at the top.' },
     { cat: 'rules', q: 'What is the BB Jackpot?', a: 'A cash-table progressive jackpot: when an exceptionally rare hand-vs-hand cooler hits at a cash table (e.g. quads beaten by a higher hand, or a royal flush at showdown), the table draws from an accumulating pool funded by a small slice of every cash-table rake. Both the loser of the cooler and the winner share the jackpot; remaining seated players get smaller seed shares. Models real-card-room BB Jackpot promotions.' },
@@ -7512,7 +7515,8 @@ Views.rules = function() {
     'The heads-up engine is the default. The multi-way table variant seats 6 or 9 players at a single table with matched-contribution wagering — the poker-native pot construction, where each player contributes to a shared pot rather than agreeing to a total. Last player standing wins the hole. ' +
     'STRUCTURE. Rounds 1, 2, and 3 are played multi-way at the chosen table size. Round 4 collapses to a heads-up final between the top two survivors, restoring agreed-total semantics for the championship round. ' +
     'CALIBRATION. Per-player honey caps scale with table size so per-pair stroke variance stays comparable to heads-up. The cushion tightens at multi-way (+8/+5/+3/+2) because eight or nine simultaneous bogey transfers drag scores faster than a heads-up exchange. ' +
-    'AT TABLE SIZES ABOVE 6, the mandatory opener doubles to 2 honey to compensate for thinner per-seat equity. The casual variant (Honored Loss) is the default at multi-way — competitive Bogey Loss accumulates eight or nine fixed bogeys per pot, which pulls champion scores well above par.'
+    'AT TABLE SIZES ABOVE 6, the mandatory opener doubles to 2 honey to compensate for thinner per-seat equity. The casual variant (Honored Loss) is the default at multi-way — competitive Bogey Loss accumulates eight or nine fixed bogeys per pot, which pulls champion scores well above par. ' +
+    'AI BEHAVIOR. As of v69.24 the AI uses identical profile optima at multi-way regardless of variant (bet 0.40 / fold 0.15 / raise 0.70). The earlier mw-yj guess (0.30 / 0.10 / 0.65) was reverted after audit telemetry showed it inverted skill expression (high-skill players underperformed). The variant difference now lives purely in the SCORING rule (loser score) — the AI plays the same hand the same way under either variant.'
   ));
   core.appendChild(rule('Bet-tier vocabulary — wagering diversity without chip stacks',
     'PROBLEM TO SOLVE. WSOP wagering feels rich because every bet has a NAMED INTENT — min-raise, 3-bet, 4-bet, shove — that communicates strategic meaning beyond the dollar amount. YJ\'s integer honey wagers risk feeling flat (4 honey vs 5 honey vs 6 honey are categorically indistinguishable to a viewer). The fix is not finer increments or larger numbers; the fix is a NAMED TIER VOCABULARY mirroring the poker lexicon. ' +
@@ -14493,10 +14497,11 @@ const DEFAULT_SIM_CONFIG = {
   // from the pool can enter the event mid-flight at round boundaries up to
   // and including round number lateRegLastRound (1-indexed). lateRegMaxEntries
   // caps how many late entrants are admitted per round. Late entrants pay
-  // full buy-in (no exemption) and start at score = leader + 0.6×cushion[r]
-  // so they enter near the cushion threshold. Set lateRegLastRound=0 to
-  // disable (default). Models WSOP "register through end of Day 1" structures
-  // and the Hellmuth-show-up-late phenomenon.
+  // full buy-in (no exemption) and start at score = leader + 1.5×cushion[r]
+  // (v69.24 calibration; 0.6× let them dominate at 44% of major wins, 1.5×
+  // pulls them to proportional ~3% share). Set lateRegLastRound=0 to disable
+  // (default). Models WSOP "register through end of Day 1" structures and
+  // the Hellmuth-show-up-late phenomenon.
   lateRegLastRound: 0,
   lateRegMaxEntries: 0,
   // v69 MULTIPLAYER TABLE SIZE (FUTURE) — when > 2, switches the engine to
@@ -17836,7 +17841,7 @@ function renderConfigPanel(panel, mode) {
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'At multi-way, every showdown loser posts a stroke. The YJ Bogey Loss rule (loser fixed +1) was calibrated for HU; at 9-way it accumulates 8×(+1) per pot, pulling Major averages to +12 above par (golf-implausible). Bumblebee (loser scores own hand class -5..+2) keeps Major champions in the realistic -5 to +5 band. HU events ignore this setting and use the main Variant control above.'
+    text: 'At multi-way, every showdown loser posts a stroke. The YJ Bogey Loss rule (loser fixed +1) was calibrated for HU; at 9-way it accumulates 8×(+1) per pot, pulling Major averages well above par. Bumblebee (loser scores own hand class -5..+2) keeps Major champions closer to par. HU events ignore this setting and use the main Variant control above. v69.24: AI uses identical profile optima at multi-way regardless of variant (mw-bb numbers); the variant difference is purely in the scoring rule.'
   }));
 
   // === LATE REGISTRATION (v69.2) =============================================
@@ -17871,7 +17876,7 @@ function renderConfigPanel(panel, mode) {
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'Late entrants are sampled from the broader pool, pay full buy-in, and start at score = leader + 0.6 × cushion[r] (handicapped near the cut threshold). Models WSOP "register through end of Day 1" structures. Hellmuth-style: arrive late, eat the deficit, try to chip up. Closes after the configured round; field locks for the remaining rounds.'
+    text: 'Late entrants are sampled from the broader pool, pay full buy-in, and start at score = leader + 1.5 × cushion[r] (clearly behind the cut threshold; v69.24 calibration). Models WSOP "register through end of Day 1" structures. Hellmuth-style: arrive late, eat the deficit, try to fire your way back. Closes after the configured round; field locks for the remaining rounds.'
   }));
 
   const simpleCfg = [
