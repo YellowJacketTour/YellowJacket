@@ -5851,9 +5851,9 @@ Views.rules = function() {
     'INTERACTION WITH PRIZE PAYOUT. The top 15% of finish positions cash, regardless of elimination round. A player eliminated R2 may still earn a paid finish if they\'re in the top 15% of the elimination ladder. Cuts don\'t change who cashes; they reorder finishes by elimination depth. ' +
     'CONFIG. cfg.survivalCushion = [12, 8, 5, 3] (per-round stroke threshold), cfg.cutSchedule = [null, 0.50, 0.50, null] (per-round cut fraction; null = no cut). Both indexed 0-based by round.'
   ));
-  core.appendChild(rule('Multiplayer table format (planned for v70)',
-    'YJ\'s heads-up engine is the v68 baseline. v70 will introduce multi-way table play: 6-9 players at a single table, matched-contribution wagering, last-player-standing elimination. R1-R3 played multi-way at the table, R4 collapses to heads-up between the top 2 survivors. Per-player honey caps scale with player count to keep per-pair stroke variance comparable to HU. ' +
-    'cfg.tableSize is the forward-compatibility flag; setting it > 2 in v69 has no effect — the engine still runs HU. The multi-way engine, scoring resolution, and cushion/cut integration ship together in v70.'
+  core.appendChild(rule('Multiplayer table format (v69)',
+    'YJ\'s heads-up engine is the default. v69 ships the multi-way table variant: 6 or 9 players at a single table, matched-contribution wagering (poker-native pot construction), last-player-standing elimination per hole. R1-R3 are played multi-way at tables of cfg.tableSize, then R4 collapses to a heads-up final between the top 2 surviving players. Per-player honey caps scale with player count to keep per-pair stroke variance comparable to HU. ' +
+    'CONFIG. cfg.tableSize = 2 (default, HU) | 6 | 9. When set above 2 the engine routes aggregate stroke-play events through the multi-way runner; cushion + cut still apply at round boundaries.'
   ));
   core.appendChild(rule('Bet-tier vocabulary — wagering diversity without chip stacks',
     'PROBLEM TO SOLVE. WSOP wagering feels rich because every bet has a NAMED INTENT — min-raise, 3-bet, 4-bet, shove — that communicates strategic meaning beyond the dollar amount. YJ\'s integer honey wagers risk feeling flat (4 honey vs 5 honey vs 6 honey are categorically indistinguishable to a viewer). The fix is not finer increments or larger numbers; the fix is a NAMED TIER VOCABULARY mirroring the poker lexicon. ' +
@@ -11922,6 +11922,35 @@ function renderConfigPanel(panel, mode) {
     text: 'YELLOW JACKET (default): the competitive tour. Decisive-showdown losers post +1 bogey regardless of hand. Sharper per-event skill; champions in the +12 to +28 range. BUMBLEBEE: the casual league. Decisive-showdown losers score their own hand (-5..+2) — flush-loser still posts -1 birdie. Gentler scoring; champions in the -10 to -18 range. Both share the same engine, mandatory pot, agreed-total wagering, fold rule, and divisor. Folds and ties are NOT affected by this choice.'
   }));
 
+  // === TABLE SIZE TOGGLE (v69) ============================================
+  // HU (2) is the canonical engine; 6 and 9 route aggregate stroke-play events
+  // through the multi-way matched-contribution runner. Per-player honey caps
+  // scale automatically. R4 collapses to a HU final between top-2 survivors.
+  const tsRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  tsRow.appendChild(el('label', { text: 'Table size', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const tsSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 2, label: '2 — Heads-up (canonical)' },
+    { v: 6, label: '6 — Multi-way short table' },
+    { v: 9, label: '9 — Multi-way full table' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if ((+LabState.config.tableSize || 2) === o.v) opt.selected = true;
+    tsSel.appendChild(opt);
+  });
+  tsSel.onchange = () => {
+    LabState.config.tableSize = +tsSel.value;
+    saveLabState();
+    toast('Table size: ' + tsSel.value + (tsSel.value === '2' ? ' (HU)' : ' (multi-way · aggregate format only)'));
+  };
+  tsRow.appendChild(tsSel);
+  evSec.appendChild(tsRow);
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'HU (2) is the canonical engine. 6 / 9 route aggregate stroke-play events through the multi-way matched-contribution runner — R1-R3 played at tables of N, then R4 collapses to a heads-up final between the top-2 survivors. Per-player honey caps auto-scale to keep per-pair stroke variance comparable to HU. Bracket format ignores this setting.'
+  }));
+
   const simpleCfg = [
     ['seasons', 'Seasons to run', 1, 100, 1],
   ];
@@ -14012,7 +14041,7 @@ function init() {
       scoring: { useShowdownMatrix: true },
       survivalCushion: [12, 8, 5, 3],         // v69 cushion mechanic
       cutSchedule: [null, 0.50, 0.50, null],  // v69 round-boundary cuts
-      tableSize: 2,                           // v69 future-multi-way scaffold
+      tableSize: 2,                           // v69 multi-way table size: 2 (HU) | 6 | 9
       payoutDecay: 0.74,
       buyInRegular: 100, buyInMajor: 1000, buyInMain: 10000,
       rakePercent: 0.03,
