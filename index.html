@@ -1884,7 +1884,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.29-v69.21-multiway-rake-tighten";
+const APP_VERSION = "2026.04.29-v69.22-late-reg-stats-fix";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -4419,7 +4419,15 @@ function applyLateRegistration(r, cfg, activePlayers, agg, leaderScore, eventTyp
     // Wrap as a "field" entry analogous to selectField wrappers. Buy-in,
     // bankroll, and bookkeeping are deferred to the outer event loop, which
     // iterates `field` (extended by the caller after this runs).
-    const entry = { id: poolP.id, name: poolP.name, profile: poolP.profile, poolRef: poolP, skill: poolP.skill, lateEntry: true, lateRegRound: r + 1 };
+    // Stats must be initialised here — playMatch / updatePlayerHoleStats
+    // reads player.stats.holesPlayed on the first hole, which crashes on
+    // late entrants without it (the bug that fired before this guard).
+    const entry = {
+      id: poolP.id, name: poolP.name, profile: poolP.profile, poolRef: poolP, skill: poolP.skill,
+      stats: makeFreshStats(),
+      eliminatedAtBracket: null, path: [],
+      lateEntry: true, lateRegRound: r + 1
+    };
     const aggEntry = { player: entry, score: handicap, rounds: [], eliminatedAtRound: null, eliminationReason: null, lateEntry: true };
     for (let pr = 0; pr <= r; pr++) aggEntry.rounds.push({ round: pr + 1, score: 0, opponent: null, lateBye: true });
     agg.set(entry.id, aggEntry);
