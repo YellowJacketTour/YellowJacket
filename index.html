@@ -59,8 +59,14 @@
     --chart-series-primary: #006747;
     --chart-series-accent: #C9A857;
     --chart-series-tertiary: #8E3A5F;
-    --chart-pos: #B85A3A;
-    --chart-neg: #1E7A4E;
+    /* Semantic chart colors. Renamed from --chart-pos/--chart-neg in v69 because
+       the old names were ambiguous: in golf-score context "pos" meant positive
+       score (= bad outcome), but in ROI/profit context "pos" should mean profit
+       (= good outcome). The new names --chart-bad/--chart-good are unambiguous
+       across all contexts: bad = red (warning, loss, missed cut, above par),
+       good = green (profit, win, made cut, below par). */
+    --chart-bad: #B85A3A;   /* red — warnings, losses, above-par, missed cut */
+    --chart-good: #1E7A4E;  /* green — profits, wins, below-par, made cut */
 
     --shadow-soft: 0 1px 3px rgba(27, 27, 27, 0.06), 0 4px 10px rgba(11, 85, 68, 0.06);
     --shadow-med: 0 4px 16px rgba(11, 85, 68, 0.10);
@@ -101,8 +107,8 @@
     --chart-series-primary: #7ED6A0;
     --chart-series-accent: #E8CF92;
     --chart-series-tertiary: #F8BBD0;
-    --chart-pos: #F3A889;
-    --chart-neg: #7ED6A0;
+    --chart-bad: #F3A889;   /* dark theme: peach-red for bad / loss */
+    --chart-good: #7ED6A0;  /* dark theme: mint-green for good / profit */
 
     --shadow-soft: 0 1px 3px rgba(0,0,0,0.35), 0 4px 10px rgba(0,0,0,0.35);
     --shadow-med: 0 4px 16px rgba(0,0,0,0.45);
@@ -638,8 +644,11 @@
   .scorecard td.total { background: var(--gold-soft); font-weight: bold; }
   .scorecard td.reveal { opacity: 0; animation: card-reveal 400ms ease-out forwards; }
   @keyframes card-reveal { to { opacity: 1; } }
-  .scorecard td.neg { color: var(--chart-neg); font-weight: 600; }
-  .scorecard td.pos { color: var(--chart-pos); }
+  /* Class names .neg / .pos refer to GOLF SCORE SIGN (negative = below par = good
+     in golf, positive = above par = bad). Class names retained for compatibility;
+     colors map to --chart-good / --chart-bad accordingly. */
+  .scorecard td.neg { color: var(--chart-good); font-weight: 600; }
+  .scorecard td.pos { color: var(--chart-bad); }
 
   /* Radar chart container */
   .radar-box { display: flex; align-items: center; justify-content: center; padding: 12px; }
@@ -722,7 +731,7 @@
 
   .rebuild-warn {
     padding: 10px 12px; background: var(--bg-elevated);
-    border-left: 3px solid var(--chart-pos); border-radius: 4px;
+    border-left: 3px solid var(--chart-bad); border-radius: 4px;
     font-family: -apple-system, sans-serif; font-size: 11px;
     color: var(--text-primary); margin: 10px 0;
   }
@@ -750,7 +759,7 @@
   .dist-preview canvas { display: block; width: 100%; height: 100%; }
 
   .runtime-estimate { padding: 8px 10px; background: var(--bg-elevated); border-left: 3px solid var(--gold); border-radius: 4px; font-family: monospace; font-size: 11px; color: var(--text-primary); margin-top: 10px; }
-  .runtime-estimate.warn { background: var(--bg-elevated); border-color: var(--chart-pos); color: var(--text-primary); }
+  .runtime-estimate.warn { background: var(--bg-elevated); border-color: var(--chart-bad); color: var(--text-primary); }
 
   .run-card { background: var(--bg-surface); border: var(--line); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: all 120ms; position: relative; }
   .run-card:hover { border-color: var(--gold); transform: translateY(-1px); box-shadow: var(--shadow-soft); }
@@ -770,8 +779,8 @@
   .kpi-box .kpi-label { font-family: -apple-system, sans-serif; font-size: 9px; color: var(--text-secondary); letter-spacing: 1.4px; text-transform: uppercase; margin-bottom: 4px; }
   .kpi-box .kpi-value { font-family: Georgia, serif; font-size: 22px; color: var(--text-heading); }
   .kpi-box .kpi-delta { font-family: monospace; font-size: 10px; color: var(--text-secondary); margin-top: 2px; }
-  .kpi-box .kpi-delta.up { color: var(--chart-neg); }
-  .kpi-box .kpi-delta.down { color: var(--chart-pos); }
+  .kpi-box .kpi-delta.up { color: var(--chart-good); }
+  .kpi-box .kpi-delta.down { color: var(--chart-bad); }
 
 
   .heatmap-cell { transition: opacity 120ms; }
@@ -779,7 +788,7 @@
 
   .log-stream { background: var(--bg-elevated); padding: 10px; border-radius: 4px; max-height: 180px; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.5; color: var(--text-secondary); }
   .log-stream .log-time { color: var(--text-heading); margin-right: 8px; }
-  .log-stream .log-warn { color: var(--chart-pos); }
+  .log-stream .log-warn { color: var(--chart-bad); }
 
   /* Buzz live tip in multiplayer */
   .buzz-live-tip {
@@ -949,7 +958,7 @@ function showFatalError(message, detail) {
   if (!root) return;
   const existing = $('#fatal-boot-error');
   if (existing) existing.remove();
-  const card = el('div', { id: 'fatal-boot-error', class: 'card', style: 'margin: 18px; border-top: 4px solid var(--chart-pos);' });
+  const card = el('div', { id: 'fatal-boot-error', class: 'card', style: 'margin: 18px; border-top: 4px solid var(--chart-bad);' });
   card.appendChild(el('h2', { text: 'Startup Error' }));
   card.appendChild(el('p', {
     class: 'ui-sans',
@@ -3619,8 +3628,434 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
     }
     i = tierEnd;
   }
-  return { sortedFinishers: sorted, placements, playoffsRun, aggregateMap: agg };
+  // v69 cuts tracking — populate per-player career stats. aggregateEvents
+  // counts every player who entered (regardless of elimination round); madeR2
+  // and madeR3 count players who survived past those cut boundaries.
+  // cushionElim and cutElim count specific elimination reasons.
+  for (const p of players) {
+    if (!p.poolRef) continue;
+    if (!p.poolRef.cuts) {
+      // Backfill in case this is a player from a pre-v69 saved pool.
+      p.poolRef.cuts = { aggregateEvents: 0, madeR2: 0, madeR3: 0, cushionElim: 0, cutElim: 0 };
+    }
+    p.poolRef.cuts.aggregateEvents++;
+    const a = agg.get(p.id);
+    if (!a) continue;
+    // Survived past R2 (still active for R3)? Either eliminated R3 or later, or
+    // never eliminated. eliminatedAtRound is null for R4 survivors, or = round.
+    const elimRound = a.eliminatedAtRound;
+    if (elimRound == null || elimRound >= 3) p.poolRef.cuts.madeR2++;
+    if (elimRound == null || elimRound >= 4) p.poolRef.cuts.madeR3++;
+    if (a.eliminationReason === 'cushion') p.poolRef.cuts.cushionElim++;
+    else if (a.eliminationReason === 'cut') p.poolRef.cuts.cutElim++;
+  }
+  // v69 event-level elimination summary for analytics aggregation.
+  const eliminationSummary = {
+    totalCushionElim: eliminatedHistory.filter(e => e.reason === 'cushion').length,
+    totalCutElim: eliminatedHistory.filter(e => e.reason === 'cut').length,
+    elimByRound: [0, 0, 0, 0],   // index r-1 → count eliminated after round r
+  };
+  for (const e of eliminatedHistory) {
+    if (e.round >= 1 && e.round <= 4) eliminationSummary.elimByRound[e.round - 1]++;
+  }
+  return { sortedFinishers: sorted, placements, playoffsRun, aggregateMap: agg, eliminationSummary };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MULTI-WAY ENGINE (v69)
+//
+// Heads-up YJ uses agreed-total wagering: the pot is the most recently agreed
+// total, and each player is symmetrically committed. That primitive doesn't
+// generalize to N>2 players because there's no single "agreed total" when
+// multiple players can call/raise independently. Multi-way YJ therefore uses
+// MATCHED-CONTRIBUTION wagering (poker-native): each player has a per-hole
+// contribution tracker, the pot is the sum of all contributions, and a "bet"
+// sets a level all calling players must contribute up to.
+//
+// Per-player cap: each player can contribute at most cfg.regularStrokeCap (or
+// the equivalent per-event cap) over the entire hole. Honey transfer: at
+// resolution, the winner takes the entire pot (winning N-1 contributions); the
+// folders and showdown losers each lose their own contribution.
+//
+// Scoring: under YJ variant, ALL non-winners (folders + showdown losers) post
+// +1 bogey. Under Bumblebee, showdown losers post their own hand-class score.
+// The matrix scoring law (v64) is applied pairwise (winner vs each loser) and
+// the loser scores are averaged when needed for stat reporting.
+//
+// This module is dispatch-only when cfg.tableSize > 2. HU events continue to
+// use playMatch / runStrokePlayEvent unchanged. Cushion/cut mechanics layer on
+// top of multi-way exactly the same way as HU.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Multi-way per-player honey caps. Per the v66 design analysis, 9-way caps are
+// approximately HU-cap / 2.5, scaled so per-pair stroke variance matches HU.
+// Indexed by tier name (regular/major/main_early/main_finals). Falls back to
+// HU cap / 2 for any unspecified tier.
+const MULTIWAY_PER_PLAYER_CAPS = {
+  regular:      { 6: 2, 9: 2 },   // tableSize → per-player cap
+  major:        { 6: 3, 9: 4 },
+  main_early:   { 6: 3, 9: 3 },
+  main_finals:  { 6: 6, 9: 8 },
+};
+function multiwayPerPlayerCap(huCap, tableSize) {
+  // Generic fallback when the tier-specific lookup misses: half HU cap, min 1.
+  return Math.max(1, Math.round(huCap / 2));
+}
+
+// Run one multi-way hole at a table of N players. Simplified matched-contribution
+// engine: each player has a contribution tracker; betting goes around the table
+// once per street; players call/raise/fold based on adj using the shared
+// decideFor kernel adapted for multi-way (currentProposal = current bet level,
+// agreedTotal = each player's prior contribution).
+function playMultiwayHole(players, opts) {
+  opts = opts || {};
+  const N = players.length;
+  if (N < 2) return null;
+  if (N === 2) {
+    // Degenerate to HU. This shouldn't happen in well-formed multi-way play
+    // (the table would have collapsed to HU-final at R4) but we handle it.
+    const m = playMatch(players[0], players[1], 1, { noPlayoff: true, noMatchStats: true, gameContext: opts.gameContext });
+    return {
+      perPlayerGolfScore: [m.aTotalGolf || 0, m.bTotalGolf || 0],
+      perPlayerHoneyDelta: [m.aHoney || 0, m.bHoney || 0],
+      winnerIdx: m.aTotal < m.bTotal ? 0 : 1,
+      reason: 'hu-degenerate',
+    };
+  }
+
+  // Per-event cap derives the per-player cap.
+  const huCap = +opts.strokeCap || CurrentStrokeCap || 6;
+  const perPlayerCap = +opts.perPlayerCap || multiwayPerPlayerCap(huCap, N);
+
+  // Initialize hand state. Mandatory opener: each player contributes 1 honey.
+  // (Front 9; back-9 doubling at multi-way uses 2 honey per player. Caller
+  // sets opts.openerPerPlayer if needed.)
+  const openerPerPlayer = +opts.openerPerPlayer || 1;
+  const contributions = new Array(N).fill(openerPerPlayer);
+  const folded = new Array(N).fill(false);
+  const useLoserBogey = (opts.gameContext && typeof opts.gameContext.loserBogey === 'boolean')
+    ? opts.gameContext.loserBogey : !!CurrentLoserBogey;
+
+  // Deal cards (use shared deck logic).
+  const deck = makeDeck();
+  shuffleDeck(deck);
+  const holes = [];
+  for (let i = 0; i < N; i++) holes.push([deck.pop(), deck.pop()]);
+  const community = [];
+
+  // Run streets. At each street, deal new community cards (3 / 1 / 1) then run
+  // a single betting round around the active players. For simplicity, the
+  // multi-way decision logic uses each player's adj vs the FIELD (not vs a
+  // single villain) — adj is computed against the random remaining hand.
+  function dealStreet(streetName) {
+    if (streetName === 'flop')  { community.push(deck.pop(), deck.pop(), deck.pop()); }
+    if (streetName === 'turn')  { community.push(deck.pop()); }
+    if (streetName === 'river') { community.push(deck.pop()); }
+  }
+  function runBettingRound(streetName) {
+    let currentLevel = Math.max.apply(null, contributions); // minimum to stay
+    let lastRaiser = -1;
+    let actionIter = 0;
+    const maxActions = N * 4; // safety bound
+    let i = 0;
+    while (actionIter < maxActions) {
+      if (folded[i]) { i = (i + 1) % N; actionIter++; continue; }
+      const activeCount = folded.filter(f => !f).length;
+      if (activeCount <= 1) break; // only one player left, hand is over
+
+      // Has this player matched the current level? If yes and we've gone past
+      // the last raiser, the round is closed.
+      if (contributions[i] >= currentLevel && (lastRaiser === -1 || i === lastRaiser)) {
+        // All players have either matched or folded; round closes.
+        break;
+      }
+      const callAmount = currentLevel - contributions[i];
+      const isPending = callAmount > 0;
+      const remainingCap = perPlayerCap - contributions[i];
+
+      // Use shared decision kernel. agreedTotal = current player's prior
+      // contribution; currentProposal = level needed to call.
+      const profile = players[i].profile || makeProfileForSkill(players[i].skill || 0.5, players[i].id || i);
+      const ctx = { mode: 'multiway', tableSize: N, decisionDivisor: opts.decisionDivisor || CurrentDecisionDivisor, loserBogey: useLoserBogey, holeNumber: opts.holeNumber || 1, totalHoles: opts.totalHoles || 18, oppHistory: opts.oppHistory || null };
+      const decision = decideFor(holes[i], community, currentLevel, contributions[i], isPending, profile, null, null, ctx);
+
+      if (decision.action === 'fold' && isPending) {
+        folded[i] = true;
+      } else if (decision.action === 'call' && isPending) {
+        contributions[i] = Math.min(currentLevel, contributions[i] + callAmount);
+      } else if (decision.action === 'check' && !isPending) {
+        // No-op
+      } else if ((decision.action === 'bet' || decision.action === 'raise') && remainingCap > 0) {
+        // Apply raise: new level = decision.amount, capped by per-player cap.
+        const desiredLevel = Math.min(perPlayerCap, +decision.amount || (currentLevel + 1));
+        if (desiredLevel > currentLevel) {
+          contributions[i] = desiredLevel;
+          currentLevel = desiredLevel;
+          lastRaiser = i;
+        } else if (isPending) {
+          // Fall through to call.
+          contributions[i] = Math.min(currentLevel, contributions[i] + callAmount);
+        }
+      } else if (isPending) {
+        // Fallback: call.
+        contributions[i] = Math.min(currentLevel, contributions[i] + callAmount);
+      }
+      i = (i + 1) % N;
+      actionIter++;
+    }
+  }
+
+  // Preflop bet round (no new community cards yet)
+  runBettingRound('preflop');
+  const activeCountAfterPreflop = folded.filter(f => !f).length;
+
+  // Flop / Turn / River — deal cards, run betting if 2+ active.
+  if (folded.filter(f => !f).length >= 2) { dealStreet('flop');  runBettingRound('flop'); }
+  if (folded.filter(f => !f).length >= 2) { dealStreet('turn');  runBettingRound('turn'); }
+  if (folded.filter(f => !f).length >= 2) { dealStreet('river'); runBettingRound('river'); }
+
+  // Resolve. If only one player active, they win the pot uncontested.
+  // Otherwise complete the board (if needed) and showdown.
+  while (community.length < 5 && folded.filter(f => !f).length >= 2) community.push(deck.pop());
+  const pot = contributions.reduce((s, c) => s + c, 0);
+  const perPlayerGolfScore = new Array(N).fill(0);
+  const perPlayerHoneyDelta = new Array(N).fill(0);
+
+  // Determine winner among active (non-folded) players.
+  let winnerIdx = -1;
+  let winnerHandValue = -1;
+  const handValues = new Array(N).fill(null);
+  for (let i = 0; i < N; i++) {
+    if (folded[i]) continue;
+    handValues[i] = evaluate7(holes[i], community);
+    if (handValues[i] > winnerHandValue) {
+      winnerHandValue = handValues[i];
+      winnerIdx = i;
+    }
+  }
+
+  // Score. Winner posts hand-class score (or matrix-adjusted vs best loser).
+  // All non-winner active players (showdown losers) post +1 bogey under YJ
+  // variant, or own hand-class under Bumblebee. Folders post +1 bogey under
+  // both variants (uniform fold rule).
+  if (winnerIdx >= 0) {
+    perPlayerGolfScore[winnerIdx] = golfScoreFromHandValue(winnerHandValue);
+    // Honey: winner takes the pot minus their own contribution; each loser
+    // loses their contribution. Per-player honey delta:
+    perPlayerHoneyDelta[winnerIdx] = pot - contributions[winnerIdx];
+    for (let i = 0; i < N; i++) {
+      if (i === winnerIdx) continue;
+      perPlayerHoneyDelta[i] = -contributions[i];
+      if (folded[i]) {
+        perPlayerGolfScore[i] = 1; // fold bogey
+      } else if (useLoserBogey) {
+        perPlayerGolfScore[i] = 1; // YJ-variant loser bogey
+      } else {
+        perPlayerGolfScore[i] = golfScoreFromHandValue(handValues[i]);
+      }
+    }
+  }
+
+  return {
+    perPlayerGolfScore, perPlayerHoneyDelta,
+    winnerIdx, pot, contributions, folded,
+    holes, community, handValues,
+  };
+}
+
+// Run a multi-way match: same N players, multiple holes at one table.
+// Returns per-player aggregate scores.
+function playMultiwayMatch(players, numHoles, opts) {
+  opts = opts || {};
+  const N = players.length;
+  const golfTotals = new Array(N).fill(0);
+  const honeyTotals = new Array(N).fill(0);
+  for (let h = 0; h < numHoles; h++) {
+    const holeOpts = Object.assign({}, opts, { holeNumber: h + 1, totalHoles: numHoles });
+    const r = playMultiwayHole(players, holeOpts);
+    if (!r) continue;
+    for (let i = 0; i < N; i++) {
+      golfTotals[i] += r.perPlayerGolfScore[i];
+      honeyTotals[i] += r.perPlayerHoneyDelta[i];
+    }
+  }
+  // Round-end: convert honey to strokes via divisor (same divisor logic as HU).
+  const divisor = honeyDivisorFor(numHoles);
+  const totals = golfTotals.map((g, i) => g - (honeyTotals[i] / divisor));
+  return { golfTotals, honeyTotals, totals, divisor };
+}
+
+// Run a multi-way stroke-play event. Tables of cfg.tableSize are formed each
+// round; cushion + cut mechanics apply identically to HU. R4 collapses to HU
+// final between top 2 survivors (uses existing playMatch).
+function runMultiwayStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
+  const tableSize = +cfg.tableSize || 6;
+  const N = players.length;
+  if (N < tableSize) {
+    // Field too small for multi-way — fallback to HU.
+    return runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType);
+  }
+
+  const survivalCushion = (cfg && Array.isArray(cfg.survivalCushion))
+    ? cfg.survivalCushion : [12, 8, 5, 3];
+  const cutSchedule = (cfg && Array.isArray(cfg.cutSchedule))
+    ? cfg.cutSchedule : [null, 0.50, 0.50, null];
+
+  const agg = new Map();
+  for (const p of players) agg.set(p.id, { player: p, score: 0, rounds: [], eliminatedAtRound: null, eliminationReason: null });
+  let activePlayers = players.slice();
+  const eliminatedHistory = [];
+
+  function shuffleInPlace(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+  }
+
+  for (let r = 0; r < rounds; r++) {
+    // R4 collapses to HU between top 2 survivors (championship-final feel).
+    const isFinalRound = (r === rounds - 1);
+    if (isFinalRound && activePlayers.length >= 2) {
+      // Top 2 by current score play HU final; remaining survivors get a 0-score round.
+      const sortedActive = activePlayers.slice().sort((a, b) => agg.get(a.id).score - agg.get(b.id).score);
+      const finalP1 = sortedActive[0];
+      const finalP2 = sortedActive[1];
+      const m = playMatch(finalP1, finalP2, holesPerRound, { noPlayoff: true, noMatchStats: true,
+        gameContext: { mode: 'strokePlay', holeNumber: r * holesPerRound + 1, totalHoles: rounds * holesPerRound } });
+      agg.get(finalP1.id).score += m.aTotal;
+      agg.get(finalP2.id).score += m.bTotal;
+      agg.get(finalP1.id).rounds.push({ round: r + 1, score: m.aTotal, opponent: finalP2.id });
+      agg.get(finalP2.id).rounds.push({ round: r + 1, score: m.bTotal, opponent: finalP1.id });
+      // Other survivors record a bye-style 0 round.
+      for (let i = 2; i < sortedActive.length; i++) {
+        agg.get(sortedActive[i].id).rounds.push({ round: r + 1, score: 0, opponent: null });
+      }
+      break;
+    }
+
+    // R1-R3: split active players into tables of tableSize.
+    const shuffled = activePlayers.slice();
+    shuffleInPlace(shuffled);
+    const tables = [];
+    for (let i = 0; i < shuffled.length; i += tableSize) {
+      tables.push(shuffled.slice(i, Math.min(shuffled.length, i + tableSize)));
+    }
+
+    // Run each table's match.
+    for (const table of tables) {
+      if (table.length < 2) {
+        // Single-player "table" — give bye.
+        const a = agg.get(table[0].id);
+        a.rounds.push({ round: r + 1, score: 0, opponent: null });
+        continue;
+      }
+      if (table.length === 2) {
+        // 2-player table — run as HU match.
+        const m = playMatch(table[0], table[1], holesPerRound, { noPlayoff: true, noMatchStats: true,
+          gameContext: { mode: 'strokePlay', holeNumber: r * holesPerRound + 1, totalHoles: rounds * holesPerRound } });
+        agg.get(table[0].id).score += m.aTotal;
+        agg.get(table[1].id).score += m.bTotal;
+        agg.get(table[0].id).rounds.push({ round: r + 1, score: m.aTotal, opponent: table[1].id });
+        agg.get(table[1].id).rounds.push({ round: r + 1, score: m.bTotal, opponent: table[0].id });
+        continue;
+      }
+      // Multi-way table.
+      const result = playMultiwayMatch(table, holesPerRound, {
+        strokeCap: cfg.regularStrokeCap || CurrentStrokeCap || 6,
+        gameContext: { mode: 'strokePlay', tableSize: table.length, holeNumber: r * holesPerRound + 1, totalHoles: rounds * holesPerRound, loserBogey: !!CurrentLoserBogey },
+      });
+      for (let i = 0; i < table.length; i++) {
+        agg.get(table[i].id).score += result.totals[i];
+        agg.get(table[i].id).rounds.push({ round: r + 1, score: result.totals[i], opponent: 'table-' + table.map(p => p.id.slice(0, 4)).join('+') });
+      }
+    }
+
+    // Round-boundary cushion + cut (same logic as HU).
+    if (r < rounds - 1) {
+      const activeSorted = activePlayers.slice().sort((a, b) => agg.get(a.id).score - agg.get(b.id).score);
+      const leaderScore = activeSorted.length > 0 ? agg.get(activeSorted[0].id).score : 0;
+      const cushion = (survivalCushion && Number.isFinite(+survivalCushion[r])) ? +survivalCushion[r] : Infinity;
+      const stillActive = [];
+      for (const p of activeSorted) {
+        const score = agg.get(p.id).score;
+        if (score - leaderScore > cushion) {
+          const a = agg.get(p.id);
+          a.eliminatedAtRound = r + 1;
+          a.eliminationReason = 'cushion';
+          eliminatedHistory.push({ player: p, round: r + 1, score: a.score, reason: 'cushion' });
+        } else {
+          stillActive.push(p);
+        }
+      }
+      const cutPct = (cutSchedule && Number.isFinite(+cutSchedule[r])) ? +cutSchedule[r] : null;
+      if (cutPct && cutPct > 0 && cutPct < 1 && stillActive.length > 1) {
+        const keepCount = Math.max(2, Math.floor(stillActive.length * (1 - cutPct)));
+        const cutEliminated = stillActive.slice(keepCount);
+        for (const p of cutEliminated) {
+          const a = agg.get(p.id);
+          a.eliminatedAtRound = r + 1;
+          a.eliminationReason = 'cut';
+          eliminatedHistory.push({ player: p, round: r + 1, score: a.score, reason: 'cut' });
+        }
+        activePlayers = stillActive.slice(0, keepCount);
+      } else {
+        activePlayers = stillActive;
+      }
+    }
+  }
+
+  // Build sorted order: survivors first by score, then eliminated by round desc + score asc.
+  const surviving = activePlayers.slice().sort((p1, p2) => agg.get(p1.id).score - agg.get(p2.id).score);
+  const eliminated = eliminatedHistory.slice().sort((a, b) => {
+    if (b.round !== a.round) return b.round - a.round;
+    return a.score - b.score;
+  }).map(e => e.player);
+  const sorted = surviving.concat(eliminated);
+
+  // Build placements (re-uses HU logic).
+  const placements = [];
+  let i = 0;
+  while (i < sorted.length) {
+    const tierAgg = agg.get(sorted[i].id);
+    const tierScore = tierAgg.score;
+    const tierElimRound = tierAgg.eliminatedAtRound;
+    let tierEnd = i;
+    while (tierEnd < sorted.length) {
+      const next = agg.get(sorted[tierEnd].id);
+      if (next.score !== tierScore) break;
+      if (next.eliminatedAtRound !== tierElimRound) break;
+      tierEnd++;
+    }
+    const tierSize = tierEnd - i;
+    const rankFloor = i + 1;
+    for (let k = i; k < tierEnd; k++) {
+      placements.push({ id: sorted[k].id, rankFloor, tierSize });
+      sorted[k].eliminatedAtBracket = rankFloor;
+    }
+    i = tierEnd;
+  }
+
+  // Cuts career stats (same as HU).
+  for (const p of players) {
+    if (!p.poolRef) continue;
+    if (!p.poolRef.cuts) p.poolRef.cuts = { aggregateEvents: 0, madeR2: 0, madeR3: 0, cushionElim: 0, cutElim: 0 };
+    p.poolRef.cuts.aggregateEvents++;
+    const a = agg.get(p.id);
+    const elimRound = a.eliminatedAtRound;
+    if (elimRound == null || elimRound >= 3) p.poolRef.cuts.madeR2++;
+    if (elimRound == null || elimRound >= 4) p.poolRef.cuts.madeR3++;
+    if (a.eliminationReason === 'cushion') p.poolRef.cuts.cushionElim++;
+    else if (a.eliminationReason === 'cut') p.poolRef.cuts.cutElim++;
+  }
+
+  return { sortedFinishers: sorted, placements, playoffsRun: 0, aggregateMap: agg, eliminationSummary: {
+    totalCushionElim: eliminatedHistory.filter(e => e.reason === 'cushion').length,
+    totalCutElim: eliminatedHistory.filter(e => e.reason === 'cut').length,
+    elimByRound: [0, 1, 2, 3].map(r => eliminatedHistory.filter(e => e.round === r + 1).length),
+  } };
+}
+
 function runFinals(p1, p2) {
   // 4 days × 18 holes = 72-hole finals. Identical Honey-Stroke accounting to playMatch.
   // stats.totalScore is intentionally NOT reset here — leaving bracket-round strokes
@@ -3735,6 +4170,17 @@ function buildPool(size) {
       bestFinalsScore: 999, recentForm: [],
       currentSeasonPoints: 0, lastSeasonPoints: 0, qualSeasonYear: 0,
       reaches: { r1: 0, r4: 0, r2: 0, finals: 0, champ: 0 },
+      // v69 cuts tracking — per-player cut/cushion stats across the career.
+      // aggregateEvents counts events played in aggregate format (the only
+      // format with cushion/cut). made* counts events where the player
+      // survived past the corresponding round boundary.
+      cuts: {
+        aggregateEvents: 0,
+        madeR2: 0,         // survived past R2 cut (= still active in R3)
+        madeR3: 0,         // survived past R3 cut (= still active in R4)
+        cushionElim: 0,    // count of cushion-driven eliminations
+        cutElim: 0,        // count of cut-line eliminations
+      },
       buyInsPaid: 0, prizeEarned: 0, itmCount: 0, finalTableCount: 0, careerScore: 0,
     });
   }
@@ -4139,6 +4585,11 @@ const BuzzKnowledge = {
     { cat: 'tournament', q: 'What is the Main Event?', a: 'The annual championship — a 30,000-seat open field, the largest event on the calendar. Anyone in the player pool can buy in, but every year up to 512 free seats are awarded via majors (the satellite path). Modeled after the WSOP Main Event: the cap is set by venue capacity, not selectivity.' },
     { cat: 'tournament', q: 'What is a satellite seat?', a: 'A free Main Event entry earned by finishing high in a major. By default the top 128 finishers in each major qualify — that\'s up to 512 free Main seats per year. Sting your way deep in any major and you skip the $10,000 Main buy-in. This is the WSOP satellite economy in miniature: cheap effort to qualify, big prize attached.' },
     { cat: 'history', q: 'What scoring variants were tested?', a: 'Several experimental ladders (Model B, HC=Par variants, HC=Bogey, Stroke-Transfer) were prototyped before the Yellow Jacket Tour converged on Honey-Stroke as the production scoring law. The two-layer design — bounded scorecard plus honey pot — keeps individual hole scores realistic while preserving WSOP-style stack pressure across the round.' },
+    { cat: 'tournament', q: 'How do cuts work?', a: 'Aggregate-format events run 4 rounds × 18 holes. After each round (except the last), two elimination mechanics apply in sequence: (1) SURVIVAL CUSHION removes any player whose cumulative score exceeds the round leader\'s by more than the cushion threshold (12 strokes after R1, 8 after R2, 5 after R3); (2) ROUND CUTS remove the bottom % of the surviving field (no cut after R1, 50% cut after R2 — the primary cut at hole 36, 50% additional cut after R3 — the secondary cut at hole 54). Eliminated players freeze their score and skip the rest of the event. Their finish position is determined by elimination round (later round = better finish), then by cumulative score within the round.' },
+    { cat: 'tournament', q: 'What does the survival cushion do?', a: 'It produces WSOP-style mid-tournament eliminations. A player who falls more than the cushion threshold below the round leader busts immediately — they don\'t wait until the cut milestone. This rewards the bubble-burst moment: a leader\'s late-round birdie can cascade-eliminate several short-stacked trailers simultaneously. The cushion tightens each round (12→8→5→3) so R3 and R4 produce the most drama.' },
+    { cat: 'strategy', q: 'How should I play near the cushion / cut bubble?', a: 'If your cumulative score is approaching cushion-elimination distance, you must press for strokes — defensive play locks you out. Take aggressive lines on every hole: bet for value with any made hand, call thin equities, force pots. Conversely if you\'re comfortably above the cut line, protect the lead — bet only with premium hands, fold marginal calls cheaply. The cut bubble is the only spot in YJ where survival mode should override pure EV optimization.' },
+    { cat: 'strategy', q: 'Does making the cut earn money?', a: 'Yes. Top 15% of finish positions cash. Eliminated players earn finish positions ranked by elimination round, so a player who survives R3 always finishes higher than a player eliminated R2 — and earns the corresponding higher cash prize even if the latter had a "better" cumulative score at elimination. Making the cut is structurally rewarded.' },
+    { cat: 'tournament', q: 'What is the multiplayer table format?', a: 'A 6- or 9-player table variant currently available via cfg.tableSize. R1-R3 are played at multi-player tables with matched-contribution wagering (poker-native pot construction), then R4 collapses to a heads-up final between the top 2 surviving players. Per-player honey caps scale to keep per-pair stroke variance comparable to HU. The mechanic combines table-game drama with the same cushion + cut elimination structure.' },
     { cat: 'history', q: 'Why is it called Yellow Jacket?', a: 'The game combines poker and golf scored like a tournament. The bumblebee mascot wears a tiny golden jacket - a nod to the Masters green jacket. Also, it stings when you lose.' },
     { cat: 'history', q: 'Who is Buzz?', a: 'I am Buzz, your AI coach. I know every rule, every hand, every notable moment from the Tour. Ask me anything about the game.' },
   ],
@@ -4605,6 +5056,9 @@ Views.codex = function() {
     h3('Per-round score — flat divisor table anchored to golf-native 9'),
     p('The round-length divisor maps round size to scorecard normalization. v66 uses a flat integer table: 1-hole quick match → 1; 9-hole bracket → 4; 18-hole round → **9** (golf-native anchor — one side of a round); 72-hole final → 36. There is no magnitude scalar. The divisor IS the conversion rate.'),
     p('The Major Putt cap of ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 9) + ' honey aligns exactly with the 18-hole divisor of 9: a max-pot Major win contributes exactly one stroke to the round score. Self-similar at every level. Main finals at 2× anchor (cap ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 18) + ' honey, divisor 36) preserves the 0.5 stroke per max-pot ratio — long format suppresses per-honey impact, mirroring how PGA majors smooth single-hand variance across 72 holes.'),
+
+    h3('Survival cushion + round-boundary cuts (v69)'),
+    p('Aggregate-format events run 4 rounds × 18 holes = 72 holes per event. Two elimination mechanics shape the tournament arc: SURVIVAL CUSHION eliminates players whose cumulative score exceeds the round leader\'s by more than a stroke threshold (' + (Array.isArray(cfg.survivalCushion) ? cfg.survivalCushion.join('/') : '12/8/5/3') + ' across R1/R2/R3/R4); ROUND CUTS additionally remove the bottom % of the surviving field after each round (' + (Array.isArray(cfg.cutSchedule) ? cfg.cutSchedule.map(c => c == null ? 'none' : (c * 100) + '%').join('/') : 'none/50%/50%/none') + '). Eliminated players freeze their score and skip subsequent rounds; finish positions are ranked by (round-of-elimination DESC, score ASC) so making the cut beats missing it. See the Rulebook for the full mechanic specification.'),
 
     h3('Variant — Yellow Jacket vs Bumblebee'),
     p('The two variants share every rule EXCEPT how a decisive-showdown loser is scored. This is the only difference.'),
@@ -5734,6 +6188,17 @@ Views.decisiontree = function() {
   );
   view.appendChild(intro);
 
+  // ===== Tournament context =====
+  const tourCtx = section('Tournament Context (v69)',
+    p('Beyond per-hand decisions, two structural mechanics shape v69 aggregate-format strategy:'),
+    el('ul', { class: 'ui-sans', style: 'font-size: 13px; line-height: 1.7; color: var(--text-primary); margin-top: 6px; padding-left: 22px;' },
+      el('li', null, '**SURVIVAL CUSHION** — after each round, players whose cumulative score exceeds the round leader\'s by more than the cushion threshold are eliminated mid-tournament. The cushion tightens by round: +12 strokes after R1 (lenient — narrative protected), +8 after R2, +5 after R3 (bubble-bursting), +3 after R4 (final). A player on the cushion bubble must press for strokes, not protect — reverting to YJ\'s "calling thin is correct" math even more aggressively.'),
+      el('li', null, '**ROUND CUTS** — additionally, a fraction of the surviving field is cut after each round per the cut schedule. Default: no cut after R1, 50% cut after R2 (the primary cut at hole 36), 50% additional cut after R3 (the secondary cut at hole 54). Eliminated players freeze their score and earn finish positions ranked by elimination round.'),
+      el('li', null, '**STRATEGIC IMPACT** — late R1 + early R2 should be played for steady accumulation; late R2 (approaching the primary cut) demands aggression if you\'re below the projected cut line; R3 is bubble-territory for both cushion and secondary cut; R4 is the championship round where the survivors compete for the win directly.')
+    )
+  );
+  view.appendChild(tourCtx);
+
   // ===== The hand we'll walk =====
   // Hero: A♠ K♠ (suited Broadway, top-10% preflop). Villain: hidden.
   // Flop: K♥ 7♠ 2♣ → top pair, top kicker.
@@ -5766,7 +6231,7 @@ Views.decisiontree = function() {
       '**Fold** — concede the hole. You post +1 bogey on the scorecard, the opponent takes the previously-agreed pot (2 honey at this stage) as honey credit. Cards are NEVER revealed on a fold.'
     ],
     rationale: [
-      'A♠ K♠ is a top-decile starting hand. With 65% equity heads-up against a random hand, **adj** sits well above the bet threshold (foldOpt=0.20, betOpt=0.45 in YJ-tuned profiles).',
+      'A♠ K♠ is a top-decile starting hand. With 65% equity heads-up against a random hand, **adj** sits well above the bet threshold (foldOpt=0.20, betOpt=0.45 in YJ-tuned profiles, with a hard fold floor at adj < 0.05 for genuinely hopeless spots).',
       'In YJ, foldOpt has **inverted polarity** vs classic poker: high foldOpt = SKILLED play (rarely fold). Reason: folding caps your downside at +1 bogey, but showdown realizes -1 to -5 strokes when you have any equity at all. Conceding equity is structurally expensive.',
       'Don\'t over-bet here. Premium hands extract value at **showdown**, not by forcing folds — a fold caps your reward at par + previously-agreed honey. The richer line is a small bet that gets called, then escalation when the board pairs your kicker.'
     ]
@@ -6680,7 +7145,28 @@ function computeAnalyticsSnapshot() {
   ];
   const finalsByType = { major: [], regular: [], main: [] };
   for (const e of events) finalsByType[e.type].push(e.champScore);
-  return { champScores, scatter, repeatByYear, radarTop, radarBottom, tiers, finalsByType, eventCount: events.length, poolSize: pool.length };
+  // Cushion + cut diagnostic — aggregate by skill tier so we can see whether
+  // cuts disproportionately filter the bottom tiers (the design intent).
+  function cutsTierStats(start, end) {
+    const g = sorted.slice(start, end);
+    let evts = 0, r2 = 0, r3 = 0, cushion = 0, cut = 0;
+    for (const p of g) {
+      const c = p.cuts; if (!c) continue;
+      evts += c.aggregateEvents || 0;
+      r2 += c.madeR2 || 0;
+      r3 += c.madeR3 || 0;
+      cushion += c.cushionElim || 0;
+      cut += c.cutElim || 0;
+    }
+    return { events: evts, madeR2: r2, madeR3: r3, cushionElim: cushion, cutElim: cut };
+  }
+  const cutsByTier = [
+    { label: 'Top 10%', ...cutsTierStats(0, tier10) },
+    { label: '10-25%', ...cutsTierStats(tier10, tier25) },
+    { label: '25-50%', ...cutsTierStats(tier25, tier50) },
+    { label: 'Bottom 50%', ...cutsTierStats(tier50, sorted.length) },
+  ];
+  return { champScores, scatter, repeatByYear, radarTop, radarBottom, tiers, finalsByType, cutsByTier, eventCount: events.length, poolSize: pool.length };
 }
 
 // =============================================================================
@@ -7071,6 +7557,28 @@ function renderPlayerProfile(id, view) {
     statCard('First major', p.firstMajorWin ? 'Y' + p.firstMajorWin : '-')
   ));
 
+  // v69: cuts performance — surfaces per-player tournament-survival stats.
+  // Only renders if player has aggregate-format event data.
+  const cuts = p.cuts || {};
+  if (cuts.aggregateEvents && cuts.aggregateEvents > 0) {
+    const cutsRate = cuts.aggregateEvents > 0 ? (cuts.madeR2 / cuts.aggregateEvents) : 0;
+    const r3Rate = cuts.aggregateEvents > 0 ? (cuts.madeR3 / cuts.aggregateEvents) : 0;
+    const cushionRate = cuts.aggregateEvents > 0 ? (cuts.cushionElim / cuts.aggregateEvents) : 0;
+    const cutLineRate = cuts.aggregateEvents > 0 ? (cuts.cutElim / cuts.aggregateEvents) : 0;
+    view.appendChild(el('div', { class: 'card', style: 'margin-bottom: 16px; padding: 14px 18px;' },
+      el('h3', { text: 'Tournament Survival · v69 cuts mechanic', style: 'margin-top: 0;' }),
+      el('div', { class: 'ui-sans', style: 'font-size: 12px; color: var(--text-secondary); margin-bottom: 10px;',
+        text: 'Aggregate-format events only. "Made cut" = survived past the round\'s cut boundary into the next round.' }),
+      el('div', { class: 'stat-grid' },
+        statCard('Aggregate events', cuts.aggregateEvents),
+        statCard('Made R2 cut', cuts.madeR2 + ' / ' + cuts.aggregateEvents + ' (' + (cutsRate * 100).toFixed(0) + '%)'),
+        statCard('Made R3 cut', cuts.madeR3 + ' / ' + cuts.aggregateEvents + ' (' + (r3Rate * 100).toFixed(0) + '%)'),
+        statCard('Cushion elims', cuts.cushionElim + ' (' + (cushionRate * 100).toFixed(0) + '%)'),
+        statCard('Cut-line elims', cuts.cutElim + ' (' + (cutLineRate * 100).toFixed(0) + '%)')
+      )
+    ));
+  }
+
   // Badges
   const badges = computeBadges(p);
   const badgeCard = el('div', { class: 'card', style: 'margin-bottom: 16px;' });
@@ -7331,6 +7839,15 @@ Views.analytics = function() {
   ch6.appendChild(el('div', { class: 'chart-note', text: 'Regulars tend to produce lower scores (deeper field, smaller variance).' }));
   grid.appendChild(ch6);
 
+  // Chart 7: Cushion + Cut survival by skill tier (v69 diagnostic)
+  const ch7 = el('div', { class: 'chart-box' });
+  ch7.appendChild(el('div', { class: 'chart-title', text: 'Survival & Eliminations by Skill Tier' }));
+  ch7.appendChild(el('div', { class: 'chart-sub', text: 'v69 cushion + cut effects · grouped by tier' }));
+  const cv7 = el('canvas', { width: '520', height: '260' });
+  ch7.appendChild(cv7);
+  ch7.appendChild(el('div', { class: 'chart-note', text: 'Top tiers should make R2/R3 cuts at higher rates; bottom tiers absorb most cushion + cut-line elims.' }));
+  grid.appendChild(ch7);
+
   view.appendChild(grid);
 
   // Real sport comparison sidebar
@@ -7381,6 +7898,7 @@ Views.analytics = function() {
     drawLineStack(cv4, a.repeatByYear);
     drawGroupedBar(cv5, a.tiers);
     drawBoxplot(cv6, a.finalsByType);
+    drawCutsByTier(cv7, a.cutsByTier);
   }, 10);
 };
 
@@ -7395,8 +7913,14 @@ function chartColors() {
     primary: v('--chart-series-primary', '#006747'),
     accent: v('--chart-series-accent', '#C9A857'),
     tertiary: v('--chart-series-tertiary', '#8E3A5F'),
-    pos: v('--chart-pos', '#B85A3A'),
-    neg: v('--chart-neg', '#1E7A4E'),
+    // v69 semantic chart colors. Use C.bad / C.good in new code.
+    bad: v('--chart-bad', '#B85A3A'),    // red — warnings, losses, above-par
+    good: v('--chart-good', '#1E7A4E'),  // green — profits, wins, below-par
+    // Backward-compat aliases. Old code that used C.pos / C.neg continues to
+    // render correctly because the visual colors map identically (pos=red=bad,
+    // neg=green=good). New code should prefer C.bad / C.good for clarity.
+    pos: v('--chart-bad', '#B85A3A'),
+    neg: v('--chart-good', '#1E7A4E'),
   };
 }
 
@@ -7507,8 +8031,9 @@ function drawHistogram(canvas, data, min, max, bins, opts) {
   // losses render in the warning palette and winnings render in the
   // green/positive palette. The neutral "straddles zero" bin keeps the
   // gold accent in either polarity.
-  const negFill = opts.negativeIsBad ? C.pos : C.neg;
-  const posFill = opts.negativeIsBad ? C.neg : C.pos;
+  // v69: when negativeIsBad, negative direction = red (bad), positive = green (good).
+  const negFill = opts.negativeIsBad ? C.bad : C.good;
+  const posFill = opts.negativeIsBad ? C.good : C.bad;
   counts.forEach((c, i) => {
     const x = padL + (i / bins) * plotW;
     const bw = Math.max(1, plotW / bins - 2);
@@ -7674,6 +8199,49 @@ function drawGroupedBar(canvas, tiers) {
   items.forEach(([l, c], i) => {
     ctx.fillStyle = c; ctx.fillRect(pad + 12 + i * 80, 10, 10, 8);
     ctx.fillStyle = C.text; ctx.fillText(l, pad + 28 + i * 80, 18);
+  });
+}
+
+function drawCutsByTier(canvas, tiers) {
+  const w = canvas.width, h = canvas.height, pad = 40;
+  const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, w, h);
+  const C = chartColors();
+  // Per-tier rates as percentages of aggregate events.
+  const rows = tiers.map(t => {
+    const e = t.events || 1;
+    return {
+      label: t.label,
+      madeR2: (t.madeR2 / e) * 100,
+      madeR3: (t.madeR3 / e) * 100,
+      cushion: (t.cushionElim / e) * 100,
+      cut: (t.cutElim / e) * 100,
+    };
+  });
+  const yMax = 100;
+  chartAxes(ctx, w, h, pad, 0, yMax, rows.map(r => r.label), v => Math.round(v) + '%');
+  const plotW = w - 2 * pad, plotH = h - 2 * pad;
+  const groupW = plotW / rows.length;
+  const barW = (groupW - 12) / 4;
+  const series = [
+    ['madeR2', C.good],
+    ['madeR3', C.primary],
+    ['cushion', C.accent],
+    ['cut', C.bad],
+  ];
+  rows.forEach((r, i) => {
+    const x0 = pad + i * groupW + 6;
+    series.forEach(([key, col], j) => {
+      const v = r[key];
+      const bh = (v / yMax) * plotH;
+      ctx.fillStyle = col;
+      ctx.fillRect(x0 + j * barW, h - pad - bh, barW - 2, bh);
+    });
+  });
+  ctx.font = '11px -apple-system, sans-serif';
+  const items = [['Made R2', C.good], ['Made R3', C.primary], ['Cushion elim', C.accent], ['Cut elim', C.bad]];
+  items.forEach(([l, c], i) => {
+    ctx.fillStyle = c; ctx.fillRect(pad + 12 + i * 95, 10, 10, 8);
+    ctx.fillStyle = C.text; ctx.fillText(l, pad + 28 + i * 95, 18);
   });
 }
 
@@ -8851,7 +9419,10 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
       setStrokeCap(capPlan.finals); // use the finals cap throughout — every hole counts equally
       // Bracket-survival reaches still get marked so downstream metrics remain
       // populated. Aggregate mode treats r4 = top-16 finishers, r2 = top-2.
-      const aggResult = runStrokePlayEvent(players, 18, 4, cfg, eventType);
+      const useMultiway = (cfg.tableSize || 2) > 2;
+      const aggResult = useMultiway
+        ? runMultiwayStrokePlayEvent(players, 18, 4, cfg, eventType)
+        : runStrokePlayEvent(players, 18, 4, cfg, eventType);
       const sorted = aggResult.sortedFinishers;
       // Backfill the placements buffer with the aggregate ranking.
       for (const plc of aggResult.placements) placements.push(plc);
@@ -12583,7 +13154,8 @@ function renderActiveRun(root, r) {
       const tbody = el('tbody');
       m.economics.tiers.forEach(t => {
         const tr = el('tr');
-        const profitColor = (v) => 'color: ' + (v >= 0 ? 'var(--chart-pos, #6cc24a)' : 'var(--chart-neg, #d96a6a)') + ';';
+        // v69 semantic colors: positive ROI/profit → green (good), negative → red (bad).
+        const profitColor = (v) => 'color: ' + (v >= 0 ? 'var(--chart-good, #6cc24a)' : 'var(--chart-bad, #d96a6a)') + ';';
         const cells = [
           { text: t.label, align: 'left' },
           { text: (t.avgEvents != null ? t.avgEvents.toFixed(0) : '—'), align: 'right' },
@@ -12672,7 +13244,7 @@ function renderActiveRun(root, r) {
         tr.appendChild(el('td', { class: 'num' + (emphasis === 'earned' ? ' gold' : ''), text: fmtMoney(p.earned) }));
         tr.appendChild(el('td', { class: 'num', text: fmtMoney(p.paid) }));
         const profitCls = p.profit >= 0 ? 'num green' : 'num';
-        tr.appendChild(el('td', { class: profitCls, style: p.profit < 0 ? 'color: var(--chart-pos);' : '', text: (p.profit >= 0 ? '+' : '') + fmtMoney(p.profit) }));
+        tr.appendChild(el('td', { class: profitCls, style: p.profit < 0 ? 'color: var(--chart-bad);' : '', text: (p.profit >= 0 ? '+' : '') + fmtMoney(p.profit) }));
         tr.appendChild(el('td', { class: 'num', text: (p.roi * 100).toFixed(0) + '%' }));
         tb.appendChild(tr);
       });
@@ -12759,7 +13331,13 @@ function renderActiveRun(root, r) {
         rates.forEach((r, i) => {
           const cx = pad + colW * (i + 0.5);
           const y = h - pad - (r / yMax) * plotH;
-          ctx.fillStyle = (i <= 3) ? C.pos : (r > 0.01 ? C.neg : C.pos);
+          // v69 semantic: low-equity buckets (0-3) where folding is YJ-correct
+          // render in C.bad (warning red) to draw the eye to the active zone;
+          // high-equity buckets (4+) with non-trivial fold rate are leaks and
+          // also render in C.bad. Buckets without folds render in the neutral
+          // C.good palette tone since they're "no-issue."
+          // (Preserved from v62 visual; now uses semantic names.)
+          ctx.fillStyle = (i <= 3) ? C.bad : (r > 0.01 ? C.good : C.bad);
           ctx.fillRect(cx - barW / 2, y, barW, h - pad - y);
           ctx.fillStyle = C.text; ctx.font = '10px monospace';
           const lbl = (r * 100).toFixed(2) + '%';
@@ -13042,7 +13620,8 @@ function drawROITiers(canvas, tiers) {
     const cx = pad + colW * (i + 0.5);
     const y = h - pad - ((t.roi - yMin) / (yMax - yMin)) * plotH;
     const top = Math.min(y, yZero), bot = Math.max(y, yZero);
-    ctx.fillStyle = t.roi >= 0 ? C.neg : C.pos;
+    // v69 semantic: positive ROI = green (good), negative ROI = red (bad).
+    ctx.fillStyle = t.roi >= 0 ? C.good : C.bad;
     ctx.fillRect(cx - barW / 2, top, barW, bot - top);
     ctx.fillStyle = C.text; ctx.font = '11px monospace';
     const lbl = (t.roi >= 0 ? '+' : '') + (t.roi * 100).toFixed(0) + '%';
@@ -13244,7 +13823,7 @@ function drawDonut(canvas, slices, opts) {
   }
   // Donut on the left half, legend on the right half.
   const cx = h * 0.55, cy = h / 2, R = h * 0.40, r = R * 0.55;
-  const palette = [C.accent, C.primary, C.tertiary || C.accent, C.pos, C.neg, '#9b8cff', '#ffb37a', '#7ad6c5'];
+  const palette = [C.accent, C.primary, C.tertiary || C.accent, C.bad, C.good, '#9b8cff', '#ffb37a', '#7ad6c5'];
   let a0 = -Math.PI / 2;
   slices.forEach((s, i) => {
     const frac = (s.value || 0) / total;
@@ -13335,7 +13914,7 @@ function drawGroupedHorizontalBars(canvas, groups, series, opts) {
     ctx.fillText('No data', 12, h / 2);
     return;
   }
-  const palette = [C.accent, C.primary, C.tertiary || C.pos];
+  const palette = [C.accent, C.primary, C.tertiary || C.bad];
   const groupH = plotH / groups.length;
   const seriesH = (groupH * 0.7) / series.length;
   ctx.font = '10px -apple-system, sans-serif';
