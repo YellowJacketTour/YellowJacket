@@ -1124,7 +1124,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.28-v69.3-interactive";
+const APP_VERSION = "2026.04.28-v69.4-deck-fix";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -4035,9 +4035,11 @@ function playMultiwayHole(players, opts) {
   const useLoserBogey = (opts.gameContext && typeof opts.gameContext.loserBogey === 'boolean')
     ? opts.gameContext.loserBogey : !!CurrentLoserBogey;
 
-  // Deal cards (use shared deck logic).
+  // Deal cards. Use the local-deck path so per-hole randomness is real
+  // (the global-DECK path was a latent bug — shuffleDeck() with no args
+  // shuffled the global, leaving this fresh local deck unshuffled).
   const deck = makeDeck();
-  shuffleDeck(deck);
+  shuffle(deck);
   const holes = [];
   for (let i = 0; i < N; i++) holes.push([deck.pop(), deck.pop()]);
   const community = [];
@@ -8733,7 +8735,7 @@ function startCashHand(t) {
   if (seated.length < 2) { toast('Need 2+ active seats with stack >= BB'); return; }
   t.button = (t.button + 1) % t.maxSeats;
   while (!seated.includes(t.button)) t.button = (t.button + 1) % t.maxSeats;
-  const deck = makeDeck(); shuffleDeck(deck);
+  const deck = makeCashDeck(); shuffleCashDeck(deck);
   const hole = {};
   for (const i of seated) hole[i] = [deck.pop(), deck.pop()];
   const sbIdx = nextActive(seated, t.button);
@@ -8976,8 +8978,8 @@ function dealCashHand(t) {
   while (!seated.includes(t.button)) t.button = (t.button + 1) % t.maxSeats;
 
   // Build a fresh deck and deal hole cards.
-  const deck = makeDeck();
-  shuffleDeck(deck);
+  const deck = makeCashDeck();
+  shuffleCashDeck(deck);
   const hole = {};
   for (const i of seated) hole[i] = [deck.pop(), deck.pop()];
 
@@ -9148,14 +9150,19 @@ function dealCashHand(t) {
   foley(isShowdown ? 'win-fanfare' : 'card-deal');
 }
 
-function makeDeck() {
+// Cash-engine deck: string ranks ('2'..'A') + unicode suits, used only by
+// the cash table UI and renderCard. Renamed from makeDeck to avoid colliding
+// with the tour engine's makeDeck (which uses numeric 2..14 ranks and a
+// different SUITS mapping). The collision broke evaluate7 in the tour
+// multi-way runner. Two engines, two formats — keep them isolated.
+function makeCashDeck() {
   const ranks = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'];
   const suits = ['♣','♦','♥','♠'];
   const deck = [];
   for (const r of ranks) for (const s of suits) deck.push({ rank: r, suit: s });
   return deck;
 }
-function shuffleDeck(d) {
+function shuffleCashDeck(d) {
   for (let i = d.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     const tmp = d[i]; d[i] = d[j]; d[j] = tmp;
