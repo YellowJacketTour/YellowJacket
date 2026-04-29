@@ -1,64 +1,92 @@
 # Yellow Jacket Tour
 
-Single-file HTML build of the Yellow Jacket Tour — the World Series of Golf-Poker. Heads-up Texas Hold'em on a golf scorecard, with a 100-year tournament simulator and full WSOP-style economics. Runs entirely client-side. No install, no server, no accounts.
+A heads-up Texas Hold'em poker tournament played onto a golf scorecard. Hand strength at showdown sets a per-hole golf score; honey wagering builds a per-hole pot using agreed-total semantics; net honey divides by the round's flat divisor and subtracts from the scorecard. Lower wins. The yellow jacket goes to the lowest 72-hole total on Sunday afternoon.
 
-## What it is
+Single-file browser app. Vanilla HTML/JS/CSS. No backend. No build step.
 
-A hybrid card game and tournament simulator built around a single scoring law called **Stroke-Honey**:
+## Run it
 
-- Hand category sets a bounded golf score per hole (Royal Flush −5 down to weak High Card +2).
-- Wagered strokes form a **honey pot** — the side pot that the hole winner claims as a credit subtracting from their round score.
-- Tied holes carry the honey pot forward, sweetening the next decisive hole.
-- Lower round total wins, just like real golf. Champions average slightly above par; deep below-par finishes are legendary by design.
+Open `yellow-jacket-tour-b.html` in any modern browser.
 
-The same engine powers both gameplay (you sit at a table) and simulation (a 30,000-player population plays out 100-year careers across majors, regulars, and the WSOP-style annual Main Event).
+For local serving with hot-reload during development:
 
-## How to play
+```powershell
+.\serve-yellow-jacket.ps1
+```
 
-Open `index.html`. The sidebar gives you three game modes plus the simulator:
+## Where to read about the game
 
-- **Single Player** — Heads-up vs a Yellow Jacket AI. Pick a tier (Beginner · Casual · Pro · Elite), match length (9 / 18 / 36 / 72 holes), and stroke cap. The AI uses the same threshold-coupled honey-EV decision logic as the simulator pool.
-- **Multiplayer · Hot-Seat** — Two humans, one device. Pass the laptop hole-by-hole; cards hide behind a cover overlay between turns.
-- **Multiplayer · Share-Link** — Chess-by-mail style. Make your move, copy the encoded URL, send it to your opponent. They load the link, play their turn, send back. Each state carries a checksum so tampering is detectable.
+Three documentation surfaces, three voices, one shared truth.
 
-Each visitor's career, simulator runs, and saved games persist in their own browser via localStorage. Nothing syncs across devices.
+| Document | Voice | Audience |
+|----------|-------|----------|
+| **In-app Codex + Rulebook** (`#codex`, `#rules`) | Present-tense game-voice, fully detailed rule cards, live config snapshot | Players sitting at the table |
+| **`RULEBOOK_NARRATIVE.md`** | Pure prose. Augusta, hive, sting. Commensurate analogies only. | Marketing, onboarding, anyone meeting the game for the first time |
+| **`SPEC_FOR_AGENTS.md`** | Numbered sections, deterministic predicates, every config key typed, every function pinned to file:line | LLM agents, contributors, anyone reconstructing the engine |
 
-## What's inside
+Coach Corner (`#buzz`) hosts an interactive FAQ that draws from the same rule body as the in-app Rulebook.
 
-- **Live game table** with golf-themed street names: Tea Box → Drive → Hazard → Putt → The Cup
-- **Simulator** — run 1 to 100 seasons over a pool of up to 100,000 players, with configurable buy-ins, sponsor purses ($0–$100B per event), satellite/qualifier mechanics, and full economic modeling
-- **Tour structure** — 4 majors + N regulars + 1 Main per season, single-elim brackets, 72-hole finals, sudden-death playoffs
-- **Major-as-satellite** mechanic — top finishers in each major earn free Main Event seats (WSOP economics)
-- **Run Registry** — every simulation snapshot saved with full config + metrics for side-by-side comparison
-- **Yellow Jacket Inc · Foundation Ledger** — career-cumulative house economics (rake collected, prize pool paid, ITM rate, ROI by skill tier)
-- **Detailed analytics** — skill→wins curve, bracket conversion by tier, champion score distribution, head-to-head matrix, profit distribution, action rates by street
-- **CSV export** with live config snapshot for reproducible audits
-- **Rulebook tab** with complete scoring formulas, tournament rules, and lore
-- **Buzz's Coach Corner** — strategy tips, FAQs, legendary moments
+## What's in the box
 
-## Live demo
+- **Tournament simulator** — full-pool seasons, multi-tier event structure (Regular / Major / Main), aggregate stroke-play and bracket formats, survival cushion + round-boundary cuts, late registration, sudden-death playoffs.
+- **Two scoring variants** — Yellow Jacket (competitive Bogey Loss) and Bumblebee (casual Honored Loss). Decisive-showdown loser scoring is the only difference.
+- **Multi-way tables** — 6 or 9 seats with matched-contribution wagering, collapsing to a heads-up final for Round 4.
+- **Cash tables** — Yellow Jacket Cash and Bumblebee Cash with the dual-ledger Honey-Stroke system; chip stacks denominated in Nectar at 1:1.
+- **Three.js + Rapier WASM atmospheric layer** — custom velvet shader, physics-driven chips, dealer button, celebration bloom on big pots. Disposed on navigation away from cash tables to release the WebGL context.
+- **Bankroll engine** — Nectar wallet, P2P transfers, staking marketplace, BB jackpot, Golden Card Lottery, weekly quests, daily login streak.
+- **Royal-purple-honey-garden aesthetic** — unified across every view; Bumblebee Cash adds a pastel-kawaii overlay via `body.kawaii-mode`.
 
-Once published via GitHub Pages, anyone can play in their browser:
+## Files
 
-`https://<your-username>.github.io/<repo-name>/`
+```
+yellow-jacket-tour-b.html      The master file. ~19,800 lines. The whole app.
+yellow-jacket-tour.html        Earlier checkpoint. Reference only.
+yellow-jacket.html             Earliest checkpoint. Reference only.
 
-Each visitor gets their own independent save state in their own browser. Career runs don't sync between devices.
+RULEBOOK_NARRATIVE.md          Prose rulebook companion.
+SPEC_FOR_AGENTS.md             Canonical machine-readable specification.
 
-## Publish on GitHub Pages
+serve-yellow-jacket.ps1        Local dev server.
+```
 
-1. Open your Yellow Jacket repo on github.com.
-2. Click **Add file → Upload files**.
-3. Drag `index.html` into the upload area.
-4. Commit message: `Initial Yellow Jacket Tour build` → **Commit changes**.
-5. Go to **Settings → Pages**.
-6. Under **Build and deployment → Source**, choose **Deploy from a branch**.
-7. Set **Branch: main**, folder **/ (root)** → **Save**.
-8. Wait ~60 seconds. The Pages URL appears at the top.
+The Desktop deployment at `C:\Users\k1rby\Desktop\Yellow Jacket\index.html` mirrors the master after each version bump.
 
-## Updating
+## Currencies
 
-When the build changes, replace `index.html` in the repo (web upload or `git push`). Pages redeploys automatically within ~60 seconds. Hard-refresh the live URL (Ctrl+Shift+R / Cmd+Shift+R) so your browser picks up the new HTML instead of cached.
+**Nectar** ◈ — bankroll currency, USD-equivalent, persistent across sessions. Pays event buy-ins, settles cash-table P/L, receives prize payouts, denominates the staking marketplace.
 
-## Play locally
+**Honey** — per-event wager unit, integer-valued, exists only inside the boundary of a tour event. What gets bet and raised per hole; what the stroke caps are denominated in; what the round-end divisor normalises to a stroke credit on the scorecard.
 
-If you'd rather not publish: double-click `index.html`. It opens in your default browser and runs entirely from the local filesystem. Save state is browser-local; no server required.
+The two never interconvert directly. You spend Nectar to enter; inside the event, Honey is the scoring instrument; when the event ends, the prize crosses back as Nectar. See `SPEC_FOR_AGENTS.md` §1.2 for the formal definitions.
+
+## Tour Standard defaults
+
+| Tier | Buy-in | Field | Stroke cap | Rake |
+|------|--------|-------|------------|------|
+| Regular  | $100      | 512 | 6  | 1.5% |
+| Major    | $1,000    | 256 | 9  | 2.0% |
+| Main early | —       | —   | 8  | 3.0% |
+| Main 72-hole finals | $10,000 | 128 | 18 | 3.0% |
+
+Sponsor purses, when configured, ride on top of the prize pool and are not raked.
+
+## Engine touchpoints
+
+The most-asked-about functions in the master file:
+
+| Symbol | What it does |
+|--------|--------------|
+| `golfScoreFromHandValue` | hand class → bounded golf score (−5..+2) |
+| `golfScoresFromShowdown` | frame-aware (winner, loser) score pair with respected-loss + cooler bonus |
+| `decideFor` | AI decision kernel — pure Honey-Stroke EV math |
+| `playHole` | full hole resolution (showdown / fold / tie) |
+| `runStrokePlay` / `runMultiWayStrokePlay` | aggregate-format event runners |
+| `runFinals` | 72-hole heads-up final |
+| `selectMajorField` / `selectRegularField` | field composition |
+| `DEFAULT_SIM_CONFIG` | every tunable parameter with annotated defaults |
+
+Full index with file:line addresses in `SPEC_FOR_AGENTS.md` §9.
+
+## Build version
+
+The runtime constant `APP_VERSION` near the top of the master file identifies the active build.
