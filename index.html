@@ -1884,7 +1884,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.29-v69.22-late-reg-stats-fix";
+const APP_VERSION = "2026.04.29-v69.23-regime-opts-and-late-reg-tag";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3733,14 +3733,53 @@ function sampleTargetSkill(cfg) {
 //
 // cfg.*Spread sliders still control within-tier jitter (±0.15 on bet/fold,
 // ±0.10 on raise) — distinct playing styles within the same skill tier.
-// === Yellow Jacket profile optima (shared) ===
-// Hardcoded; reflect the poker × golf hybrid rules. Promoted to module scope
-// so makeProfileForSkill, estimateSkillRating, and the CSV exporter all read
-// the same numbers — when any of these move, every dependent stays in sync.
+// === Yellow Jacket profile optima (shared, regime-aware) ===
+// PROFILE_OPT_* constants are the canonical heads-up Yellow Jacket optima.
+// They're exposed as module-level constants so legacy code paths that read
+// them directly (and CSV exports labelled "canonical") continue to work.
 const PROFILE_OPT_NOISE = 0;
 const PROFILE_OPT_BET   = 0.45;
 const PROFILE_OPT_FOLD  = 0.20;
 const PROFILE_OPT_RAISE = 0.75;
+
+// getRegimeProfileOpts — single source of truth for which optima apply at
+// the current (tableSize, variant) regime. Both makeProfileForSkill and
+// estimateSkillRating consume this; if they ever drift apart, authored
+// skill stops correlating with measured skill (the v69.22 inversion bug).
+//
+// The regimes:
+//   * Heads-up (any variant): canonical 0.45 / 0.20 / 0.75. Decades of
+//     poker theory + Honey-Stroke calibration converge here.
+//   * Multi-way Bumblebee (Honored Loss, the canonical multi-way default):
+//     loser scores own hand, so the modal showdown frame is gentler.
+//     Optima drift slightly looser than HU; bet a touch wider, fold a
+//     touch sooner on hopeless spots.
+//   * Multi-way Yellow Jacket (Bogey Loss, the harsh variant): every
+//     non-winner posts +1 regardless of hand strength. Winning a pot in
+//     a 9-way matched-contribution game returns ~N× the contribution and
+//     erases the structural bogey accumulation, so optimal play is to
+//     CHASE pots wider — bet/raise thresholds drop, fold floor drops.
+//     The HU-anchored 0.20 fold optimum is structurally wrong here.
+//
+// Estimates derived from EV-comparison at the modal pot/divisor; not from
+// a closed-form GTO solve. Refine these as multi-way YJ telemetry comes in.
+function getRegimeProfileOpts(cfg) {
+  cfg = cfg || {};
+  const N = +cfg.tableSize || 2;
+  if (N <= 2) {
+    // Heads-up — canonical. Both YJ and Bumblebee converge here because
+    // there are only two players, so per-pair equity is the same axis.
+    return { noise: PROFILE_OPT_NOISE, bet: PROFILE_OPT_BET, fold: PROFILE_OPT_FOLD, raise: PROFILE_OPT_RAISE, regime: 'hu' };
+  }
+  const variant = cfg.multiwayVariant || 'bumblebee';
+  if (variant === 'yellowjacket') {
+    // Multi-way YJ Bogey Loss. Pot-chase regime.
+    return { noise: PROFILE_OPT_NOISE, bet: 0.30, fold: 0.10, raise: 0.65, regime: 'mw-yj' };
+  }
+  // Multi-way Bumblebee — gentler than YJ multi-way; closer to HU optima.
+  return { noise: PROFILE_OPT_NOISE, bet: 0.40, fold: 0.15, raise: 0.70, regime: 'mw-bb' };
+}
+
 function makeProfileForSkill(targetSkill, cfg) {
   const t = Math.max(0, Math.min(1, targetSkill));
   const jitterScaleN = (cfg && Number.isFinite(cfg.noiseSpread)) ? cfg.noiseSpread * 0.050 : 0.025;
@@ -3749,10 +3788,11 @@ function makeProfileForSkill(targetSkill, cfg) {
   const jitterScaleR = (cfg && Number.isFinite(cfg.raiseSpread)) ? cfg.raiseSpread * 0.025 : 0.012;
   const jitter = (scale) => (Math.random() - 0.5) * scale;
   const dir = () => Math.random() < 0.5 ? -1 : 1;
-  const noiseOpt = PROFILE_OPT_NOISE;
-  const betOpt   = PROFILE_OPT_BET;
-  const foldOpt  = PROFILE_OPT_FOLD;
-  const raiseOpt = PROFILE_OPT_RAISE;
+  const opts = getRegimeProfileOpts(cfg);
+  const noiseOpt = opts.noise;
+  const betOpt   = opts.bet;
+  const foldOpt  = opts.fold;
+  const raiseOpt = opts.raise;
   // A HARD LOW-EQUITY FOLD FLOOR (0.05) is implemented directly in decideFor's
   // fold logic, before the slack-based check. It fires whenever the actor faces
   // an open proposal AND adj < 0.05, regardless of slack/EV — handles genuinely
@@ -3792,15 +3832,21 @@ function makeProfileForSkill(targetSkill, cfg) {
   };
 }
 
-function estimateSkillRating(profile) {
-  // Skill rating measures distance from Yellow Jacket optima. Reads the same
-  // PROFILE_OPT_* constants makeProfileForSkill writes, so the two cannot drift
-  // (a previous build had foldOpt 0.20 in the generator and 0.25 here, which
-  // was driving authoredVsMeasuredSkill artificially low).
+function estimateSkillRating(profile, cfg) {
+  // Skill rating measures distance from regime-appropriate optima. Reads
+  // through the SAME getRegimeProfileOpts(cfg) that makeProfileForSkill uses
+  // — the two MUST stay anchored to the same numbers or authoredVsMeasured
+  // collapses (or inverts, as observed at multi-way YJ in v69.21 telemetry
+  // where authoredVsMeasured hit -0.62 because the generator was regime-
+  // adapted but the estimator was still anchored on HU constants).
+  // cfg is optional; absent, falls back to the canonical HU baseline so
+  // legacy call sites (and pure-profile inspections) keep working.
+  const opts = cfg ? getRegimeProfileOpts(cfg) :
+    { noise: PROFILE_OPT_NOISE, bet: PROFILE_OPT_BET, fold: PROFILE_OPT_FOLD, raise: PROFILE_OPT_RAISE };
   const nT = 1 - profile.noise / 0.30;
-  const bT = 1 - Math.abs(profile.betThreshold   - PROFILE_OPT_BET)   / 0.15;
-  const fT = 1 - Math.abs(profile.foldThreshold  - PROFILE_OPT_FOLD)  / 0.15;
-  const rT = 1 - Math.abs(profile.raiseThreshold - PROFILE_OPT_RAISE) / 0.10;
+  const bT = 1 - Math.abs(profile.betThreshold   - opts.bet)   / 0.15;
+  const fT = 1 - Math.abs(profile.foldThreshold  - opts.fold)  / 0.15;
+  const rT = 1 - Math.abs(profile.raiseThreshold - opts.raise) / 0.10;
   return (nT + bT + fT + rT) / 4;
 }
 
@@ -4422,6 +4468,11 @@ function applyLateRegistration(r, cfg, activePlayers, agg, leaderScore, eventTyp
     // Stats must be initialised here — playMatch / updatePlayerHoleStats
     // reads player.stats.holesPlayed on the first hole, which crashes on
     // late entrants without it (the bug that fired before this guard).
+    // Qualifier-path tag is also required: the source-counting code reads
+    // poolP.majorQualPathCurrent at champion resolution. Without this tag
+    // late-reg winners fell through to "unknown" and inflated the unknown
+    // bucket to 24-43% of major winners.
+    if (eventType === 'major') poolP.majorQualPathCurrent = 'late-reg';
     const entry = {
       id: poolP.id, name: poolP.name, profile: poolP.profile, poolRef: poolP, skill: poolP.skill,
       stats: makeFreshStats(),
@@ -14810,7 +14861,7 @@ function buildPoolFromConfig(cfg) {
     let profile, authored;
     if (useLegacy) {
       profile = makeProfileFromConfig(cfg);
-      authored = estimateSkillRating(profile);
+      authored = estimateSkillRating(profile, cfg);
     } else {
       authored = sampleTargetSkill(cfg);
       profile = makeProfileForSkill(authored, cfg);
@@ -16137,7 +16188,10 @@ function computeEventTypeScoreStats(events) {
 
 function computeMajorQualifierMetrics(events) {
   const majors = (events || []).filter(e => e.type === 'major');
-  const winnerSource = { champ: 0, ranking: 0, season: 0, career: 0, open: 0, fallback: 0, unknown: 0 };
+  // 'late-reg' is the path tag for players admitted via mid-event late
+  // registration. Tracked separately so the source rollup distinguishes
+  // legitimate qualifier paths from unknowns (which should now be ~0).
+  const winnerSource = { champ: 0, ranking: 0, season: 0, career: 0, open: 0, fallback: 0, 'late-reg': 0, unknown: 0 };
   const fieldSource = { champ: 0, ranking: 0, season: 0, career: 0, open: 0, fallback: 0 };
   for (const e of majors) {
     const src = e.champQualifierPath || 'unknown';
@@ -16877,10 +16931,23 @@ function _exportRunToCSVImpl(snap) {
   // AI profile optima driving decideFor's per-player profile generation in
   // makeProfileForSkill. Reported as live values, not hard-coded labels, so a
   // CSV audit matches the actual AI behaviour.
+  // Canonical heads-up Yellow Jacket optima (the reference baseline).
   cfgRow('ai.profileOpt.bet',   PROFILE_OPT_BET);
   cfgRow('ai.profileOpt.fold',  PROFILE_OPT_FOLD);
   cfgRow('ai.profileOpt.raise', PROFILE_OPT_RAISE);
   cfgRow('ai.profileOpt.noise', 0);
+  // Regime-current optima (what the engine actually anchored player profiles
+  // and the skill estimator on for THIS run). Differs from the canonical row
+  // above when tableSize > 2 — multi-way YJ and multi-way Bumblebee each
+  // have their own structurally-derived optima. authoredVsMeasuredSkill
+  // collapses or inverts when these disagree with what the engine ran.
+  const _opts = (typeof getRegimeProfileOpts === 'function') ? getRegimeProfileOpts(snapCfg) : null;
+  if (_opts) {
+    cfgRow('ai.profileOpt.regime',       _opts.regime);
+    cfgRow('ai.profileOpt.bet.active',   _opts.bet);
+    cfgRow('ai.profileOpt.fold.active',  _opts.fold);
+    cfgRow('ai.profileOpt.raise.active', _opts.raise);
+  }
   cfgRow('rakePercent', snapCfg.rakePercent != null ? snapCfg.rakePercent : 0.03);
   cfgRow('rakePercentRegular', snapCfg.rakePercentRegular != null ? snapCfg.rakePercentRegular : 0.015);
   cfgRow('rakePercentMajor',   snapCfg.rakePercentMajor   != null ? snapCfg.rakePercentMajor   : 0.020);
