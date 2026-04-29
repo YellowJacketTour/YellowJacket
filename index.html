@@ -1884,7 +1884,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.29-v69.23-regime-opts-and-late-reg-tag";
+const APP_VERSION = "2026.04.29-v69.24-multiway-fixes";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3773,10 +3773,34 @@ function getRegimeProfileOpts(cfg) {
   }
   const variant = cfg.multiwayVariant || 'bumblebee';
   if (variant === 'yellowjacket') {
-    // Multi-way YJ Bogey Loss. Pot-chase regime.
-    return { noise: PROFILE_OPT_NOISE, bet: 0.30, fold: 0.10, raise: 0.65, regime: 'mw-yj' };
+    // Multi-way YJ Bogey Loss.
+    //
+    // v69.23 SHIPPED { bet: 0.30, fold: 0.10, raise: 0.65 } as a "pot-chase"
+    // regime guess derived from EV reasoning: under Bogey Loss, calling-and-
+    // losing costs the same +1 as folding, so the AI was tuned to almost
+    // never fold and to fire wide.
+    //
+    // Audit (Run_1_Y1_Y100): authoredVsMeasured = -0.5514 (sign inversion!).
+    // High-authored-skill players were UNDER-performing because the ultra-
+    // loose mw-yj optima generated a wide drift band (foldThreshold could
+    // roll negative for low-skill players, disabling fold entirely — see
+    // makeProfileForSkill clamp), which let calling-station play dominate
+    // the empirical field. authoredVsMeasured of -0.55 means the optima
+    // didn't describe winning play at all.
+    //
+    // v69.24 CHANGE: collapse mw-yj optima onto the mw-bb numbers
+    // (0.40 / 0.15 / 0.70). Two structural reasons:
+    //   1. mw-bb does not exhibit the inversion empirically, so its optima
+    //      at least describe a viable monotone skill axis at multi-way.
+    //   2. The variant switch already differentiates outcomes via the
+    //      scoring rule itself (Bogey Loss vs Honored Loss); the AI
+    //      doesn't need a separate behavioral persona for it.
+    // If a future analytical solve produces empirically-validated mw-yj
+    // optima they can replace these. Until then, mw-yj plays as mw-bb,
+    // scores as YJ.
+    return { noise: PROFILE_OPT_NOISE, bet: 0.40, fold: 0.15, raise: 0.70, regime: 'mw-yj' };
   }
-  // Multi-way Bumblebee — gentler than YJ multi-way; closer to HU optima.
+  // Multi-way Bumblebee — gentler than HU; loser scores own hand class.
   return { noise: PROFILE_OPT_NOISE, bet: 0.40, fold: 0.15, raise: 0.70, regime: 'mw-bb' };
 }
 
@@ -3818,11 +3842,20 @@ function makeProfileForSkill(targetSkill, cfg) {
   //                 fixed discount), so high-readingDepth players correctly
   //                 call bluffs and fold to value, while low-readingDepth
   //                 players fall back to naive "aggression = strength."
+  // v69.24 PROFILE THRESHOLD CLAMPING. The drift terms `(1-t) * 0.15` produce
+  // valid values at HU optima (foldOpt=0.20, betOpt=0.45, raiseOpt=0.75 — all
+  // > 0.10 from zero), but at multi-way YJ where foldOpt=0.10, a low-skill
+  // player can roll foldThreshold = 0.10 - 0.135 = -0.035. A negative fold
+  // threshold disables the slack-based fold trigger entirely (slack < 0 means
+  // fold-when-adj < reqEquity + |slack|, which adj almost never satisfies).
+  // The result: an unintended "low-skill players never fold" pathology that
+  // contributed to the v69.23 authoredVsMeasured = -0.55 inversion. Clamping
+  // to non-negative restores monotonic behavior without affecting HU.
   return {
     noise: Math.max(0.005, noiseOpt + (1 - t) * 0.30 + jitter(jitterScaleN)),
-    betThreshold: betOpt + dir() * (1 - t) * 0.15 + jitter(jitterScaleB),
-    foldThreshold: foldOpt + dir() * (1 - t) * 0.15 + jitter(jitterScaleF),
-    raiseThreshold: raiseOpt + dir() * (1 - t) * 0.10 + jitter(jitterScaleR),
+    betThreshold:   Math.max(0.01, Math.min(0.99, betOpt   + dir() * (1 - t) * 0.15 + jitter(jitterScaleB))),
+    foldThreshold:  Math.max(0.01, Math.min(0.99, foldOpt  + dir() * (1 - t) * 0.15 + jitter(jitterScaleF))),
+    raiseThreshold: Math.max(0.01, Math.min(0.99, raiseOpt + dir() * (1 - t) * 0.10 + jitter(jitterScaleR))),
     authoredSkill: t,
     aggression: Math.max(0.1, Math.min(0.9, 0.5 + (Math.random() - 0.5) * 0.6)),
     // v50 (B): bluffFreq scales with skill. Mean (0.02 + 0.10·t), multiplicative
@@ -4459,7 +4492,16 @@ function applyLateRegistration(r, cfg, activePlayers, agg, leaderScore, eventTyp
     picked.push(candidates.splice(idx, 1)[0]);
   }
   const cushion = Number.isFinite(+cushionForRound) ? +cushionForRound : 8;
-  const handicap = leaderScore + cushion * 0.6;
+  // v69.24: handicap multiplier raised 0.6 → 1.5. Audit showed late-reg
+  // entrants winning 43.8% of majors at the 0.6× setting because they were
+  // entering at leader+3 strokes (R3 cushion=5 × 0.6) — well INSIDE the next
+  // round's cushion threshold, so they had a free shot at the cut and the
+  // championship. At 1.5× the entrant lands at leader + 1.5×cushion which
+  // is BEYOND the just-played cushion threshold; they must climb meaningfully
+  // in the rounds remaining or get swept by the next cushion check. Models
+  // a real late-reg deficit: you missed Day 1, you start behind, you have to
+  // fire to catch up.
+  const handicap = leaderScore + cushion * 1.5;
   const added = [];
   for (const poolP of picked) {
     // Wrap as a "field" entry analogous to selectField wrappers. Buy-in,
@@ -15103,6 +15145,16 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
         for (const le of aggResult.lateEntrants) {
           if (field.indexOf(le) === -1) field.push(le);
         }
+        // v69.24 honest late-reg accounting: increment the source counter
+        // attached to the field at selection time so computeMajorQualifier-
+        // Metrics' field-share denominator reflects mid-event entrants.
+        // Without this, late-reg winners appeared as a 44% slice of major
+        // winners but 0% of the reported field — making it impossible to
+        // see how badly late-reg was over-performing.
+        if (eventType === 'major' && field.majorQualifierSourceCounts) {
+          field.majorQualifierSourceCounts['late-reg'] =
+            (field.majorQualifierSourceCounts['late-reg'] || 0) + aggResult.lateEntrants.length;
+        }
       }
       const sorted = aggResult.sortedFinishers;
       // Backfill the placements buffer with the aggregate ranking.
@@ -16191,8 +16243,13 @@ function computeMajorQualifierMetrics(events) {
   // 'late-reg' is the path tag for players admitted via mid-event late
   // registration. Tracked separately so the source rollup distinguishes
   // legitimate qualifier paths from unknowns (which should now be ~0).
-  const winnerSource = { champ: 0, ranking: 0, season: 0, career: 0, open: 0, fallback: 0, 'late-reg': 0, unknown: 0 };
-  const fieldSource = { champ: 0, ranking: 0, season: 0, career: 0, open: 0, fallback: 0 };
+  const winnerSource = { champ: 0, ranking: 0, season: 0, career: 0, open: 0, fallback: 0, mixed: 0, 'late-reg': 0, unknown: 0 };
+  // v69.24: 'late-reg' added to fieldSource so the field denominator includes
+  // mid-event entrants. Without this, late-reg winners were 43.8% of major
+  // winners but 0% of the reported field — making it impossible to read
+  // late-reg over-performance. selectMajorField also produces 'mixed' tags
+  // for the uniform-random open bucket; track that too.
+  const fieldSource = { champ: 0, ranking: 0, season: 0, career: 0, open: 0, fallback: 0, mixed: 0, 'late-reg': 0 };
   for (const e of majors) {
     const src = e.champQualifierPath || 'unknown';
     winnerSource[src] = (winnerSource[src] || 0) + 1;
