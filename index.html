@@ -1884,7 +1884,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.29-v69.19-royal-purple-honey-garden";
+const APP_VERSION = "2026.04.29-v69.20-forensic-fixes";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3733,6 +3733,14 @@ function sampleTargetSkill(cfg) {
 //
 // cfg.*Spread sliders still control within-tier jitter (±0.15 on bet/fold,
 // ±0.10 on raise) — distinct playing styles within the same skill tier.
+// === Yellow Jacket profile optima (shared) ===
+// Hardcoded; reflect the poker × golf hybrid rules. Promoted to module scope
+// so makeProfileForSkill, estimateSkillRating, and the CSV exporter all read
+// the same numbers — when any of these move, every dependent stays in sync.
+const PROFILE_OPT_NOISE = 0;
+const PROFILE_OPT_BET   = 0.45;
+const PROFILE_OPT_FOLD  = 0.20;
+const PROFILE_OPT_RAISE = 0.75;
 function makeProfileForSkill(targetSkill, cfg) {
   const t = Math.max(0, Math.min(1, targetSkill));
   const jitterScaleN = (cfg && Number.isFinite(cfg.noiseSpread)) ? cfg.noiseSpread * 0.050 : 0.025;
@@ -3741,32 +3749,14 @@ function makeProfileForSkill(targetSkill, cfg) {
   const jitterScaleR = (cfg && Number.isFinite(cfg.raiseSpread)) ? cfg.raiseSpread * 0.025 : 0.012;
   const jitter = (scale) => (Math.random() - 0.5) * scale;
   const dir = () => Math.random() < 0.5 ? -1 : 1;
-  // YELLOW JACKET OPTIMA — hardcoded; reflect the poker × golf hybrid rules.
-  const noiseOpt = 0;
-  // v45: lowered from 0.55 to 0.45 to increase action density.
-  // Telemetry from v44 showed 86% checks on flop and 74% on turn — most
-  // marginal hands never bet, so the action chart was concentrated on
-  // preflop and river. Lowering betOpt means more marginal hands bet,
-  // which (a) creates more decision points, (b) grows pots earlier so the
-  // pot-elastic cap and pot-odds fold rule have more material to work
-  // with, and (c) opens the bluff-catching range (0.4–0.6 equity) that
-  // currently never folds because pots stay too small to threaten pot odds.
-  const betOpt = 0.45;
-  // v68: foldOpt 0.15 → 0.20 (split-the-difference recalibration).
-  // v67's foldOpt=0.15 over-corrected — fold rate at 0.10-0.20 equity buckets
-  // jumped to 10-13% (calling-thin territory in YJ, should stay <5%) while the
-  // 0.00-0.05 bucket only marginally improved from 14% → 13.5%. The slack
-  // reduction widened the stage-1 pot-odds check's range, polluting moderate
-  // equity with unwanted folds. v68 splits the difference at 0.20 AND adds a
-  // hard low-equity floor (see HARD_FOLD_FLOOR below) so extreme low equity
-  // gets aggressive folding without compromising moderate-equity calls.
-  const foldOpt = 0.20;
-  // v68 NOTE: a HARD LOW-EQUITY FOLD FLOOR (0.05) is implemented directly in
-  // decideFor's fold logic, before the slack-based check. It fires whenever
-  // the actor faces an open proposal AND adj < 0.05, regardless of slack/EV.
-  // This handles genuinely hopeless spots that the slack trigger could not hit
-  // at YJ's flat divisor=9. See decideFor for the implementation.
-  const raiseOpt = 0.75;
+  const noiseOpt = PROFILE_OPT_NOISE;
+  const betOpt   = PROFILE_OPT_BET;
+  const foldOpt  = PROFILE_OPT_FOLD;
+  const raiseOpt = PROFILE_OPT_RAISE;
+  // A HARD LOW-EQUITY FOLD FLOOR (0.05) is implemented directly in decideFor's
+  // fold logic, before the slack-based check. It fires whenever the actor faces
+  // an open proposal AND adj < 0.05, regardless of slack/EV — handles genuinely
+  // hopeless spots that the slack trigger could not hit at the flat divisor=9.
   // v49 MULTI-DIMENSIONAL PROFILES — three orthogonal traits beyond the
   // skill axis. Two skill-0.95 players now have DIFFERENT profiles in these
   // dimensions, producing genuine matchup variance and exploitable patterns.
@@ -3803,15 +3793,14 @@ function makeProfileForSkill(targetSkill, cfg) {
 }
 
 function estimateSkillRating(profile) {
-  // Skill rating measures distance from Yellow Jacket optima. Must stay in
-  // sync with the constants in makeProfileForSkill — when those move, this
-  // function moves with them or authoredVsMeasuredSkill goes negative for
-  // structural reasons. v51: foldOpt 0.05→0.25 (the v18→v19 inversion fix);
-  // betOpt 0.55→0.45 (v45 calibration that was never propagated here).
+  // Skill rating measures distance from Yellow Jacket optima. Reads the same
+  // PROFILE_OPT_* constants makeProfileForSkill writes, so the two cannot drift
+  // (a previous build had foldOpt 0.20 in the generator and 0.25 here, which
+  // was driving authoredVsMeasuredSkill artificially low).
   const nT = 1 - profile.noise / 0.30;
-  const bT = 1 - Math.abs(profile.betThreshold - 0.45) / 0.15;
-  const fT = 1 - Math.abs(profile.foldThreshold - 0.25) / 0.15;
-  const rT = 1 - Math.abs(profile.raiseThreshold - 0.75) / 0.10;
+  const bT = 1 - Math.abs(profile.betThreshold   - PROFILE_OPT_BET)   / 0.15;
+  const fT = 1 - Math.abs(profile.foldThreshold  - PROFILE_OPT_FOLD)  / 0.15;
+  const rT = 1 - Math.abs(profile.raiseThreshold - PROFILE_OPT_RAISE) / 0.10;
   return (nT + bT + fT + rT) / 4;
 }
 
@@ -15289,9 +15278,21 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   const rakeFromTier = eventType === 'main' ? cfg.rakePercentMain
                      : eventType === 'major' ? cfg.rakePercentMajor
                      : cfg.rakePercentRegular;
-  const rake = (rakeFromTier != null) ? rakeFromTier
-             : (cfg.rakePercent != null ? cfg.rakePercent
-             : (eventType === 'main' ? 0.03 : eventType === 'major' ? 0.02 : 0.015));
+  const rakeBase = (rakeFromTier != null) ? rakeFromTier
+                 : (cfg.rakePercent != null ? cfg.rakePercent
+                 : (eventType === 'main' ? 0.03 : eventType === 'major' ? 0.02 : 0.015));
+  // Multi-way rake scaling. At HU (tableSize 2) the configured rake stands.
+  // At larger tables, per-event Elite skill edge thins roughly as 1/(N−1)
+  // because the elite player must beat N−1 opponents instead of one. To keep
+  // Elite ROI neutral-to-positive on non-Main events at multi-way, the
+  // non-Main rake scales down with table size: 6-handed runs at 70% of base,
+  // 9-handed at 55% of base. The Main is left untouched — its rake funds
+  // the elite-tier upside via the sponsor purse + lottery payouts.
+  const tableSize = +cfg.tableSize || 2;
+  const multiwayRakeScale = (eventType === 'main' || tableSize <= 2) ? 1
+                          : tableSize <= 6 ? 0.70
+                          : 0.55;
+  const rake = rakeBase * multiwayRakeScale;
   const revenue = grossPool * rake;
   // Sponsor purse: fixed prize-pool contribution from sponsors/TV (PGA Tour model). Rake does
   // not apply to sponsor money — it goes directly to the purse.
@@ -15305,6 +15306,9 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
                     : eventType === 'regular' ? (cfg.sponsorPurseRegular || 0)
                     : (cfg.sponsorPurseMain || 0);
   const mainExemptCoverage = (eventType === 'main') ? (exemptSeats * baseBuyIn * (1 - rake)) : 0;
+  // Track sponsor money and exemption-coverage separately so CSV audits can
+  // distinguish actual sponsor purse (configured) from implicit Tour-underwrite
+  // for waived seats. Both contribute to the prize pool with no rake applied.
   const sponsorPurse = baseSponsor + mainExemptCoverage;
   const prizePool = grossPool - revenue + sponsorPurse;
   const payouts = computePayoutsByRank(field.length, prizePool, cfg.payoutDecay != null ? cfg.payoutDecay : 0.70);
@@ -15421,7 +15425,7 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     tierSurvival: countBy(field, p => tier(p), 4),
     // economics
     buyIn: baseBuyIn, grossPool, prizePool, revenue,
-    sponsorPurse, exemptSeats,
+    sponsorPurse, sponsorBase: baseSponsor, exemptCoverage: mainExemptCoverage, exemptSeats,
     mainQualifierSeats: eventType === 'main' ? (field.mainQualifierCount || 0) : 0,
     champPrize: playerPrize[champ.id] || 0,
     ruPrize: playerPrize[ru.id] || 0,
@@ -15705,6 +15709,13 @@ function computeEconomicsMetrics(pool, events) {
   const purseByType = { major: 0, regular: 0, main: 0 };
   const winnerByType = { major: 0, regular: 0, main: 0 };
   const sponsorByType = { major: 0, regular: 0, main: 0 };
+  // Configured-sponsor and Tour-underwrite (waived-seat coverage) tracked
+  // separately from the combined `sponsorByType` above. The combined number
+  // matches the prize-pool contribution; the split lets audits tell whether
+  // sponsor money was actually present or whether the apparent "sponsor" was
+  // implicit underwrite of Main exempt seats.
+  const sponsorBaseByType    = { major: 0, regular: 0, main: 0 };
+  const exemptCoverageByType = { major: 0, regular: 0, main: 0 };
   let totalExemptSeats = 0;       // majors only — preserved semantics so the
                                   // existing dashboard "Exempt seats / major"
                                   // ratio (line ~9470) keeps working.
@@ -15720,6 +15731,8 @@ function computeEconomicsMetrics(pool, events) {
       purseByType[e.type] += (e.prizePool || 0);
       winnerByType[e.type] += (e.champPrize || 0);
       sponsorByType[e.type] += (e.sponsorPurse || 0);
+      sponsorBaseByType[e.type]    += (e.sponsorBase    || 0);
+      exemptCoverageByType[e.type] += (e.exemptCoverage || 0);
     }
     if (e.type === 'major') totalExemptSeats += (e.exemptSeats || 0);
     if (e.type === 'main')  totalExemptSeats_main += (e.exemptSeats || 0);
@@ -15840,7 +15853,7 @@ function computeEconomicsMetrics(pool, events) {
     breakEvenCount, breakEvenRate, payoutRatio, avgEntriesPerPlayer, avgBuyInPerPlayer,
     yoyGrowth, biggestSinglePayout,
     // Benchmark vs real PGA/WSOP economics
-    avgPurseByType, avgWinnerByType, purseByType, winnerByType, sponsorByType, totalExemptSeats, totalExemptSeats_main,
+    avgPurseByType, avgWinnerByType, purseByType, winnerByType, sponsorByType, sponsorBaseByType, exemptCoverageByType, totalExemptSeats, totalExemptSeats_main,
     // Satellite / Main-qualifier system
     totalMainQualifierSeats, avgMainQualifierSeats, mainEventCount,
   };
@@ -16811,73 +16824,70 @@ function _exportRunToCSVImpl(snap) {
     rows.push(['cfg.' + label, typeof value === 'number' ? String(value) : value]);
   };
   cfgRow('scoringStyle', 'honey-stroke');
-  cfgRow('invariant.honeyDivisor', 1);
-  cfgRow('invariant.carryOverEnabled', true);
-  cfgRow('scoring.honeyMagnitudeTamed', true);
-  cfgRow('scoring.honeyNormalizationDivisor', 72);
-  // v32 game-variant identity + v31 loserBogey boolean. gameVariant is the
-  // user-facing name ('yellowjacket' = competitive / Bogey Loss; 'bumblebee'
-  // = casual / Honored Loss). loserBogey is the underlying mechanical flag
-  // the engine reads. Both are recorded so audits remain unambiguous.
+  // Game variant: 'yellowjacket' = competitive Bogey Loss; 'bumblebee' = casual
+  // Honored Loss. loserBogey is the underlying mechanical flag the engine reads.
   cfgRow('gameVariant', snapCfg.gameVariant || (snapCfg.loserBogey ? 'yellowjacket' : 'bumblebee'));
   cfgRow('scoring.loserBogey', !!(snapCfg.loserBogey));
-  // v39: per-decision divisor used by decideFor's EV math. Independent of the
-  // round-end honey-normalization divisor; default 9 calibrates fold rates to
-  // the disciplined heads-up Hold'em range.
+  // Per-decision divisor used by decideFor's EV math. Independent of the
+  // round-end honey-normalisation divisor.
   cfgRow('scoring.decisionDivisor',
     Number.isFinite(+snapCfg.decisionDivisor) ? +snapCfg.decisionDivisor : 9);
-  // v66: honeyMagnitude REMOVED. Flat divisor table (1/4/9/36 for round lengths
-  // 1/9/18/72) is canonical. The field is exported as 1 (the no-op constant)
-  // for any downstream tools that still expect the column.
-  cfgRow('scoring.honeyMagnitude', 1);
-  cfgRow('scoring.divisorTable', '1=1, 9=4, 18=9, 72=36 (HU)');
-  // v56: back-9 opener doubling. Mandatory pot ×N for back 9 of every 18-hole
-  // round. Default 2 = doubled. 1 = flat (legacy).
+  // Honey divisor is a flat integer table by round length, not a magnitude scalar.
+  cfgRow('scoring.divisorTable', '1=1, 9=4, 18=9, 72=36');
+  cfgRow('scoring.carryOverEnabled', true);
+  // Back-9 opener multiplier. Mandatory pot ×N for back 9 of every 18-hole round.
   cfgRow('scoring.backNineOpenerMultiplier',
     Number.isFinite(+snapCfg.backNineOpenerMultiplier) ? +snapCfg.backNineOpenerMultiplier : 2);
-  // v43: commitment-escalating fold cost. Base +1 stroke + floor(agreedTotal/4)
-  // escalation. Pot-committed dynamics restored without chip stacks.
+  // Fold cost: flat +1 bogey on the scorecard, plus the previously agreed pot
+  // forfeited as honey. Round-end true cost = 1 + agreedTotal / divisor.
   cfgRow('scoring.foldStrokeBase', 1);
-  cfgRow('scoring.foldStrokeFormula', '1 + floor(agreedTotal/4)');
-  // v42: pot-odds-aware fold check. Stage-1 trigger compares adj to
-  // (reqEquity − foldThreshold). Stage-2 EV check (now using v43
-  // commitment-escalating fold cost) runs as a backup.
-  cfgRow('decision.foldRule', 'pot-odds + EV (v42 base, v51 polarity-corrected)');
+  cfgRow('scoring.foldCostFormula', '1 + agreedTotal/divisor');
+  // Showdown matrix toggle. When true (default) the frame-aware adjustments
+  // (respected loss + cooler bonus) layer on top of the base hand-class scores.
+  cfgRow('scoring.useShowdownMatrix',
+    snapCfg.scoring && snapCfg.scoring.useShowdownMatrix !== false);
+  // Fold decision math.
+  cfgRow('decision.foldRule', 'pot-odds + EV (Honey-Stroke polarity)');
   cfgRow('decision.foldOptSlack', 0.20);
   cfgRow('decision.hardFoldFloor', 0.05);
-  // v69: cushion + cut schedule + multi-way scaffolding
+  // Elimination structure.
   cfgRow('elimination.survivalCushion', Array.isArray(snapCfg.survivalCushion) ? snapCfg.survivalCushion.join('|') : '12|8|5|3');
   cfgRow('elimination.cutSchedule', Array.isArray(snapCfg.cutSchedule) ? snapCfg.cutSchedule.map(c => c === null ? 'none' : c).join('|') : 'none|0.50|0.50|none');
   cfgRow('elimination.tableSize', Number.isFinite(+snapCfg.tableSize) ? +snapCfg.tableSize : 2);
-  // v43: pot-elastic streetCap multiplier. effectiveCap = max(progressive,
-  // min(globalCap×3, k×agreedTotal)). k=3 default unlocks preflop play and
-  // restores overbet pressure on hot pots.
+  // Pot-elastic streetCap. effectiveCap = max(progressive, min(globalCap×3, k×agreedTotal)).
   cfgRow('streetCap.potElasticK',
     Number.isFinite(+snapCfg.potElasticK) ? +snapCfg.potElasticK : 3);
   cfgRow('streetCap.formula', 'max(progressive, min(3×cap, k×agreedTotal))');
-  // v43: bet/raise granularity (was 3 tiers, now 5 — finer 3-bet/4-bet wars).
+  // Bet sizing — five tier vocabulary (probe / press / pot / polarize / shove).
   cfgRow('decision.betSizingTiers', 5);
   cfgRow('decision.maxIterationsPerStreet', 16);
-  // v40: tied-hole carry-forward is now always-on (was finals-only).
-  cfgRow('scoring.carryAlwaysOn', true);
   cfgRow('skillMetricDefinition', 'average EV realization per decision (pure poker skill, not ROI)');
   cfgRow('ui.largeSimMode', LabState.config.largeSimMode ? 'enabled' : 'disabled');
-  // YJ profile optima — these are the values actually driving decideFor's per-
-  // player profile generation in makeProfileForSkill (see ~line 2169). Earlier
-  // builds wrote `ai.thresholdCoupling.{bet,fold,raise} = 0.8/1.2/0.6` here,
-  // but those were vestigial labels from a v18-era threshold-coupling system
-  // that was retired in the v23 YJ rewrite — they were not connected to any
-  // live decision logic, and audits read them as if they were live config knobs.
-  // Reporting the real betOpt / foldOpt / raiseOpt instead so a CSV audit
-  // matches the actual AI behavior.
-  cfgRow('ai.profileOpt.bet', 0.45);
-  cfgRow('ai.profileOpt.fold', 0.25);
-  cfgRow('ai.profileOpt.raise', 0.75);
+  // AI profile optima driving decideFor's per-player profile generation in
+  // makeProfileForSkill. Reported as live values, not hard-coded labels, so a
+  // CSV audit matches the actual AI behaviour.
+  cfgRow('ai.profileOpt.bet',   PROFILE_OPT_BET);
+  cfgRow('ai.profileOpt.fold',  PROFILE_OPT_FOLD);
+  cfgRow('ai.profileOpt.raise', PROFILE_OPT_RAISE);
   cfgRow('ai.profileOpt.noise', 0);
   cfgRow('rakePercent', snapCfg.rakePercent != null ? snapCfg.rakePercent : 0.03);
   cfgRow('rakePercentRegular', snapCfg.rakePercentRegular != null ? snapCfg.rakePercentRegular : 0.015);
   cfgRow('rakePercentMajor',   snapCfg.rakePercentMajor   != null ? snapCfg.rakePercentMajor   : 0.020);
   cfgRow('rakePercentMain',    snapCfg.rakePercentMain    != null ? snapCfg.rakePercentMain    : 0.030);
+  // Effective non-Main rake scaling at multi-way tables. Per-event Elite skill
+  // edge thins roughly as 1/(N−1) at table size N, so non-Main rake is scaled
+  // down to keep Elite ROI neutral-to-positive: 1.00× at HU, 0.70× at 6-handed,
+  // 0.55× at 9-handed. Main rake is left untouched.
+  const _tableSizeForRake = +snapCfg.tableSize || 2;
+  const _rakeScaleNonMain = _tableSizeForRake <= 2 ? 1
+                          : _tableSizeForRake <= 6 ? 0.70 : 0.55;
+  cfgRow('rakeMultiwayScaleNonMain', _rakeScaleNonMain);
+  cfgRow('rakeEffectiveRegular',
+    ((snapCfg.rakePercentRegular != null ? snapCfg.rakePercentRegular : 0.015) * _rakeScaleNonMain).toFixed(4));
+  cfgRow('rakeEffectiveMajor',
+    ((snapCfg.rakePercentMajor   != null ? snapCfg.rakePercentMajor   : 0.020) * _rakeScaleNonMain).toFixed(4));
+  cfgRow('rakeEffectiveMain',
+    ((snapCfg.rakePercentMain    != null ? snapCfg.rakePercentMain    : 0.030)).toFixed(4));
   cfgRow('multiwayVariant',    snapCfg.multiwayVariant || 'bumblebee');
   cfgRow('payoutDecay', snapCfg.payoutDecay);
   cfgRow('poolSize', snapCfg.poolSize);
@@ -16927,6 +16937,28 @@ function _exportRunToCSVImpl(snap) {
   rows.push(['repeatMajorRate', fx(m.repeatMajorRate)]);
   rows.push(['eliteMajorDominance', fx(m.eliteMajorDominance)]);
   const cs = Array.isArray(m.champScores) ? m.champScores : [];
+  // avgChampScore_all averages every event regardless of tier. It is dominated
+  // by Regulars (largest event count by 50×) and is misleading when Main scores
+  // sit on a different scale (Main runs at the 18-cap / 36-divisor where
+  // per-pot stroke impact is half the Major anchor, so champion totals land
+  // far closer to par than Regular/Major totals). avgChampScore_nonMain strips
+  // Main and gives the Regular+Major signal in one number; per-tier breakdowns
+  // live further down in the by-type block.
+  rows.push(['avgChampScore_all', cs.length ? fx(cs.reduce((a,b)=>a+b,0)/cs.length, 2) : '']);
+  if (m.champScoreStatsByType) {
+    const t = m.champScoreStatsByType;
+    let nmSum = 0, nmCount = 0;
+    ['major','regular'].forEach(type => {
+      const s = t[type];
+      if (s && Number.isFinite(+s.mean) && Number.isFinite(+s.count) && s.count > 0) {
+        nmSum   += s.mean * s.count;
+        nmCount += s.count;
+      }
+    });
+    rows.push(['avgChampScore_nonMain', nmCount ? fx(nmSum / nmCount, 2) : '']);
+  }
+  // Backwards-compatible alias for older audit scripts. Deprecated — read
+  // avgChampScore_all (or avgChampScore_nonMain) instead.
   rows.push(['avgChampScore', cs.length ? fx(cs.reduce((a,b)=>a+b,0)/cs.length, 2) : '']);
   rows.push(['eventCount', m.eventCount || cs.length || 0]);
   rows.push(['poolSize', m.poolSize || 0]);
@@ -17007,6 +17039,7 @@ function _exportRunToCSVImpl(snap) {
   if (m.economics && m.economics.avgPurseByType) {
     const e = m.economics;
     const app = e.avgPurseByType || {}, awn = e.avgWinnerByType || {}, sp = e.sponsorByType || {};
+    const spBase = e.sponsorBaseByType || {}, spCov = e.exemptCoverageByType || {};
     rows.push(['avgMajorPurse', fx(app.major, 2)]);
     rows.push(['avgRegularPurse', fx(app.regular, 2)]);
     rows.push(['avgMainPurse', fx(app.main, 2)]);
@@ -17015,9 +17048,17 @@ function _exportRunToCSVImpl(snap) {
     rows.push(['avgMainWinnerPrize', fx(awn.main, 2)]);
     rows.push(['totalExemptSeats', e.totalExemptSeats || 0]);
     rows.push(['totalExemptSeats_main', e.totalExemptSeats_main || 0]);
-    rows.push(['sponsorPurseMajor', fx(sp.major, 2)]);
-    rows.push(['sponsorPurseRegular', fx(sp.regular, 2)]);
-    rows.push(['sponsorPurseMain', fx(sp.main, 2)]);
+    // Sponsor accounting: split into actual configured sponsor money
+    // (sponsorPurse*Configured) and Tour-underwrite covering waived Main
+    // exempt seats (exemptCoverage*). The combined-purse line preserved
+    // for backwards compatibility with older audit scripts.
+    rows.push(['sponsorPurseMajorConfigured',   fx(spBase.major,   2)]);
+    rows.push(['sponsorPurseRegularConfigured', fx(spBase.regular, 2)]);
+    rows.push(['sponsorPurseMainConfigured',    fx(spBase.main,    2)]);
+    rows.push(['exemptCoverageMain', fx(spCov.main, 2)]);
+    rows.push(['sponsorPurseMajor_combined',    fx(sp.major,   2)]);
+    rows.push(['sponsorPurseRegular_combined',  fx(sp.regular, 2)]);
+    rows.push(['sponsorPurseMain_combined',     fx(sp.main,    2)]);
     // Satellite system — free-Main-seat awards via the major-as-satellite mechanic
     rows.push(['totalMainQualifierSeats', e.totalMainQualifierSeats || 0]);
     rows.push(['avgMainQualifierSeatsPerMain', fx(e.avgMainQualifierSeats, 2)]);
