@@ -13081,12 +13081,18 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
       const aggResult = useMultiway
         ? runMultiwayStrokePlayEvent(players, 18, 4, cfgRunner, eventType)
         : runStrokePlayEvent(players, 18, 4, cfgRunner, eventType);
-      // v69.2 late-reg: extend field + wrapperById with admitted entrants so
-      // the outer per-player loop (buy-ins, ITM, payouts) processes them.
+      // v69.2 late-reg: extend `field` with admitted entrants so the outer
+      // per-player loop (buy-ins, ITM, payouts) processes them. wrapperById
+      // hasn't been declared yet at this point in runTourEventLab — it's
+      // created later — so we DON'T touch it here. Late entrants land in
+      // wrapperById naturally when the loop at line ~13359 walks `players`,
+      // but `players` is the original field; we add an explicit extension
+      // right after wrapperById is built (search "v69.8 LATE-REG WRAPPER FIX").
+      // Bug fix: previous code used `typeof wrapperById === 'object'` which
+      // throws ReferenceError under the temporal dead zone in modern engines.
       if (aggResult.lateEntrants && aggResult.lateEntrants.length) {
         for (const le of aggResult.lateEntrants) {
           if (field.indexOf(le) === -1) field.push(le);
-          if (typeof wrapperById === 'object' && wrapperById && !wrapperById[le.id]) wrapperById[le.id] = le;
         }
       }
       const sorted = aggResult.sortedFinishers;
@@ -13357,6 +13363,13 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   let itmCount = 0, finalTableCount = 0;
   const wrapperById = {};
   for (const w of players) wrapperById[w.id] = w;
+  // v69.8 LATE-REG WRAPPER FIX — `field` may include late entrants that aren't
+  // in `players` (the original pre-event field). Walk field directly so the
+  // per-player loop's wrapperById[p.id] lookup resolves for everyone.
+  for (let idx = 0; idx < field.length; idx++) {
+    const fp = field[idx];
+    if (fp && !wrapperById[fp.id]) wrapperById[fp.id] = fp;
+  }
   const isNonMain = eventType !== 'main';
   for (let idx = 0; idx < field.length; idx++) {
     const p = field[idx];
