@@ -233,13 +233,14 @@
   .ledger-type-pill.rake { background: rgba(184,90,58,0.16); color: var(--chart-bad, #B85A3A); }
   .ledger-type-pill.promo { background: rgba(255,193,7,0.20); color: #DBA200; }
   /* Cash table felt + chips ============================== (Phase 2/3 prep) */
-  /* === BILLIONAIRE PRIVATE CLUB AESTHETIC (v69.9 — Phase A) =================
-     Augusta National × Monte Carlo. Deep velvet felt with subtle gold specular
-     highlights, cream-leather rail with mahogany bevel, animated god-ray
-     ambient lighting, tilted-perspective hint via box-shadow layering. The
-     true 3D pass (Three.js scene + Rapier physics) is queued for Phase B+.
+  /* === DUAL-AESTHETIC SYSTEM (v69.16) ========================================
+     Yellow Jacket = Augusta luxe (default). Bumblebee = Kawaii pastel (gated
+     by .kawaii-mode class on body, applied when user is in Bumblebee Cash).
+     Tour events + Yellow Jacket Cash always use the Augusta palette since
+     they're the competitive, serious-poker side of the brand.
      ============================================================================ */
   :root {
+    /* === Augusta luxe (Yellow Jacket / tour) === */
     --augusta-felt-hi:    #11543F;   /* highlight ridge */
     --augusta-felt-mid:   #0A3D2F;   /* canonical Augusta deep velvet */
     --augusta-felt-low:   #061F18;   /* shadow trough */
@@ -251,6 +252,76 @@
     --augusta-mahogany:   #4A2C1F;   /* mahogany rail edge */
     --augusta-mahogany-hi:#6B402E;   /* mahogany highlight */
     --augusta-mahogany-lo:#2A1810;   /* mahogany shadow */
+    /* === Kawaii pastel (Bumblebee) === */
+    --kawaii-cream:       #FFF7E8;   /* warm cream background */
+    --kawaii-pink:        #FFB5E8;   /* petal pink */
+    --kawaii-mint:        #B5F2EA;   /* fresh mint felt */
+    --kawaii-leaf:        #A8E6A1;   /* meadow green */
+    --kawaii-lavender:    #E0BBFF;   /* dreamy lavender */
+    --kawaii-sunny:       #FFEE7E;   /* sunshine yellow */
+    --kawaii-honey:       #FFCC4D;   /* honey gold */
+    --kawaii-bee:         #F9D71C;   /* bee body yellow */
+    --kawaii-sky:         #C0E0FF;   /* soft sky blue */
+    --kawaii-choco:       #3D2A1F;   /* friendly chocolate text */
+    --kawaii-choco-soft:  #6B5A4A;   /* secondary text */
+  }
+  /* === Reduced-motion respect (a11y) ====================================== */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+    .petal, .nectar-drop, .yj-3d-canvas { display: none !important; }
+  }
+  /* === Universal focus-visible rings (a11y) ============================== */
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--augusta-gold-hi, #F0C75E);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px rgba(240,199,94,0.35);
+  }
+  body.kawaii-mode button:focus-visible,
+  body.kawaii-mode a:focus-visible,
+  body.kawaii-mode input:focus-visible,
+  body.kawaii-mode select:focus-visible,
+  body.kawaii-mode textarea:focus-visible {
+    outline-color: var(--kawaii-pink, #FFB5E8);
+    box-shadow: 0 0 0 4px rgba(255,181,232,0.40);
+  }
+  /* === 48px minimum touch targets on mobile (a11y) ====================== */
+  @media (max-width: 768px) {
+    .btn, button.btn, .tag-pill, .tag-add-btn, .preset-btn {
+      min-height: 48px; min-width: 48px;
+    }
+  }
+  /* === CSS containment for stable views (perf) ========================== */
+  /* Stable, non-animated views can opt-in to layout/style/paint containment
+     so unrelated DOM changes don't trigger re-layout/repaint of these
+     subtrees. Applied to views that don't have ongoing animations. The
+     felt-table view is excluded (active animations). */
+  [data-view="bankroll"],
+  [data-view="staking"],
+  [data-view="economy"],
+  [data-view="history"],
+  [data-view="hof"],
+  [data-view="analytics"],
+  [data-view="compare"],
+  [data-view="rules"],
+  [data-view="codex"],
+  [data-view="decisiontree"] {
+    contain: layout style;
+  }
+  /* will-change only on actively animated elements — overuse hurts perf */
+  .pkr-card.squeeze,
+  .pkr-card[style*="animation"],
+  .chip-travel,
+  .honey-droplet,
+  .ft-burst {
+    will-change: transform, opacity;
   }
   .felt-table {
     position: relative;
@@ -538,6 +609,138 @@
   }
   /* Empty seat reduced opacity but no greyscale (was confusing with folded) */
   .seat.empty-seat { opacity: 0.45; filter: none; border-style: dashed; }
+  /* === KAWAII MODE — Bumblebee aesthetic overrides (v69.16) ============== */
+  body.kawaii-mode .felt-table {
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 35%, rgba(255,238,126,0.30) 0%, transparent 70%),
+      radial-gradient(ellipse at center, var(--kawaii-mint, #B5F2EA) 0%, var(--kawaii-leaf, #A8E6A1) 50%, var(--kawaii-cream, #FFF7E8) 100%);
+    border: 12px solid var(--kawaii-cream, #FFF7E8);
+    box-shadow:
+      inset 0 0 90px rgba(255,204,77,0.22),
+      inset 0 0 0 2px rgba(249,215,28,0.15),
+      0 18px 50px rgba(61,42,31,0.30),
+      0 0 32px rgba(255,238,126,0.32);
+  }
+  body.kawaii-mode .felt-table::before {
+    /* Cute pink-tinted inner ring instead of mahogany bevel */
+    border-color: var(--kawaii-pink, #FFB5E8);
+    box-shadow:
+      inset 0 0 0 1px rgba(255,181,232,0.35),
+      inset 0 1px 2px rgba(255,255,255,0.5),
+      inset 0 0 16px rgba(255,238,126,0.15);
+  }
+  body.kawaii-mode .felt-table::after {
+    /* Gentle 12s breathing glow instead of harsh god-ray */
+    background: radial-gradient(ellipse 60% 40% at 50% 25%, rgba(255,238,126,0.42) 0%, transparent 80%);
+    animation: kawaiiBreath 12s ease-in-out infinite;
+  }
+  @keyframes kawaiiBreath {
+    0%,100% { opacity: 0.55; transform: scale(1); }
+    50%     { opacity: 0.95; transform: scale(1.025); }
+  }
+  body.kawaii-mode .felt-table-ring { border-color: rgba(249,215,28,0.30); }
+  body.kawaii-mode .seat {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.85), rgba(255,247,232,0.95));
+    color: var(--kawaii-choco, #3D2A1F);
+    border: 1px solid var(--kawaii-honey, #FFCC4D);
+    box-shadow: 0 4px 14px rgba(249,215,28,0.30), inset 0 1px 0 rgba(255,255,255,0.7);
+  }
+  body.kawaii-mode .seat .seat-stack { color: var(--kawaii-honey, #FFCC4D); }
+  body.kawaii-mode .seat.acting {
+    box-shadow:
+      0 0 0 3px var(--kawaii-pink, #FFB5E8),
+      0 0 24px rgba(255,181,232,0.65),
+      0 6px 16px rgba(0,0,0,0.18);
+    border-color: var(--kawaii-pink, #FFB5E8);
+  }
+  body.kawaii-mode .pot-display .pot-value {
+    background: linear-gradient(180deg, var(--kawaii-sunny,#FFEE7E) 0%, var(--kawaii-honey,#FFCC4D) 60%, #B58A0E 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 2px 6px rgba(255,204,77,0.45);
+  }
+  body.kawaii-mode .pkr-card {
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.8) inset,
+      0 0 0 1px rgba(255,181,232,0.35),
+      0 4px 14px rgba(255,181,232,0.30),
+      0 2px 4px rgba(0,0,0,0.15);
+    border-radius: 8px;
+  }
+  body.kawaii-mode .btn.act-raise {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.25), rgba(0,0,0,0.04) 40%, rgba(0,0,0,0.06)),
+      linear-gradient(180deg, var(--kawaii-sunny,#FFEE7E) 0%, var(--kawaii-honey,#FFCC4D) 60%, var(--kawaii-bee,#F9D71C) 100%);
+    color: var(--kawaii-choco, #3D2A1F);
+    border: 1px solid var(--kawaii-honey, #FFCC4D);
+    border-radius: 18px;
+  }
+  body.kawaii-mode .btn.act-call {
+    background: linear-gradient(180deg, #d4f5ed 0%, var(--kawaii-mint,#B5F2EA) 50%, #7fcdbf 100%);
+    color: var(--kawaii-choco, #3D2A1F);
+    border: 1px solid #7fcdbf;
+    border-radius: 18px;
+  }
+  body.kawaii-mode .btn.act-fold {
+    background: linear-gradient(180deg, #ffd8ee 0%, var(--kawaii-pink,#FFB5E8) 60%, #d27dba 100%);
+    color: var(--kawaii-choco, #3D2A1F);
+    border: 1px solid #d27dba;
+    border-radius: 18px;
+  }
+  body.kawaii-mode .action-presets .preset-btn {
+    background: linear-gradient(180deg, var(--kawaii-cream,#FFF7E8), var(--kawaii-sunny,#FFEE7E));
+    color: var(--kawaii-choco, #3D2A1F);
+    border: 1px solid var(--kawaii-honey, #FFCC4D);
+    border-radius: 14px;
+  }
+  body.kawaii-mode .pot-display .pot-label { color: var(--kawaii-pink, #FFB5E8); }
+  body.kawaii-mode .cash-table-card {
+    background: linear-gradient(180deg, var(--kawaii-cream,#FFF7E8), #FBE5C0) !important;
+    color: var(--kawaii-choco, #3D2A1F) !important;
+  }
+  body.kawaii-mode .cash-log {
+    background: rgba(61,42,31,0.06) !important;
+    color: var(--kawaii-choco-soft, #6B5A4A) !important;
+  }
+  /* === Floating petals + nectar drops (kawaii particle system) =========== */
+  .petal, .nectar-drop {
+    position: fixed; pointer-events: none;
+    z-index: 9000; will-change: transform, opacity;
+  }
+  .petal {
+    width: 16px; height: 16px;
+    background: radial-gradient(circle at 35% 30%, #FFD7F0, var(--kawaii-pink,#FFB5E8) 60%, var(--kawaii-lavender,#E0BBFF));
+    border-radius: 60% 25% 60% 25%;
+    box-shadow: 0 0 6px rgba(255,181,232,0.45);
+  }
+  .nectar-drop {
+    width: 12px; height: 16px;
+    background: radial-gradient(circle at 35% 30%, #FFF8C2, var(--kawaii-honey,#FFCC4D) 60%, #B58A0E);
+    border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+    box-shadow: 0 0 6px rgba(255,204,77,0.55);
+  }
+  @keyframes petalFloat {
+    0%   { transform: translate3d(0, 100vh, 0) rotate(0deg); opacity: 0; }
+    8%   { opacity: 0.85; }
+    50%  { transform: translate3d(var(--drift, 80px), 50vh, 0) rotate(360deg); }
+    92%  { opacity: 0.85; }
+    100% { transform: translate3d(calc(var(--drift, 80px) * -1), -10vh, 0) rotate(720deg); opacity: 0; }
+  }
+  /* === Buzz celebration toast (kawaii daily login) ====================== */
+  .buzz-toast {
+    position: fixed; bottom: 64px; left: 50%; transform: translateX(-50%) translateY(80px);
+    background: var(--kawaii-cream,#FFF7E8); color: var(--kawaii-choco,#3D2A1F);
+    padding: 14px 28px; border-radius: 9999px;
+    font-size: 16px; font-weight: 700; letter-spacing: 0.2px;
+    box-shadow: 0 14px 36px rgba(249,215,28,0.45), 0 0 0 2px rgba(249,215,28,0.55) inset;
+    z-index: 99999; white-space: nowrap;
+    display: flex; align-items: center; gap: 10px;
+    opacity: 0; transition: transform 0.45s cubic-bezier(.2,.8,.4,1), opacity 0.4s ease;
+  }
+  .buzz-toast.in { transform: translateX(-50%) translateY(0); opacity: 1; }
+  .buzz-toast.out { transform: translateX(-50%) translateY(-30px); opacity: 0; }
+  .buzz-toast .buzz-emoji { font-size: 24px; }
   /* === Action panel ====================================================== */
   .action-panel {
     margin-top: 14px;
@@ -1641,7 +1844,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.29-v69.15-felt-layout";
+const APP_VERSION = "2026.04.29-v69.16-dual-aesthetic";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -1926,6 +2129,13 @@ function unifiedSave() {
         history: GoldenLottery.history.slice(0, 50),
         config: GoldenLottery.config,
       } : null,
+      quests: (typeof QuestsState === 'object' && QuestsState) ? {
+        weekStart: QuestsState.weekStart,
+        active: QuestsState.active,
+        completed: QuestsState.completed.slice(-50),
+        loginStreak: QuestsState.loginStreak,
+        lastLoginDate: QuestsState.lastLoginDate,
+      } : null,
     };
     getStorage().setItem(UNIFIED_SAVE_KEY, JSON.stringify(payload));
     return true;
@@ -1992,6 +2202,13 @@ function unifiedRestore(payload) {
     if (Array.isArray(payload.goldenLottery.entries)) GoldenLottery.entries = payload.goldenLottery.entries;
     if (Array.isArray(payload.goldenLottery.history)) GoldenLottery.history = payload.goldenLottery.history;
     if (payload.goldenLottery.config && typeof payload.goldenLottery.config === 'object') Object.assign(GoldenLottery.config, payload.goldenLottery.config);
+  }
+  if (payload.quests && typeof payload.quests === 'object' && typeof QuestsState === 'object') {
+    if (typeof payload.quests.weekStart === 'number') QuestsState.weekStart = payload.quests.weekStart;
+    if (Array.isArray(payload.quests.active)) QuestsState.active = payload.quests.active;
+    if (Array.isArray(payload.quests.completed)) QuestsState.completed = payload.quests.completed;
+    if (typeof payload.quests.loginStreak === 'number') QuestsState.loginStreak = payload.quests.loginStreak;
+    if (typeof payload.quests.lastLoginDate === 'string') QuestsState.lastLoginDate = payload.quests.lastLoginDate;
   }
   return payload.version || null;
 }
@@ -5162,6 +5379,98 @@ function nectarMacroSnapshot() {
 // reserved user slot; pool ids start at 1 so they never collide.
 ensureBankroll(0);
 
+// =============================================================================
+// QUESTS + DAILY LOGIN STREAK (v69.16)
+// =============================================================================
+// 3 rotating weekly quests + a daily-login auto-celebration on the first
+// cash-table or bankroll visit per day. Persists via the unified save bundle.
+// Universal across YJ + Bumblebee variants — quests reward Nectar regardless
+// of which menu the qualifying activity happened in.
+const QuestsState = {
+  weekStart: 0,             // ISO Monday timestamp at the start of the active week
+  active: [],               // [{id, name, target, progress, reward, claimed}]
+  completed: [],            // [{id, weekStart, completedAt}]
+  loginStreak: 0,
+  lastLoginDate: null,      // 'YYYY-MM-DD'
+};
+const QUEST_DEFINITIONS = [
+  { id: 'play-cash-15',     name: 'Grinder',         desc: 'Play 15 cash hands',                target: 15,  reward: 250, kind: 'cashHands' },
+  { id: 'cash-win-5',       name: 'Honey Pot',       desc: 'Win 5 cash hands at showdown',      target: 5,   reward: 200, kind: 'cashShowdownWins' },
+  { id: 'tour-itm-3',       name: 'In the Money',    desc: 'Cash 3 tour events',                target: 3,   reward: 800, kind: 'tourITM' },
+  { id: 'golden-2',         name: 'Glittering',      desc: 'Trigger 2 Golden Card lottery entries', target: 2, reward: 500, kind: 'goldenEntries' },
+  { id: 'showdown-25',      name: 'Showman',         desc: 'See 25 showdowns',                  target: 25,  reward: 350, kind: 'showdowns' },
+  { id: 'major-cash-1',     name: 'Major Splash',    desc: 'Cash a Major event',                target: 1,   reward: 1500, kind: 'majorITM' },
+  { id: 'streak-7',         name: 'Faithful Bee',    desc: 'Hit a 7-day login streak',          target: 7,   reward: 1000, kind: 'loginStreak' },
+];
+function getMondayISO(d) {
+  d = d || new Date();
+  const t = new Date(d.getTime());
+  const day = t.getDay() || 7; // Mon=1..Sun=7
+  if (day !== 1) t.setDate(t.getDate() - (day - 1));
+  t.setHours(0, 0, 0, 0);
+  return t.getTime();
+}
+function ensureQuestsForCurrentWeek() {
+  const monday = getMondayISO();
+  if (QuestsState.weekStart === monday && QuestsState.active.length > 0) return;
+  // Roll a new set of 3 distinct quests, deterministic per week (so the
+  // quest is the same if the user reloads mid-week).
+  const seed = monday;
+  const rng = (n) => { let s = (seed + n * 9301 + 49297) % 233280; return s / 233280; };
+  const indices = [];
+  for (let i = 0; QUEST_DEFINITIONS.length > 0 && indices.length < 3 && indices.length < QUEST_DEFINITIONS.length; i++) {
+    const pick = Math.floor(rng(i) * QUEST_DEFINITIONS.length);
+    if (indices.indexOf(pick) === -1) indices.push(pick);
+  }
+  QuestsState.active = indices.map(i => {
+    const def = QUEST_DEFINITIONS[i];
+    return Object.assign({}, def, { progress: 0, claimed: false });
+  });
+  QuestsState.weekStart = monday;
+}
+function questProgress(kind, delta) {
+  ensureQuestsForCurrentWeek();
+  delta = delta || 1;
+  for (const q of QuestsState.active) {
+    if (q.kind === kind && !q.claimed) {
+      q.progress = Math.min(q.target, q.progress + delta);
+      if (q.progress >= q.target) {
+        // Auto-pay reward + celebrate
+        nectarPost({ type: 'promo.bonus', from: null, to: 0, amount: q.reward, reason: 'Weekly quest: ' + q.name, meta: { questId: q.id } });
+        q.claimed = true;
+        QuestsState.completed.push({ id: q.id, weekStart: QuestsState.weekStart, completedAt: Date.now() });
+        toast('🌟 Quest complete: ' + q.name + ' · +' + q.reward + ' ◈', 4200);
+        if (typeof showBuzzToast === 'function' && document.body.classList.contains('kawaii-mode')) {
+          showBuzzToast('Quest complete: ' + q.name + ' · +' + q.reward + ' ◈', 3000);
+        }
+      }
+    }
+  }
+}
+// Daily login streak — call from boot. Auto-celebrates first session per day.
+function checkDailyLogin() {
+  const today = new Date();
+  const dateKey = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+  if (QuestsState.lastLoginDate === dateKey) return false; // already counted
+  // Determine streak continuation: if last login was yesterday, +1; else reset to 1
+  let streak = 1;
+  if (QuestsState.lastLoginDate) {
+    const last = new Date(QuestsState.lastLoginDate + 'T00:00:00');
+    const diffDays = Math.round((today - last) / 86400000);
+    streak = (diffDays === 1) ? (QuestsState.loginStreak + 1) : 1;
+  }
+  QuestsState.loginStreak = streak;
+  QuestsState.lastLoginDate = dateKey;
+  // Reward scales with streak — base 50 + 25 per consecutive day, capped at 500
+  const reward = Math.min(500, 50 + (streak - 1) * 25);
+  nectarPost({ type: 'promo.bonus', from: null, to: 0, amount: reward, reason: 'Daily login streak day ' + streak, meta: { streak } });
+  // Celebrate
+  toast('🌸 Day ' + streak + ' streak · +' + reward + ' ◈ Honey Rain', 3800);
+  // Quest progress
+  questProgress('loginStreak', 1);
+  return true;
+}
+
 // === Tour <-> Nectar bridge (Phase 6) =======================================
 // The tour engine runs at very high event volume (100yr × ~30 events × 256
 // players = ~750K player-events). Writing every entry to the ledger would
@@ -5198,6 +5507,11 @@ function nectarApplyTourPayout(playerId, amount, eventName, year, place) {
   NectarState.archive.totalPayouts += amount;
   if (playerId === 0) {
     nectarPost({ type: 'tour.payout', from: null, to: 0, amount, reason: eventName + ' payout · Y' + year + (place ? ' · finish ' + place : ''), meta: { eventName, year, place } });
+    // v69.16 quest progress — hero cashed a tour event
+    try {
+      questProgress('tourITM', 1);
+      if (eventName && /major/i.test(String(eventName))) questProgress('majorITM', 1);
+    } catch (_) {}
   }
   // Settle staking contracts for this pro/event combo.
   if (typeof StakingState === 'object' && StakingState.contracts) {
@@ -5881,6 +6195,10 @@ function onHashChange() {
   // the WebGL context. The scene re-mounts on next visit.
   if (typeof scene3dUnmount === 'function' && name !== 'tables' && name !== 'bumblebee') {
     try { scene3dUnmount(); } catch (_) {}
+  }
+  // v69.16: stop kawaii particle system when leaving Bumblebee
+  if (typeof kawaiiStop === 'function' && name !== 'bumblebee') {
+    try { kawaiiStop(); } catch (_) {}
   }
   if (name === 'players' && !parsed.params.profileId) PlayersState.profileId = null;
   if (document.startViewTransition) {
@@ -10420,11 +10738,13 @@ function renderActionPanel(t) {
 
   // Fold.
   const foldBtn = el('button', { class: 'btn act-fold', text: 'Fold' });
+  foldBtn.setAttribute('aria-label', 'Fold hand (keyboard: F)');
   foldBtn.onclick = () => submitUserAction(t, { kind: 'fold' });
   left.appendChild(foldBtn);
 
   // Check or Call. Pot-odds annotation if enabled.
   const callBtn = el('button', { class: 'btn act-call' });
+  callBtn.setAttribute('aria-label', (callAmt === 0 ? 'Check' : 'Call ' + callAmt) + ' (keyboard: C)');
   const callMain = el('span', { text: callAmt === 0 ? 'Check' : 'Call ' + callAmt });
   callBtn.appendChild(callMain);
   if (callAmt > 0 && TourState.preferences && TourState.preferences.potOdds) {
@@ -10440,6 +10760,7 @@ function renderActionPanel(t) {
 
   // Bet/Raise.
   const raiseBtn = el('button', { class: 'btn act-raise', text: h.currentBet > 0 ? 'Raise' : 'Bet' });
+  raiseBtn.setAttribute('aria-label', (h.currentBet > 0 ? 'Raise' : 'Bet') + ' — keyboard: R, then Enter to confirm');
   inner.appendChild(left);
 
   // Right side: slider + presets + amount input.
@@ -11326,6 +11647,8 @@ function resolveCashHand(t) {
       recordGoldenLotteryEntry(t.seats[winnerIdx], t, h.handId);
       h.goldenWinTriggered = true;
       foley('win-fanfare');
+      // v69.16 quest progress — Golden Card lottery entry by hero
+      if (t.seats[winnerIdx].playerId === 0) try { questProgress('goldenEntries', 1); } catch (_) {}
       // v69.9 Buzz honey-droplet burst — Golden Hand celebration. Origin
       // anchored to the pot display for visual continuity.
       try {
@@ -11355,6 +11678,13 @@ function resolveCashHand(t) {
     }
   }
   for (const i of h.seated) t.seats[i].handsPlayed++;
+  // v69.16 quest progress — track hero's cash hand activity
+  const youSeatIdx = t.seats.findIndex(s => s && s.playerId === 0);
+  if (youSeatIdx >= 0 && h.seated.indexOf(youSeatIdx) !== -1) {
+    try { questProgress('cashHands', 1); } catch (_) {}
+    if (isShowdown) try { questProgress('showdowns', 1); } catch (_) {}
+    if (isShowdown && winnerIdx === youSeatIdx) try { questProgress('cashShowdownWins', 1); } catch (_) {}
+  }
   if (isShowdown && h.activeMask.length >= 2) checkBadBeatTrigger(h.activeMask, h.hole, h.board, t, winnerIdx);
   t.handCount++;
   t.stats.totalPot += h.pot;
@@ -11978,6 +12308,70 @@ function showChampionCelebration(opts) {
   setTimeout(() => overlay.remove(), 4400);
 }
 
+// === v69.16 Kawaii particle system + Buzz celebration toast =================
+// Floating petals (pink) + nectar drops (gold honey) drift across the
+// viewport. Active only when body has .kawaii-mode (Bumblebee Cash). Fixed
+// per-particle lifetime + bounded population to keep cost predictable on
+// mobile. Respects prefers-reduced-motion via the CSS media query.
+const KawaiiFx = {
+  active: false,
+  spawnInterval: null,
+  particleCount: 0,
+  maxParticles: 12,           // bounded to keep mobile happy
+};
+function kawaiiStart() {
+  if (KawaiiFx.active) return;
+  KawaiiFx.active = true;
+  document.body.classList.add('kawaii-mode');
+  // Spawn one particle every ~1500ms; bounded to maxParticles concurrent
+  KawaiiFx.spawnInterval = setInterval(() => {
+    if (KawaiiFx.particleCount >= KawaiiFx.maxParticles) return;
+    kawaiiSpawnParticle(Math.random() < 0.55 ? 'petal' : 'nectar');
+  }, 1500);
+}
+function kawaiiStop() {
+  if (!KawaiiFx.active) return;
+  KawaiiFx.active = false;
+  document.body.classList.remove('kawaii-mode');
+  if (KawaiiFx.spawnInterval) clearInterval(KawaiiFx.spawnInterval);
+  KawaiiFx.spawnInterval = null;
+  // Existing particles will fade out via their own animation
+}
+function kawaiiSpawnParticle(kind) {
+  const p = document.createElement('div');
+  p.className = (kind === 'petal') ? 'petal' : 'nectar-drop';
+  const startX = Math.random() * window.innerWidth;
+  const drift = (Math.random() - 0.5) * 200; // ±100px horizontal drift
+  const duration = 14000 + Math.random() * 10000; // 14-24s
+  p.style.left = startX + 'px';
+  p.style.top = '0';
+  p.style.setProperty('--drift', drift + 'px');
+  p.style.animation = 'petalFloat ' + duration + 'ms linear forwards';
+  document.body.appendChild(p);
+  KawaiiFx.particleCount++;
+  setTimeout(() => {
+    if (p.parentNode) p.parentNode.removeChild(p);
+    KawaiiFx.particleCount--;
+  }, duration);
+}
+// Buzz mascot toast — kawaii-style celebration banner
+function showBuzzToast(text, durationMs) {
+  durationMs = durationMs || 2800;
+  const t = document.createElement('div');
+  t.className = 'buzz-toast';
+  t.appendChild(el('span', { class: 'buzz-emoji', text: '🐝' }));
+  t.appendChild(el('span', { text: text }));
+  t.appendChild(el('span', { class: 'buzz-emoji', text: '🌼' }));
+  document.body.appendChild(t);
+  // Slide in
+  requestAnimationFrame(() => t.classList.add('in'));
+  setTimeout(() => {
+    t.classList.remove('in');
+    t.classList.add('out');
+    setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, 500);
+  }, durationMs);
+}
+
 // v69.9 Buzz honey-droplet burst — call directly with origin + count to fire
 // off-cycle from the celebration overlay (e.g., on Golden Card wins).
 function spawnHoneyDropletBurst(opts) {
@@ -12117,6 +12511,35 @@ Views.bankroll = function() {
   ));
   header.appendChild(statRow);
   view.appendChild(header);
+
+  // === v69.16 Weekly Quests + login streak card ========================
+  ensureQuestsForCurrentWeek();
+  const questsCard = el('div', { class: 'card', style: 'margin-bottom: 18px; background: linear-gradient(135deg, rgba(255,238,126,0.10), rgba(255,181,232,0.08));' });
+  const qHead = el('div', { style: 'display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px;' });
+  qHead.appendChild(el('h2', { text: '🌟 Weekly Quests', style: 'margin:0;' }));
+  qHead.appendChild(el('div', { class: 'ui-sans', style: 'font-size:11px; opacity:0.7;', text: 'Streak: Day ' + QuestsState.loginStreak + ' · resets Monday' }));
+  questsCard.appendChild(qHead);
+  if (QuestsState.active.length === 0) {
+    questsCard.appendChild(el('div', { style: 'font-style:italic; opacity:0.6; padding:14px 0;', text: 'No active quests — check back next week.' }));
+  } else {
+    for (const q of QuestsState.active) {
+      const row = el('div', { style: 'display:flex; align-items:center; gap:12px; padding: 10px 0; border-bottom: 1px solid var(--border, rgba(0,0,0,0.06));' });
+      row.appendChild(el('div', { style: 'flex: 0 0 28px; font-size: 22px; line-height:1;', text: q.claimed ? '✅' : '⏳' }));
+      const meta = el('div', { style: 'flex: 1 1 auto;' });
+      meta.appendChild(el('div', { style: 'font-weight: 600; font-size: 13px;', text: q.name }));
+      meta.appendChild(el('div', { style: 'font-size: 11px; opacity: 0.75; margin-top: 2px;', text: q.desc }));
+      const barOuter = el('div', { style: 'margin-top: 6px; height: 6px; background: rgba(0,0,0,0.08); border-radius: 4px; overflow: hidden;' });
+      const pct = Math.min(1, q.progress / q.target);
+      const barFill = el('div', { style: 'width: ' + (pct * 100) + '%; height: 100%; background: linear-gradient(90deg, var(--augusta-gold-hi,#F0C75E), var(--augusta-gold,#D4A017)); transition: width 320ms ease-out;' });
+      barOuter.appendChild(barFill);
+      meta.appendChild(barOuter);
+      meta.appendChild(el('div', { style: 'font-size: 10px; opacity: 0.6; margin-top: 3px;', text: q.progress + ' / ' + q.target }));
+      row.appendChild(meta);
+      row.appendChild(el('div', { style: 'flex: 0 0 auto; font-weight: 700; color: var(--gold,#C9A857); font-variant-numeric: tabular-nums;', text: '+' + q.reward + ' ◈' }));
+      questsCard.appendChild(row);
+    }
+  }
+  view.appendChild(questsCard);
 
   // === P2P transfer + actions ============================================
   const actions = el('div', { class: 'card', style: 'margin-bottom: 18px;' });
@@ -12520,8 +12943,16 @@ function renderCashView(gameMode) {
     }, 250);
   }
 }
-Views.tables = function() { renderCashView('yj'); };
-Views.bumblebee = function() { renderCashView('bb'); };
+Views.tables = function() {
+  // Yellow Jacket Cash = Augusta luxe (default). Ensure kawaii mode is off.
+  try { kawaiiStop(); } catch (_) {}
+  renderCashView('yj');
+};
+Views.bumblebee = function() {
+  // Bumblebee Cash = Kawaii pastel. Activate the dual-aesthetic switch.
+  try { kawaiiStart(); } catch (_) {}
+  renderCashView('bb');
+};
 // Helper used by the engine to re-render whichever cash view is active.
 // Looks at the current focused table's variant, OR falls back to the
 // active view in document.body.dataset, so engine ticks always re-render
@@ -19358,6 +19789,8 @@ function init() {
   window.addEventListener('hashchange', onHashChange);
   onHashChange();
   renderBackgroundSimBanner();
+  // v69.16: daily-login auto-celebration on first session per day
+  try { ensureQuestsForCurrentWeek(); checkDailyLogin(); } catch (_) {}
 
   $$('nav.nav a').forEach(a => {
     a.onclick = (e) => { e.preventDefault(); location.hash = '#' + a.dataset.route; };
