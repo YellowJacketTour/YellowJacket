@@ -233,28 +233,102 @@
   .ledger-type-pill.rake { background: rgba(184,90,58,0.16); color: var(--chart-bad, #B85A3A); }
   .ledger-type-pill.promo { background: rgba(255,193,7,0.20); color: #DBA200; }
   /* Cash table felt + chips ============================== (Phase 2/3 prep) */
+  /* === BILLIONAIRE PRIVATE CLUB AESTHETIC (v69.9 — Phase A) =================
+     Augusta National × Monte Carlo. Deep velvet felt with subtle gold specular
+     highlights, cream-leather rail with mahogany bevel, animated god-ray
+     ambient lighting, tilted-perspective hint via box-shadow layering. The
+     true 3D pass (Three.js scene + Rapier physics) is queued for Phase B+.
+     ============================================================================ */
+  :root {
+    --augusta-felt-hi:    #11543F;   /* highlight ridge */
+    --augusta-felt-mid:   #0A3D2F;   /* canonical Augusta deep velvet */
+    --augusta-felt-low:   #061F18;   /* shadow trough */
+    --augusta-gold:       #D4A017;   /* honey/specular */
+    --augusta-gold-hi:    #F0C75E;   /* gold highlight */
+    --augusta-gold-deep:  #8E6E0E;   /* gold shadow */
+    --augusta-cream:      #F5F0E6;   /* leather rail */
+    --augusta-cream-warm: #E8DEC2;   /* leather warm */
+    --augusta-mahogany:   #4A2C1F;   /* mahogany rail edge */
+    --augusta-mahogany-hi:#6B402E;   /* mahogany highlight */
+    --augusta-mahogany-lo:#2A1810;   /* mahogany shadow */
+  }
   .felt-table {
     position: relative;
     aspect-ratio: 16/9;
-    background: radial-gradient(ellipse at center, #0F6E50 0%, #084032 75%, #051a14 100%);
+    /* Layered felt: velvet sheen via radial highlight + base gradient + subtle
+       noise via repeating gradient. The result is a "lit-from-above" velvet
+       that shifts with the gold specular pass. */
+    background:
+      radial-gradient(ellipse 70% 50% at 50% 30%, rgba(212,160,23,0.06) 0%, transparent 60%),
+      radial-gradient(ellipse at center, var(--augusta-felt-hi) 0%, var(--augusta-felt-mid) 60%, var(--augusta-felt-low) 100%),
+      repeating-linear-gradient(135deg, rgba(0,0,0,0.014) 0 1px, transparent 1px 3px);
     border-radius: 50% / 30%;
-    box-shadow: inset 0 0 60px rgba(0,0,0,0.55), 0 12px 30px rgba(0,0,0,0.4);
-    border: 8px solid #3a2410;
+    /* Layered shadow: deep inset for table well + outer cast shadow for table-on-floor + outer glow */
+    box-shadow:
+      inset 0 0 80px rgba(0,0,0,0.65),
+      inset 0 4px 18px rgba(212,160,23,0.05),
+      0 18px 50px rgba(0,0,0,0.55),
+      0 6px 14px rgba(0,0,0,0.35);
+    /* Cream-leather rail with mahogany inner bevel.
+       8px outer cream + 2px inner mahogany shadow line. */
+    border: 8px solid var(--augusta-cream);
     background-clip: padding-box;
+    background-origin: border-box;
+    /* Subtle perspective tilt — gives a "viewing from above" 3D hint without WebGL */
+    transform: perspective(1200px) rotateX(8deg);
+    transform-origin: center 60%;
   }
+  /* God-ray ambient — slow rotating radial that adds subtle "lit from chandelier" effect */
+  .felt-table::after {
+    content: ''; position: absolute; inset: 0;
+    background: radial-gradient(ellipse 50% 30% at 50% -10%, rgba(255,215,80,0.10) 0%, transparent 70%);
+    pointer-events: none; border-radius: inherit;
+    animation: feltGodRay 24s ease-in-out infinite alternate;
+  }
+  @keyframes feltGodRay {
+    0%   { opacity: 0.55; transform: translateY(-2%) scale(1.02); }
+    50%  { opacity: 0.85; transform: translateY(0) scale(1.0); }
+    100% { opacity: 0.55; transform: translateY(2%) scale(1.02); }
+  }
+  /* Mahogany inner bevel — sits between cream rail and felt edge */
   .felt-table::before {
-    content: ''; position: absolute; inset: 16px;
-    border: 1px dashed rgba(255,215,80,0.20); border-radius: 50% / 30%; pointer-events: none;
+    content: ''; position: absolute; inset: 4px;
+    border: 2px solid var(--augusta-mahogany);
+    border-radius: 50% / 30%; pointer-events: none;
+    box-shadow:
+      inset 0 0 0 1px var(--augusta-mahogany-lo),
+      inset 0 1px 2px var(--augusta-mahogany-hi),
+      inset 0 0 18px rgba(0,0,0,0.35);
+  }
+  /* Inner gold dashed ring — preserves the original "table marker" line */
+  .felt-table-ring {
+    content: ''; position: absolute; inset: 22px;
+    border: 1px dashed rgba(212,160,23,0.30);
+    border-radius: 50% / 30%; pointer-events: none;
   }
   .seat {
     position: absolute; transform: translate(-50%, -50%);
-    width: 92px; padding: 8px 10px;
-    background: rgba(11,85,68,0.92); color: #F5F1E8;
-    border: 1px solid rgba(201,168,87,0.5); border-radius: 10px;
+    width: 96px; padding: 10px 12px;
+    /* Layered seat plate: leather-tone with cream edge + warm bottom shadow */
+    background:
+      linear-gradient(180deg, rgba(245,240,230,0.06), rgba(0,0,0,0.10)),
+      linear-gradient(180deg, rgba(11,60,46,0.96), rgba(6,30,22,0.98));
+    color: #F5F1E8;
+    border: 1px solid rgba(212,160,23,0.55);
+    border-radius: 10px;
     font-family: -apple-system, sans-serif; font-size: 11px; text-align: center;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06);
+    transition: transform 0.22s cubic-bezier(.2,.7,.3,1), box-shadow 0.22s ease;
   }
-  .seat.acting { box-shadow: 0 0 0 3px rgba(255,215,80,0.65), 0 0 24px rgba(255,215,80,0.45); transform: translate(-50%, -50%) scale(1.04); }
+  .seat.acting {
+    box-shadow:
+      0 0 0 3px rgba(240,199,94,0.75),
+      0 0 28px rgba(212,160,23,0.65),
+      0 6px 18px rgba(0,0,0,0.5),
+      inset 0 1px 0 rgba(255,255,255,0.10);
+    transform: translate(-50%, -50%) scale(1.06);
+    border-color: var(--augusta-gold-hi);
+  }
   .seat.folded { opacity: 0.35; filter: grayscale(0.7); }
   .seat .seat-name { font-weight: 600; }
   .seat .seat-stack { font-variant-numeric: tabular-nums; color: var(--gold, #C9A857); margin-top: 2px; }
@@ -265,18 +339,37 @@
     text-align: center; pointer-events: none;
   }
   .pot-display .pot-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.7; }
-  .pot-display .pot-value { font-size: 28px; font-weight: 800; color: var(--gold, #C9A857); font-variant-numeric: tabular-nums; }
+  .pot-display .pot-value {
+    font-size: 32px; font-weight: 800;
+    /* Engraved gold metallic text — matches the chip finish */
+    background: linear-gradient(180deg, var(--augusta-gold-hi,#F0C75E) 0%, var(--augusta-gold,#D4A017) 55%, var(--augusta-gold-deep,#8E6E0E) 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.55);
+    font-variant-numeric: tabular-nums; letter-spacing: -0.5px;
+    filter: drop-shadow(0 1px 0 rgba(255,255,255,0.20));
+  }
   .board-row {
     position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%);
     display: flex; gap: 6px;
   }
   .pkr-card {
-    width: 44px; height: 62px; border-radius: 6px;
-    background: #fff; color: #1B1B1B;
+    width: 46px; height: 64px; border-radius: 5px;
+    /* Layered paper: subtle warm-cream base + faint embossed-feel gradient + edge highlight */
+    background:
+      linear-gradient(180deg, #FFFFFF 0%, #FAF6EC 50%, #F0E9D4 100%);
+    color: #1B1B1B;
     display: flex; align-items: center; justify-content: center; flex-direction: column;
     font-family: 'Times New Roman', serif; font-weight: 700;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-    animation: cardDeal 0.4s cubic-bezier(.2,.7,.3,1) backwards;
+    /* DOF-feeling shadow — sharp inner shadow + soft outer cast for depth-of-field hint */
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.7) inset,
+      0 0 0 1px rgba(0,0,0,0.06),
+      0 6px 12px rgba(0,0,0,0.42),
+      0 2px 4px rgba(0,0,0,0.28);
+    /* Grok-spec timing: 240ms deal — refined cubic */
+    animation: cardDeal 240ms cubic-bezier(0.25,0.1,0.25,1) backwards;
+    will-change: transform, opacity;
   }
   .pkr-card.red { color: #c62828; }
   /* 4-color deck (toggleable via TourState.preferences.fourColorDeck). */
@@ -302,37 +395,68 @@
     opacity: 0.95;
   }
   .pkr-card.back::after { content: '◈'; font-size: 22px; position: absolute; left:50%; top:50%; transform: translate(-50%,-50%); text-shadow: 0 0 6px rgba(201,168,87,0.6); }
-  @keyframes cardDeal { from { opacity: 0; transform: translateY(-30px) rotate(-12deg); } to { opacity: 1; transform: translateY(0) rotate(0); } }
-  /* Squeeze reveal for hero hole cards (GGPoker-style 180ms) */
-  .pkr-card.squeeze { animation: cardSqueeze 0.42s cubic-bezier(.2,.7,.3,1) backwards; }
+  /* Grok timing: 240ms deal · slight tilt + drop · cubic-bezier(0.25,0.1,0.25,1) */
+  @keyframes cardDeal {
+    0%   { opacity: 0; transform: translateY(-36px) rotate(-14deg) rotateY(20deg); }
+    60%  { opacity: 1; transform: translateY(2px) rotate(2deg) rotateY(0); }
+    100% { opacity: 1; transform: translateY(0) rotate(0) rotateY(0); }
+  }
+  /* Hero hole-card squeeze: 180ms squeeze + 120ms 3D flip (Grok WSOP spec) */
+  .pkr-card.squeeze { animation: cardSqueeze 300ms cubic-bezier(0.25,0.1,0.25,1) backwards; transform-origin: center; }
   @keyframes cardSqueeze {
-    0%   { opacity: 0; transform: rotateY(90deg) scale(0.6); }
-    60%  { opacity: 1; transform: rotateY(-10deg) scale(1.04); }
+    0%   { opacity: 0; transform: rotateY(92deg) scale(0.55); }
+    40%  { opacity: 1; transform: rotateY(-14deg) scale(1.06); } /* 180ms squeeze peak */
+    70%  { transform: rotateY(8deg) scale(1.02); }              /* 120ms flip */
     100% { transform: rotateY(0) scale(1); }
   }
-  /* Chip travel — small chip glyph flies from seat -> pot when bet posted */
+  /* Chip travel — Grok-spec 240ms ease-out cubic-bezier(0.25,0.1,0.25,1) */
   .chip-travel {
     position: absolute; pointer-events: none;
-    width: 18px; height: 18px; border-radius: 50%;
-    background: radial-gradient(circle at 30% 30%, #ffe07a, #C9A857 60%, #8b6e1b);
-    box-shadow: 0 2px 6px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.5);
+    width: 20px; height: 20px; border-radius: 50%;
+    /* Metallic gold chip — radial highlight + base + edge ring */
+    background:
+      radial-gradient(circle at 35% 28%, var(--augusta-gold-hi,#F0C75E) 0%, var(--augusta-gold,#D4A017) 38%, var(--augusta-gold-deep,#8E6E0E) 100%),
+      radial-gradient(circle at 50% 50%, transparent 60%, rgba(0,0,0,0.20) 100%);
+    box-shadow:
+      0 0 0 1px var(--augusta-gold-deep,#8E6E0E),
+      0 3px 8px rgba(0,0,0,0.55),
+      inset 0 1px 0 rgba(255,255,255,0.65),
+      inset 0 -1px 0 rgba(0,0,0,0.30);
     z-index: 30;
-    animation: chipFly 240ms cubic-bezier(.4,.1,.3,1) forwards;
+    animation: chipFly 240ms cubic-bezier(0.25,0.1,0.25,1) forwards;
   }
   @keyframes chipFly {
-    0%   { opacity: 0; transform: scale(0.5); }
-    20%  { opacity: 1; transform: scale(1); }
-    100% { opacity: 0; transform: translate(var(--cx,0), var(--cy,0)) scale(0.7); }
+    0%   { opacity: 0; transform: scale(0.5) rotate(0); }
+    20%  { opacity: 1; transform: scale(1) rotate(40deg); }
+    100% { opacity: 0; transform: translate(var(--cx,0), var(--cy,0)) scale(0.7) rotate(220deg); }
   }
-  .pkr-card .rank { font-size: 18px; line-height: 1; }
-  .pkr-card .suit { font-size: 14px; line-height: 1; margin-top: 2px; }
+  .pkr-card .rank { font-size: 19px; line-height: 1; letter-spacing: -0.5px; }
+  .pkr-card .suit { font-size: 15px; line-height: 1; margin-top: 2px; }
   .chip-stack { display: inline-flex; align-items: center; gap: 2px; }
-  .chip { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.3); box-shadow: 0 1px 0 rgba(255,255,255,0.5) inset; }
-  .chip.c1  { background: #FFFFFF; }
-  .chip.c5  { background: #C62828; }
-  .chip.c25 { background: #1565C0; }
-  .chip.c100{ background: #2E7D32; }
-  .chip.c500{ background: #6A1B9A; }
+  /* Chips: metallic gradient with edge ring + inner highlight. Uses honeycomb-
+     glyph subtle radial as the chip face. Each denomination has a ring color
+     + face color blended into a metallic finish. */
+  .chip {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.45);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.55),
+      inset 0 -1px 0 rgba(0,0,0,0.35),
+      0 1px 2px rgba(0,0,0,0.45);
+    position: relative;
+  }
+  .chip::after {
+    content: ''; position: absolute; inset: 2px;
+    border-radius: 50%; border: 1px dashed rgba(255,255,255,0.30);
+    pointer-events: none;
+  }
+  .chip.c1   { background: radial-gradient(circle at 30% 25%, #ffffff, #d4d4d4 70%, #888); }
+  .chip.c5   { background: radial-gradient(circle at 30% 25%, #ff7878, #C62828 60%, #6e1212); }
+  .chip.c25  { background: radial-gradient(circle at 30% 25%, #66a4e8, #1565C0 60%, #0a3970); }
+  .chip.c100 { background: radial-gradient(circle at 30% 25%, #6cc28a, #2E7D32 60%, #134219); }
+  .chip.c500 { background: radial-gradient(circle at 30% 25%, #b07ad0, #6A1B9A 60%, #380a52); }
+  /* Gold "honey" denomination — used for nectar/honey chips at YJT cash tables */
+  .chip.honey { background: radial-gradient(circle at 30% 25%, var(--augusta-gold-hi,#F0C75E), var(--augusta-gold,#D4A017) 60%, var(--augusta-gold-deep,#8E6E0E)); }
   /* Stroke ledger pill for HS cash */
   .stroke-pill { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .stroke-pill.pos { background: rgba(30,122,78,0.18); color: var(--chart-good, #1E7A4E); }
@@ -415,7 +539,22 @@
   .action-left { display: flex; gap: 8px; }
   .action-right { display: flex; flex-direction: column; gap: 8px; }
   .action-presets { display: flex; gap: 4px; flex-wrap: wrap; }
-  .action-presets .preset-btn { padding: 4px 10px; font-size: 11px; min-width: 36px; }
+  .action-presets .preset-btn {
+    padding: 5px 11px; font-size: 11px; min-width: 38px; font-weight: 700; letter-spacing: 0.4px;
+    /* Brushed-gold preset finish */
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.14), rgba(0,0,0,0.06)),
+      linear-gradient(180deg, rgba(212,160,23,0.30) 0%, rgba(142,110,14,0.40) 100%);
+    color: var(--augusta-gold-hi,#F0C75E);
+    border: 1px solid rgba(212,160,23,0.55);
+    text-shadow: 0 1px 1px rgba(0,0,0,0.45);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 2px 4px rgba(0,0,0,0.35);
+  }
+  .action-presets .preset-btn:hover {
+    filter: brightness(1.18) saturate(1.10);
+    border-color: var(--augusta-gold-hi,#F0C75E);
+    color: #fff;
+  }
   .action-slider-row { display: flex; gap: 8px; align-items: center; }
   .action-slider { flex: 1; -webkit-appearance: none; height: 6px; border-radius: 4px; background: rgba(255,255,255,0.10); }
   .action-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--gold, #C9A857); cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
@@ -427,13 +566,47 @@
     font-family: monospace; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
     text-align: right;
   }
-  .btn.act-fold  { background: linear-gradient(180deg, #b13a3a, #7e2424); color: #fff; border-color: #7e2424; min-width: 80px; font-weight: 700; }
-  .btn.act-call  { background: linear-gradient(180deg, #2b6e7a, #144551); color: #fff; border-color: #144551; min-width: 100px; font-weight: 700; }
-  .btn.act-raise { background: linear-gradient(180deg, #d8a93a, #8e6f1c); color: #fff; border-color: #8e6f1c; min-width: 130px; font-weight: 700; }
-  .btn.act-fold:hover  { filter: brightness(1.1); }
-  .btn.act-call:hover  { filter: brightness(1.1); }
-  .btn.act-raise:hover { filter: brightness(1.1); }
-  .btn.act-raise:disabled { opacity: 0.4; }
+  /* === Premium Action Buttons (v69.9) ====================================
+     Layered metallic gradients with edge highlight + inner shadow + soft outer
+     cast — gives a "machined gold" / leather feel matching Augusta + Monte
+     Carlo aesthetic. Each button has 3 stops (highlight / mid / shadow). */
+  .btn.act-fold {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.05)),
+      linear-gradient(180deg, #c54a4a 0%, #9a2828 50%, #6e1818 100%);
+    color: #fff; border: 1px solid #4a1010;
+    min-width: 90px; font-weight: 700; letter-spacing: 0.5px;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.25) inset, 0 -2px 6px rgba(0,0,0,0.30) inset, 0 4px 10px rgba(0,0,0,0.45);
+    text-shadow: 0 1px 1px rgba(0,0,0,0.5);
+  }
+  .btn.act-call {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.05)),
+      linear-gradient(180deg, #3a8a98 0%, #1f5a68 50%, #0e3540 100%);
+    color: #fff; border: 1px solid #0a2730;
+    min-width: 110px; font-weight: 700; letter-spacing: 0.5px;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.25) inset, 0 -2px 6px rgba(0,0,0,0.30) inset, 0 4px 10px rgba(0,0,0,0.45);
+    text-shadow: 0 1px 1px rgba(0,0,0,0.5);
+  }
+  .btn.act-raise {
+    /* Gold-leaf machined finish — the headline action */
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.18), rgba(0,0,0,0.05) 40%, rgba(0,0,0,0.10)),
+      linear-gradient(180deg, var(--augusta-gold-hi,#F0C75E) 0%, var(--augusta-gold,#D4A017) 55%, var(--augusta-gold-deep,#8E6E0E) 100%);
+    color: #2A1810; border: 1px solid var(--augusta-gold-deep,#8E6E0E);
+    min-width: 140px; font-weight: 800; letter-spacing: 0.4px;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.55) inset,
+      0 -2px 6px rgba(0,0,0,0.18) inset,
+      0 4px 14px rgba(212,160,23,0.45),
+      0 6px 18px rgba(0,0,0,0.5);
+    text-shadow: 0 1px 0 rgba(255,255,255,0.55);
+  }
+  .btn.act-fold:hover  { filter: brightness(1.12) saturate(1.05); transform: translateY(-1px); }
+  .btn.act-call:hover  { filter: brightness(1.12) saturate(1.05); transform: translateY(-1px); }
+  .btn.act-raise:hover { filter: brightness(1.10) saturate(1.05); transform: translateY(-1px); box-shadow: 0 1px 0 rgba(255,255,255,0.55) inset, 0 -2px 6px rgba(0,0,0,0.18) inset, 0 6px 18px rgba(212,160,23,0.65), 0 8px 22px rgba(0,0,0,0.55); }
+  .btn.act-fold, .btn.act-call, .btn.act-raise { transition: filter 0.15s ease, transform 0.12s ease, box-shadow 0.18s ease; }
+  .btn.act-raise:disabled { opacity: 0.4; transform: none; }
   .btn.act-call.with-sub { display: flex; flex-direction: column; align-items: center; gap: 1px; line-height: 1.1; padding-block: 8px; }
   .btn.act-call .po-sub { font-size: 9.5px; opacity: 0.85; letter-spacing: 0.4px; font-weight: 500; }
   /* Pre-action checkboxes (Grok: "Check/fold", "Call any", "Raise any") */
@@ -531,20 +704,58 @@
   .rg-banner button { padding: 4px 10px; border: 1px solid rgba(255,255,255,0.4); background: rgba(255,255,255,0.1); color: #fff; border-radius: 4px; font-size: 11px; cursor: pointer; }
   /* === Golden Card shimmer + Lottery ticker ============================== */
   .pkr-card.golden {
-    border: 2px solid #FFD700;
-    box-shadow: 0 0 12px rgba(255,215,0,0.7), 0 4px 10px rgba(0,0,0,0.4);
-    animation: goldenShimmer 1.4s ease-in-out infinite, cardDeal 0.4s cubic-bezier(.2,.7,.3,1) backwards;
+    border: 2px solid var(--augusta-gold-hi,#F0C75E);
+    box-shadow:
+      0 0 12px rgba(212,160,23,0.85),
+      0 0 0 1px var(--augusta-gold-deep,#8E6E0E) inset,
+      0 4px 10px rgba(0,0,0,0.45);
+    background:
+      linear-gradient(180deg, #FFFCEF 0%, #FAF1D6 50%, #F0E2B8 100%);
+    animation: goldenShimmer 2.0s ease-in-out infinite, cardDeal 240ms cubic-bezier(0.25,0.1,0.25,1) backwards;
     position: relative;
+  }
+  .pkr-card.golden::before {
+    /* Subtle gold sheen sweep */
+    content: ''; position: absolute; inset: 0; border-radius: 5px;
+    background: linear-gradient(110deg, transparent 30%, rgba(255,235,140,0.55) 50%, transparent 70%);
+    background-size: 220% 100%;
+    animation: goldenSweep 3.2s ease-in-out infinite;
+    pointer-events: none; mix-blend-mode: screen;
   }
   .pkr-card.golden .golden-mark {
     position: absolute; top: 2px; right: 4px;
-    color: #FFD700; font-size: 14px;
-    text-shadow: 0 0 6px rgba(255,215,0,0.85);
+    color: var(--augusta-gold-hi,#F0C75E); font-size: 14px;
+    text-shadow: 0 0 8px rgba(240,199,94,0.95);
     pointer-events: none;
+    animation: goldenStarPulse 1.6s ease-in-out infinite;
   }
   @keyframes goldenShimmer {
-    0%, 100% { box-shadow: 0 0 12px rgba(255,215,0,0.6), 0 4px 10px rgba(0,0,0,0.4); }
-    50%      { box-shadow: 0 0 24px rgba(255,215,0,1), 0 4px 16px rgba(0,0,0,0.5); }
+    0%, 100% { box-shadow: 0 0 12px rgba(212,160,23,0.7), 0 0 0 1px var(--augusta-gold-deep,#8E6E0E) inset, 0 4px 10px rgba(0,0,0,0.4); }
+    50%      { box-shadow: 0 0 28px rgba(240,199,94,1), 0 0 0 1px var(--augusta-gold-hi,#F0C75E) inset, 0 4px 16px rgba(0,0,0,0.5); }
+  }
+  @keyframes goldenSweep {
+    0%   { background-position: -120% 0; }
+    100% { background-position: 220% 0; }
+  }
+  @keyframes goldenStarPulse {
+    0%, 100% { transform: scale(1); opacity: 0.95; }
+    50%      { transform: scale(1.18); opacity: 1; }
+  }
+  /* === Buzz honey-droplet burst — fires on Champion / Royal Flush / BB jackpot */
+  .honey-droplet {
+    position: fixed; pointer-events: none;
+    width: 14px; height: 18px;
+    background: radial-gradient(circle at 35% 28%, var(--augusta-gold-hi,#F0C75E) 0%, var(--augusta-gold,#D4A017) 60%, var(--augusta-gold-deep,#8E6E0E) 100%);
+    border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+    transform-origin: center;
+    box-shadow: 0 0 8px rgba(240,199,94,0.85), inset 0 1px 0 rgba(255,255,255,0.55);
+    z-index: 1700;
+    animation: honeyDropFall 1.6s cubic-bezier(0.34,0.05,0.55,1) forwards;
+  }
+  @keyframes honeyDropFall {
+    0%   { opacity: 0; transform: translate(0, 0) scale(0.4) rotate(0); }
+    20%  { opacity: 1; transform: translate(calc(var(--dx,0) * 0.30), calc(var(--dy,0) * 0.20)) scale(1) rotate(20deg); }
+    100% { opacity: 0; transform: translate(var(--dx,0), var(--dy,0)) scale(0.6) rotate(120deg); }
   }
   .golden-ticker {
     display: flex; align-items: center; gap: 10px;
@@ -1252,7 +1463,56 @@
     display: flex; gap: 10px; align-items: center;
   }
   .buzz-live-tip .tip-mark { font-size: 14px; }
+  /* === 3D scene canvas (Phase B) ========================================
+     Mounted behind the felt-table content so 2D HTML cards/seats/pot remain
+     authoritative. The 3D layer adds atmospheric depth (lit felt, drifting
+     camera, ambient haze) without touching gameplay rendering. */
+  .yj-3d-canvas {
+    position: absolute; inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0;
+    transition: opacity 800ms ease-out;
+  }
+  .yj-3d-canvas.ready { opacity: 1; }
+  .felt-table > * { position: relative; z-index: 1; }
+  .felt-table > .yj-3d-canvas { z-index: 0; }
+  /* Phase I: celebration bloom — applied for ~2s on showdown wins.
+     Boosts brightness/saturation + adds a gold drop-shadow halo around the
+     canvas. Achieves an "Unreal Bloom"-style glow with zero shader cost. */
+  .yj-3d-canvas.celebrating {
+    filter:
+      brightness(1.32) contrast(1.04) saturate(1.18)
+      drop-shadow(0 0 24px rgba(212,160,23,0.55));
+    transition: filter 280ms ease-out;
+  }
+  .yj-3d-canvas { transition: filter 600ms ease-out, opacity 800ms ease-out; }
+  /* Subtle vignette overlay on the felt — adds depth-of-field hint. Sits
+     above the WebGL canvas but below the 2D HTML overlay so it darkens the
+     felt edges without affecting card legibility. */
+  .felt-table.has-3d::after {
+    content: ''; position: absolute; inset: 0;
+    background: radial-gradient(ellipse 70% 65% at 50% 55%, transparent 30%, rgba(0,0,0,0.45) 95%);
+    pointer-events: none; border-radius: inherit;
+    opacity: 1 !important; animation: none !important;
+    z-index: 1;
+  }
+  /* Hide 2D felt background gradient when 3D layer is active so the WebGL felt is canonical */
+  .felt-table.has-3d {
+    background: var(--augusta-felt-low) !important;
+  }
+  .felt-table.has-3d::after { opacity: 0; }
+  /* Phase D: hide 2D board cards + hero hole cards when 3D meshes are canonical.
+     Pot display, seats, action overlays remain 2D (they show essential state). */
+  .felt-table.has-3d .board-row { opacity: 0; pointer-events: none; }
+  /* The 2D hole-cards live OUTSIDE the .felt-table div (they're in the cash-table-card),
+     so they need a separate selector. We use a body-level data attribute set by
+     renderCashView when 3D is active. */
+  body[data-yj-3d-active="1"] .hole-cards { opacity: 0; pointer-events: none; }
 </style>
+<!-- Three.js (Phase B atmospheric layer · loaded async; gracefully degrades if blocked) -->
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js" crossorigin="anonymous" onload="window._yj3dReady = true;" onerror="window._yj3dReady = false; console.warn('YJ: Three.js CDN load failed — 3D atmospheric layer disabled.');"></script>
 </head>
 <body>
 
@@ -1359,7 +1619,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.29-v69.8-multiway-econ";
+const APP_VERSION = "2026.04.29-v69.13-physics-velvet";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5595,6 +5855,11 @@ function onHashChange() {
   renderNavBankroll();
   try { renderNavMacro(); } catch (_) {}
   try { tickResponsibleGaming(); } catch (_) {}
+  // v69.10: dispose 3D scene when navigating away from cash tables to release
+  // the WebGL context. The scene re-mounts on next visit.
+  if (typeof scene3dUnmount === 'function' && name !== 'tables' && name !== 'bumblebee') {
+    try { scene3dUnmount(); } catch (_) {}
+  }
   if (name === 'players' && !parsed.params.profileId) PlayersState.profileId = null;
   if (document.startViewTransition) {
     document.startViewTransition(() => showView(name));
@@ -6767,6 +7032,13 @@ Views.rules = function() {
     'ELIMINATED PLAYER STATE. Eliminated players freeze their cumulative score and skip subsequent rounds entirely. They do NOT auto-fill remaining holes with par or any other value — their scorecard is final at elimination. They earn a finish position based on (round-of-elimination DESC, cumulative-score ASC), so making the cut beats missing it, surviving R3 beats missing R3, and within an elimination tier, lower cumulative score earns a better finish. ' +
     'INTERACTION WITH PRIZE PAYOUT. The top 15% of finish positions cash, regardless of elimination round. A player eliminated R2 may still earn a paid finish if they\'re in the top 15% of the elimination ladder. Cuts don\'t change who cashes; they reorder finishes by elimination depth. ' +
     'CONFIG. cfg.survivalCushion = [12, 8, 5, 3] (per-round stroke threshold), cfg.cutSchedule = [null, 0.50, 0.50, null] (per-round cut fraction; null = no cut). Both indexed 0-based by round.'
+  ));
+  core.appendChild(rule('Nectar vs Honey — the two-currency design',
+    'YJT runs on TWO denominations and they have different roles. Confusing them is the most common newcomer error. ' +
+    'NECTAR ◈ — the bankroll currency. Functionally USD. Paid in/out at session boundaries. Used for: tour event buy-ins (Regular $100, Major $1000, Main $10,000), cash-table buy-ins, prize payouts, P2P transfers, staking marketplace, BB jackpot, Golden Lottery, and promo bonuses. Single ledger, persists across sessions, displayed in the sidebar widget. ' +
+    'HONEY — the in-event wager unit. Exists ONLY inside the boundary of a tour event. Honey is what gets bet/raised per hole, what the per-event stroke caps are denominated in, and what gets divided by the round divisor at end-of-round to produce the honey credit added to the golf scorecard. Honey is NOT a separate balance you hold — it\'s an abstraction inside the event engine that lets per-hand wagering be capped without it touching your bankroll. When the event ends, the only thing that crosses the boundary is the Nectar prize (or zero). ' +
+    'CASH GAMES — no Honey indirection. At a cash table your chips ARE Nectar 1:1. You sit with N Nectar, your stack shows N, every bet/call/raise moves Nectar between stack and pot. Pure NLHE = Nectar P/L only. Honey-Stroke variants add a parallel STROKE LEDGER (deterministic per-hand class score, not a currency) which settles to Nectar at session end via the stroke-weight × hands<sup>-1</sup> formula. ' +
+    'WHY TWO DENOMINATIONS. The split lets the tour engine impose stroke caps + decision-divisor mechanics on per-hole wagering without those caps having to deflate the player\'s real bankroll. It also keeps cash and tour as conceptually distinct experiences while sharing the same ledger backbone for buy-ins and payouts. The two-tier design mirrors how real poker works (chips at a tournament are not directly redeemable; only the final prize is paid in dollars).'
   ));
   core.appendChild(rule('Multiplayer table format (v69)',
     'YJ\'s heads-up engine is the default. v69 ships the multi-way table variant: 6 or 9 players at a single table, matched-contribution wagering (poker-native pot construction), last-player-standing elimination per hole. R1-R3 are played multi-way at tables of cfg.tableSize, then R4 collapses to a heads-up final between the top 2 surviving players. Per-player honey caps scale with player count to keep per-pair stroke variance comparable to HU. ' +
@@ -8701,6 +8973,967 @@ function hudPills(playerId) {
   return { vpip, pfr, af, threeB, cBet, wtsd, wsd, hands: s.handsDealt };
 }
 
+// =============================================================================
+// SCENE3D — Phase B atmospheric Three.js layer (v69.10)
+// =============================================================================
+// Adds a lit, drifting WebGL felt scene behind the existing 2D HTML overlay.
+// The 2D layer remains canonical — every card, chip, seat, pot, and animation
+// continues to render via DOM nodes. Scene3D's job is purely atmospheric:
+//   • A 3D oval felt mesh with Augusta velvet material
+//   • A chandelier-style point-light rig with warm key light + cool fill
+//   • Soft fog for depth-of-field hint
+//   • Subtle camera drift (3-axis sinusoidal sway)
+//   • Active lobby breathing — light pulses gently in idle, brightens on hand
+//
+// Lifecycle: init() loads + caches the renderer/scene/camera. mount(felt)
+// attaches the canvas as a child of the felt div. update(t) applies camera
+// drift + light pulse. dispose() releases the WebGL context when the user
+// navigates away from Cash Tables, preventing leaks on long sessions.
+//
+// Failure modes:
+//   • Three.js CDN blocked → window._yj3dReady is false → mount no-ops
+//   • WebGL unavailable → renderer init throws → caught + caches null
+//   • Pref toggled off → mount no-ops
+// In all failure modes the 2D felt remains fully functional.
+// -----------------------------------------------------------------------------
+const Scene3D = {
+  enabled: false,         // toggled by user pref
+  ready: false,           // Three.js loaded AND scene initialized
+  renderer: null,
+  scene: null,
+  camera: null,
+  feltMesh: null,
+  lights: null,
+  rafHandle: null,
+  startTime: 0,
+  mountedTo: null,        // current felt div hosting the canvas
+  canvas: null,
+};
+
+function scene3dEnabled() {
+  return !!(TourState && TourState.preferences && TourState.preferences.scene3d);
+}
+
+function scene3dInit() {
+  if (Scene3D.ready) return true;
+  if (!window.THREE || !window._yj3dReady) return false;
+  try {
+    const T = window.THREE;
+    // Renderer — alpha for transparent canvas (so the 2D background shows
+    // through as a fallback if the WebGL felt fails). Pixel ratio capped at
+    // 2 to keep mobile GPUs happy.
+    const renderer = new T.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'low-power' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setClearColor(0x000000, 0);
+    renderer.outputColorSpace = T.SRGBColorSpace || renderer.outputColorSpace;
+    Scene3D.renderer = renderer;
+
+    // Scene with atmospheric fog (depth-of-field hint)
+    const scene = new T.Scene();
+    scene.fog = new T.Fog(0x041610, 8, 22);
+    Scene3D.scene = scene;
+
+    // Camera — slight tilt to mirror the 8° CSS perspective on the 2D felt.
+    const camera = new T.PerspectiveCamera(38, 16 / 9, 0.1, 50);
+    camera.position.set(0, 6.5, 9.0);
+    camera.lookAt(0, 0, 0);
+    Scene3D.camera = camera;
+
+    // Lighting rig — warm chandelier key + cool fill + ambient
+    const lights = {};
+    lights.ambient = new T.AmbientLight(0x2a3a30, 0.55);
+    scene.add(lights.ambient);
+    lights.key = new T.PointLight(0xFFD78A, 4.2, 18, 1.4);
+    lights.key.position.set(0, 6.5, 1.5);
+    scene.add(lights.key);
+    lights.fill = new T.PointLight(0x6BA8B5, 1.6, 22, 1.6);
+    lights.fill.position.set(-5, 3, 4);
+    scene.add(lights.fill);
+    lights.rim = new T.PointLight(0xD4A017, 1.4, 14, 2);
+    lights.rim.position.set(4, 1.6, -3);
+    scene.add(lights.rim);
+    Scene3D.lights = lights;
+
+    // Felt mesh — flattened ellipse via scaled CircleGeometry. Velvet
+    // material: deep green base + slight roughness + subtle anisotropic
+    // gold sheen via second mesh layered on top.
+    const feltGeo = new T.CircleGeometry(5, 96);
+    feltGeo.scale(1.6, 1.0, 1.0); // 16:10 oval
+    // Phase J: custom velvet ShaderMaterial. Combines Lambert diffuse with
+    // an anisotropic "Disney velvet" specular at grazing view angles. The
+    // gold sheen rises sharply at the felt's outer rim (where view ray is
+    // nearly parallel to the surface), mimicking real velvet's rim-light
+    // behavior under chandelier lighting.
+    const feltMat = new T.ShaderMaterial({
+      uniforms: {
+        uBaseColor:   { value: new T.Color(0x0A3D2F) },
+        uSheenColor:  { value: new T.Color(0xD4A017) },
+        uTime:        { value: 0 },
+        uLightPos:    { value: new T.Vector3(0, 6.5, 1.5) },
+      },
+      vertexShader: [
+        'varying vec3 vWorldPos;',
+        'varying vec3 vNormal;',
+        'varying vec2 vUv;',
+        'void main() {',
+        '  vUv = uv;',
+        '  vec4 worldPos = modelMatrix * vec4(position, 1.0);',
+        '  vWorldPos = worldPos.xyz;',
+        '  vNormal = normalize(normalMatrix * normal);',
+        '  gl_Position = projectionMatrix * viewMatrix * worldPos;',
+        '}',
+      ].join('\n'),
+      fragmentShader: [
+        'uniform vec3 uBaseColor;',
+        'uniform vec3 uSheenColor;',
+        'uniform float uTime;',
+        'uniform vec3 uLightPos;',
+        'varying vec3 vWorldPos;',
+        'varying vec3 vNormal;',
+        'varying vec2 vUv;',
+        'void main() {',
+        '  vec3 N = normalize(vNormal);',
+        '  vec3 L = normalize(uLightPos - vWorldPos);',
+        '  vec3 V = normalize(cameraPosition - vWorldPos);',
+        '  // Lambert diffuse',
+        '  float NdotL = max(dot(N, L), 0.0);',
+        '  vec3 diffuse = uBaseColor * (0.45 + 0.55 * NdotL);',
+        '  // Velvet sheen — Fresnel-like rim term on view angle',
+        '  float NdotV = max(dot(N, V), 0.0);',
+        '  float sheen = pow(1.0 - NdotV, 4.0) * 0.85;',
+        '  // Animated specular sweep — rotating gradient over UV',
+        '  float ang = uTime * 0.04;',
+        '  vec2 dir = vec2(cos(ang), sin(ang));',
+        '  float sweep = dot((vUv - 0.5) * 2.0, dir);',
+        '  float sweepHi = smoothstep(0.05, 0.6, sweep) * (1.0 - smoothstep(0.6, 0.95, sweep));',
+        '  // Compose',
+        '  vec3 color = diffuse + uSheenColor * sheen * 0.55 + uSheenColor * sweepHi * 0.10;',
+        '  // Vignette toward outer rim',
+        '  float r = length((vUv - 0.5) * 2.0);',
+        '  color *= 1.0 - smoothstep(0.85, 1.05, r) * 0.50;',
+        '  gl_FragColor = vec4(color, 1.0);',
+        '}',
+      ].join('\n'),
+    });
+    Scene3D.feltMaterial = feltMat;
+    const felt = new T.Mesh(feltGeo, feltMat);
+    felt.rotation.x = -Math.PI / 2;
+    felt.position.y = 0;
+    scene.add(felt);
+    Scene3D.feltMesh = felt;
+
+    // Inner gold ring marker — thin TorusGeometry, scaled to oval
+    const ringGeo = new T.TorusGeometry(4.5, 0.025, 12, 96);
+    ringGeo.scale(1.6, 1.0, 1.0);
+    const ringMat = new T.MeshStandardMaterial({
+      color: 0xD4A017, roughness: 0.35, metalness: 0.85, emissive: 0x4A3408, emissiveIntensity: 0.6,
+    });
+    const ring = new T.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.02;
+    scene.add(ring);
+
+    // Subtle gold specular sheen — large flat plane with low-opacity gold,
+    // scaled big and floating just above the felt for an animated highlight.
+    const sheenGeo = new T.CircleGeometry(5.4, 64);
+    sheenGeo.scale(1.6, 1.0, 1.0);
+    const sheenMat = new T.MeshBasicMaterial({
+      color: 0xD4A017, transparent: true, opacity: 0.06, blending: T.AdditiveBlending, depthWrite: false,
+    });
+    const sheen = new T.Mesh(sheenGeo, sheenMat);
+    sheen.rotation.x = -Math.PI / 2;
+    sheen.position.y = 0.005;
+    scene.add(sheen);
+    Scene3D.sheenMesh = sheen;
+
+    Scene3D.startTime = performance.now();
+    Scene3D.ready = true;
+    return true;
+  } catch (e) {
+    console.warn('Scene3D init failed:', e && e.message ? e.message : e);
+    Scene3D.ready = false;
+    return false;
+  }
+}
+
+function scene3dMount(feltEl) {
+  if (!scene3dEnabled()) return false;
+  if (!Scene3D.ready && !scene3dInit()) return false;
+  if (!feltEl) return false;
+  if (Scene3D.mountedTo === feltEl && Scene3D.canvas && Scene3D.canvas.parentNode === feltEl) return true;
+  // Detach from any previous mount
+  scene3dUnmount();
+  // Create fresh canvas attached to renderer
+  const canvas = Scene3D.renderer.domElement;
+  canvas.className = 'yj-3d-canvas';
+  feltEl.classList.add('has-3d');
+  feltEl.insertBefore(canvas, feltEl.firstChild);
+  Scene3D.canvas = canvas;
+  Scene3D.mountedTo = feltEl;
+  // Body-level flag so 2D selectors outside the felt (e.g., .hole-cards in
+  // the parent cash-table-card) can hide themselves when 3D is canonical.
+  document.body.dataset.yj3dActive = '1';
+  // Resize observer — tracks felt dimensions for renderer
+  const resize = () => {
+    const rect = feltEl.getBoundingClientRect();
+    const w = Math.max(160, rect.width);
+    const h = Math.max(80, rect.height);
+    Scene3D.renderer.setSize(w, h, false);
+    Scene3D.camera.aspect = w / h;
+    Scene3D.camera.updateProjectionMatrix();
+  };
+  resize();
+  if (window.ResizeObserver) {
+    Scene3D._resizeObs = new ResizeObserver(resize);
+    Scene3D._resizeObs.observe(feltEl);
+  } else {
+    window.addEventListener('resize', resize);
+    Scene3D._resizeFn = resize;
+  }
+  // Fade in via CSS class — gives the WebGL layer a graceful entrance
+  setTimeout(() => { if (canvas.classList) canvas.classList.add('ready'); }, 60);
+  // Start render loop
+  scene3dStartLoop();
+  return true;
+}
+
+function scene3dUnmount() {
+  if (Scene3D._resizeObs) { try { Scene3D._resizeObs.disconnect(); } catch (_) {} Scene3D._resizeObs = null; }
+  if (Scene3D._resizeFn) { window.removeEventListener('resize', Scene3D._resizeFn); Scene3D._resizeFn = null; }
+  if (Scene3D.canvas && Scene3D.canvas.parentNode) {
+    Scene3D.canvas.parentNode.classList.remove('has-3d');
+    Scene3D.canvas.parentNode.removeChild(Scene3D.canvas);
+  }
+  Scene3D.mountedTo = null;
+  // Clear body flag — 2D hole + board re-show
+  if (document.body.dataset.yj3dActive) delete document.body.dataset.yj3dActive;
+  scene3dStopLoop();
+}
+
+// === Phase C: card texture atlas + board card meshes ========================
+// Generate 52 card-face textures + 1 back texture using canvas2d at scene
+// init. Each texture is 256×360 (5:7 aspect). Cached on Scene3D.cardTextures
+// keyed by 'rs' string ('A♠', 'Th', etc) and 'back' for the card back.
+function scene3dBuildCardTextures() {
+  if (Scene3D.cardTextures) return Scene3D.cardTextures;
+  const T = window.THREE; if (!T) return null;
+  const cache = {};
+  const ranks = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'];
+  const suits = [
+    { ch: '♠', red: false, key: 's' },
+    { ch: '♥', red: true,  key: 'h' },
+    { ch: '♦', red: true,  key: 'd' },
+    { ch: '♣', red: false, key: 'c' },
+  ];
+  function drawFace(rank, suit) {
+    const W = 256, H = 360;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    // Card paper (warm cream)
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#FFFFFF'); grad.addColorStop(0.5, '#FAF6EC'); grad.addColorStop(1, '#F0E9D4');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+    // Edge ring
+    ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, W - 4, H - 4);
+    // Color by suit
+    ctx.fillStyle = suit.red ? '#C62828' : '#1B1B1B';
+    // Top-left rank/suit pip
+    ctx.font = 'bold 80px Times New Roman, serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText(rank, 20, 14);
+    ctx.font = 'bold 64px sans-serif';
+    ctx.fillText(suit.ch, 22, 100);
+    // Bottom-right (rotated)
+    ctx.save();
+    ctx.translate(W - 20, H - 14);
+    ctx.rotate(Math.PI);
+    ctx.font = 'bold 80px Times New Roman, serif'; ctx.fillText(rank, 0, 0);
+    ctx.font = 'bold 64px sans-serif'; ctx.fillText(suit.ch, 2, 86);
+    ctx.restore();
+    // Center suit glyph (large, faded)
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.font = 'bold 200px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(suit.ch, W / 2, H / 2);
+    ctx.restore();
+    return new T.CanvasTexture(cv);
+  }
+  function drawBack() {
+    const W = 256, H = 360;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    // Mahogany base
+    const grad = ctx.createLinearGradient(0, 0, W, H);
+    grad.addColorStop(0, '#4a2010'); grad.addColorStop(0.5, '#2a1006'); grad.addColorStop(1, '#4a2010');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+    // Honeycomb pattern
+    ctx.strokeStyle = 'rgba(212,160,23,0.30)'; ctx.lineWidth = 1.2;
+    const r = 18, dx = r * Math.sqrt(3), dy = r * 1.5;
+    for (let y = -r; y < H + r; y += dy) {
+      const xoff = ((y / dy) | 0) % 2 === 0 ? 0 : dx / 2;
+      for (let x = -r; x < W + r; x += dx) {
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const ang = Math.PI / 3 * i + Math.PI / 6;
+          const px = x + xoff + Math.cos(ang) * r;
+          const py = y + Math.sin(ang) * r;
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath(); ctx.stroke();
+      }
+    }
+    // Center diamond
+    ctx.fillStyle = '#D4A017';
+    ctx.font = 'bold 110px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(212,160,23,0.7)'; ctx.shadowBlur = 18;
+    ctx.fillText('◈', W / 2, H / 2);
+    return new T.CanvasTexture(cv);
+  }
+  // Build all 52 + back
+  for (const r of ranks) {
+    for (const s of suits) {
+      cache[r + s.ch] = drawFace(r, s);
+    }
+  }
+  cache.back = drawBack();
+  Scene3D.cardTextures = cache;
+  return cache;
+}
+
+// Mirror an h.board array into 3D meshes. Adds new cards with deal animation,
+// removes meshes when board clears (new hand starts). Idempotent — safe to
+// call from every render frame; only adds/removes on diff.
+function scene3dSyncBoard(board) {
+  if (!Scene3D.ready || !Scene3D.scene) return;
+  if (!Scene3D.boardCards) Scene3D.boardCards = [];
+  const T = window.THREE;
+  const tex = scene3dBuildCardTextures(); if (!tex) return;
+  const existing = Scene3D.boardCards;
+  const desired = board || [];
+  // If board shrank (new hand) — remove all
+  if (desired.length < existing.length) {
+    for (const m of existing) {
+      Scene3D.scene.remove(m);
+      if (m.geometry) m.geometry.dispose();
+    }
+    Scene3D.boardCards = [];
+  }
+  const current = Scene3D.boardCards;
+  // Add new cards with deal animation
+  const cardW = 0.7, cardH = 1.0;
+  const totalW = desired.length * (cardW + 0.12) - 0.12;
+  const startX = -totalW / 2 + cardW / 2;
+  for (let i = 0; i < desired.length; i++) {
+    const card = desired[i];
+    const targetX = startX + i * (cardW + 0.12);
+    if (current[i]) {
+      // Update target position (board may re-center as cards arrive)
+      if (current[i].userData) current[i].userData.targetX = targetX;
+      continue;
+    }
+    // Create new mesh
+    const key = card.rank + card.suit;
+    const faceTex = tex[key] || tex.back;
+    const geo = new T.PlaneGeometry(cardW, cardH);
+    const matFront = new T.MeshStandardMaterial({ map: faceTex, roughness: 0.45, metalness: 0.05 });
+    const mesh = new T.Mesh(geo, matFront);
+    // Spawn at "deck" position (center, raised, rotated)
+    mesh.position.set(0, 1.4, 0);
+    mesh.rotation.set(-Math.PI / 2, 0, Math.PI / 4);
+    mesh.userData = {
+      targetX,
+      targetY: 0.04,
+      targetZ: 0,
+      dealStart: performance.now(),
+      dealDuration: 240,
+      dealDelay: i * 40,
+    };
+    Scene3D.scene.add(mesh);
+    Scene3D.boardCards.push(mesh);
+  }
+}
+
+// Per-frame card animation (called inside the render loop). Handles deal
+// interpolation toward the target position and rotateY flip.
+function scene3dAnimateCards(now) {
+  // Animate both board (Phase C) and hero hole (Phase D) cards
+  const animList = [];
+  if (Scene3D.boardCards) for (const m of Scene3D.boardCards) animList.push(m);
+  if (Scene3D.heroHole) for (const m of Scene3D.heroHole) animList.push(m);
+  if (animList.length === 0) return;
+  for (const m of animList) {
+    const u = m.userData; if (!u) continue;
+    const elapsed = now - u.dealStart - u.dealDelay;
+    if (elapsed < 0) { m.visible = false; continue; }
+    m.visible = true;
+    const k = Math.min(1, elapsed / u.dealDuration);
+    const e = 1 - Math.pow(1 - k, 3);
+    if (u.isHero) {
+      // Hero hole-card squeeze + flip (Grok WSOP spec):
+      // 0-60% (180ms) — squeeze peak (rotateY scale up)
+      // 60-100% (120ms) — flip to face-up
+      m.position.x = e * u.targetX;
+      m.position.y = (1 - e) * 1.5 + e * u.targetY;
+      m.position.z = e * u.targetZ;
+      // Phase A: squeeze peak rotation (sideways at 60%)
+      // Phase B: flip to upright at 100%
+      const flipPhase = Math.max(0, (k - 0.6) / 0.4); // 0→1 over last 40%
+      const squeezePhase = Math.min(1, k / 0.6);      // 0→1 over first 60%
+      const rotY = (1 - flipPhase) * (Math.PI / 2 - squeezePhase * Math.PI / 6) + flipPhase * 0;
+      m.rotation.x = (1 - e) * (-Math.PI / 2.4) + e * (-Math.PI / 3); // tilt toward camera
+      m.rotation.y = rotY;
+      m.rotation.z = 0;
+      // Subtle scale pop during squeeze peak
+      const scale = 1 + Math.sin(squeezePhase * Math.PI) * 0.08;
+      m.scale.set(scale, scale, scale);
+    } else {
+      // Board card — straight deal toward target with light flip wobble
+      m.position.x = (1 - e) * 0 + e * u.targetX;
+      m.position.y = (1 - e) * 1.4 + e * u.targetY;
+      m.position.z = (1 - e) * 0 + e * u.targetZ;
+      m.rotation.x = -Math.PI / 2;
+      m.rotation.z = (1 - e) * (Math.PI / 4) + e * 0;
+      m.rotation.y = Math.sin((1 - e) * Math.PI) * 0.3;
+    }
+  }
+}
+
+// === Phase H: Rapier WASM rigid-body physics for chips ======================
+// Loads @dimforge/rapier3d-compat via dynamic ES import. The compat build
+// inlines the WASM bytes as base64 so it works without a separate fetch
+// step, which is the friendliest browser integration. World init is async
+// and may fail across older browsers — full fallback to tween-chip system
+// (Phase E) is preserved when Rapier can't load.
+//
+// Lifecycle:
+//   physicsInit() — dynamic import + RAPIER.init() + world creation. Cached.
+//   physicsStep(dt) — fixed-step world advance, called from render loop
+//   physicsSpawnChip() — alternative to scene3dSpawnChip when physics is on
+//   physicsClear() — remove all rigid bodies
+//   physicsDispose() — full release
+const Physics = {
+  enabled: false,           // toggled by user pref + load success
+  loading: false,
+  loaded: false,
+  RAPIER: null,
+  world: null,
+  bodies: [],               // [{ rb, mesh }]
+  groundCollider: null,
+  lastStepTime: 0,
+};
+function physicsEnabled() {
+  return !!(TourState && TourState.preferences && TourState.preferences.physicsChips);
+}
+async function physicsInit() {
+  if (Physics.loaded) return true;
+  if (Physics.loading) return false;
+  Physics.loading = true;
+  try {
+    // Dynamic ES module import. Skypack mirrors the npm package and wraps it
+    // for browser use. The `compat` variant inlines the WASM as base64 so a
+    // single import call gets us a usable RAPIER object.
+    const RAPIER = await import('https://cdn.skypack.dev/@dimforge/rapier3d-compat@0.12.0');
+    if (RAPIER && typeof RAPIER.init === 'function') await RAPIER.init();
+    Physics.RAPIER = RAPIER;
+    // World with downward gravity matching real-world units (~9.81 m/s²)
+    Physics.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    // Ground collider — large flat slab at y=0 representing the felt
+    const groundDesc = RAPIER.ColliderDesc.cuboid(8, 0.05, 5)
+      .setFriction(0.78)              // velvet has high friction
+      .setRestitution(0.05);          // chips dampen quickly
+    Physics.groundCollider = Physics.world.createCollider(groundDesc);
+    // Side walls — invisible barriers around the felt rim so chips don't
+    // slide off the table during stacking/collection
+    const wallH = 0.5;
+    const wallDescs = [
+      RAPIER.ColliderDesc.cuboid(8, wallH, 0.1).setTranslation(0, wallH, -5).setRestitution(0.1),
+      RAPIER.ColliderDesc.cuboid(8, wallH, 0.1).setTranslation(0, wallH,  5).setRestitution(0.1),
+      RAPIER.ColliderDesc.cuboid(0.1, wallH, 5).setTranslation(-8, wallH, 0).setRestitution(0.1),
+      RAPIER.ColliderDesc.cuboid(0.1, wallH, 5).setTranslation( 8, wallH, 0).setRestitution(0.1),
+    ];
+    for (const d of wallDescs) Physics.world.createCollider(d);
+    Physics.loaded = true;
+    Physics.loading = false;
+    Physics.lastStepTime = performance.now();
+    return true;
+  } catch (e) {
+    console.warn('Rapier physics init failed — falling back to tween chips:', e && e.message ? e.message : e);
+    Physics.loaded = false;
+    Physics.loading = false;
+    return false;
+  }
+}
+function physicsStep(now) {
+  if (!Physics.loaded || !Physics.world) return;
+  const dt = Math.min(0.033, (now - Physics.lastStepTime) / 1000); // cap at 33ms (avoid death-spiral)
+  Physics.lastStepTime = now;
+  Physics.world.step();
+  // Sync mesh transforms from rigid bodies
+  for (const item of Physics.bodies) {
+    const t = item.rb.translation();
+    const r = item.rb.rotation();
+    item.mesh.position.set(t.x, t.y, t.z);
+    item.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+  }
+  // Reap settled bodies (energy near zero) — keep them in place but stop
+  // simulating to save CPU. Only relevant for pot-pile chips long-term.
+  // (Not implemented yet; Rapier auto-sleeps via island manager.)
+}
+function physicsSpawnChip(t, seatIdx, opts) {
+  if (!Physics.loaded || !Scene3D.ready || !Scene3D.scene) return false;
+  const RAPIER = Physics.RAPIER; if (!RAPIER) return false;
+  const T = window.THREE; if (!T) return false;
+  opts = opts || {};
+  const fromPos = scene3dSeatPosition(seatIdx, t.maxSeats);
+  // Aim toward pot center with a slight upward + forward velocity arc
+  const toX = 0, toY = 0.10, toZ = 0;
+  const dx = toX - fromPos.x, dz = toZ - fromPos.z;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  const speed = dist / 0.3; // rough velocity for ~300ms travel
+  const upBoost = Math.max(2.5, dist * 0.6);
+  // Visual mesh — gold cylinder, lit
+  const geo = new T.CylinderGeometry(0.18, 0.18, 0.06, 24);
+  const mat = new T.MeshStandardMaterial({ color: 0xD4A017, roughness: 0.30, metalness: 0.85, emissive: 0x4A3408, emissiveIntensity: 0.4 });
+  const mesh = new T.Mesh(geo, mat);
+  mesh.position.set(fromPos.x, fromPos.y + 0.1, fromPos.z);
+  Scene3D.scene.add(mesh);
+  // Rigid body — dynamic with mass, initial velocity toward pot
+  const rbDesc = RAPIER.RigidBodyDesc.dynamic()
+    .setTranslation(fromPos.x, fromPos.y + 0.1, fromPos.z)
+    .setLinvel((dx / dist) * speed, upBoost, (dz / dist) * speed)
+    .setAngvel({ x: (Math.random() - 0.5) * 8, y: (Math.random() - 0.5) * 4, z: (Math.random() - 0.5) * 8 })
+    .setLinearDamping(0.6)
+    .setAngularDamping(0.8);
+  const rb = Physics.world.createRigidBody(rbDesc);
+  const colDesc = RAPIER.ColliderDesc.cylinder(0.03, 0.18)
+    .setDensity(2.5).setFriction(0.6).setRestitution(0.20);
+  Physics.world.createCollider(colDesc, rb);
+  Physics.bodies.push({ rb, mesh });
+  return true;
+}
+function physicsClearChips() {
+  if (!Physics.loaded) return;
+  for (const item of Physics.bodies) {
+    try { Physics.world.removeRigidBody(item.rb); } catch (_) {}
+    if (item.mesh) {
+      Scene3D.scene && Scene3D.scene.remove(item.mesh);
+      if (item.mesh.geometry) item.mesh.geometry.dispose();
+      if (item.mesh.material) item.mesh.material.dispose();
+    }
+  }
+  Physics.bodies = [];
+}
+function physicsCollectPot(t, winnerIdx) {
+  if (!Physics.loaded || Physics.bodies.length === 0) return false;
+  const winnerPos = scene3dSeatPosition(winnerIdx, t.maxSeats);
+  // Apply impulse to each pot chip, aimed at winner's seat with stagger
+  Physics.bodies.forEach((item, i) => {
+    setTimeout(() => {
+      try {
+        const cur = item.rb.translation();
+        const dx = winnerPos.x - cur.x, dz = winnerPos.z - cur.z;
+        const dist = Math.sqrt(dx * dx + dz * dz) || 0.001;
+        item.rb.applyImpulse({ x: (dx / dist) * 0.18, y: 0.08, z: (dz / dist) * 0.18 }, true);
+        item.rb.applyTorqueImpulse({ x: (Math.random() - 0.5) * 0.05, y: (Math.random() - 0.5) * 0.05, z: (Math.random() - 0.5) * 0.05 }, true);
+      } catch (_) {}
+    }, i * 60);
+  });
+  // Schedule cleanup after collection animation
+  setTimeout(() => physicsClearChips(), 1800);
+  return true;
+}
+function physicsDispose() {
+  physicsClearChips();
+  if (Physics.world) {
+    try { Physics.world.free(); } catch (_) {}
+  }
+  Physics.world = null;
+  Physics.RAPIER = null;
+  Physics.loaded = false;
+  Physics.loading = false;
+}
+
+// === Phase D: hero hole cards + per-seat face-down stacks ===================
+// Hero hole cards (the user's two hole cards) render in 3D at the bottom-center
+// of the felt with a squeeze + flip animation. Each occupied AI seat also gets
+// a face-down 2-card stack indicator to visually communicate "this seat has
+// cards" — tournament-flavor for a poker table.
+function scene3dSyncHole(holeCards, seatIndex, totalSeats) {
+  if (!Scene3D.ready || !Scene3D.scene) return;
+  if (!Scene3D.heroHole) Scene3D.heroHole = [];
+  const T = window.THREE; const tex = scene3dBuildCardTextures(); if (!tex) return;
+  // Clear previous hero cards
+  for (const m of Scene3D.heroHole) {
+    Scene3D.scene.remove(m);
+    if (m.geometry) m.geometry.dispose();
+  }
+  Scene3D.heroHole = [];
+  if (!holeCards || holeCards.length === 0) return;
+  const cardW = 0.65, cardH = 0.92;
+  const spacing = 0.18;
+  const totalW = holeCards.length * cardW + (holeCards.length - 1) * spacing;
+  const startX = -totalW / 2 + cardW / 2;
+  // Place near bottom-front of felt, tilted toward camera for hero perspective
+  const baseY = 0.10;     // raised slightly above felt
+  const baseZ = 3.6;      // toward the front (toward viewer)
+  for (let i = 0; i < holeCards.length; i++) {
+    const card = holeCards[i];
+    const key = card.rank + card.suit;
+    const faceTex = tex[key] || tex.back;
+    const geo = new T.PlaneGeometry(cardW, cardH);
+    const mat = new T.MeshStandardMaterial({ map: faceTex, roughness: 0.42, metalness: 0.06 });
+    const mesh = new T.Mesh(geo, mat);
+    // Spawn from center-back (deck), animate to hero position with squeeze + flip
+    mesh.position.set(0, 1.5, 0);
+    mesh.rotation.set(-Math.PI / 2.4, Math.PI / 2, 0); // start sideways for squeeze flip
+    mesh.userData = {
+      targetX: startX + i * (cardW + spacing),
+      targetY: baseY,
+      targetZ: baseZ,
+      dealStart: performance.now(),
+      dealDuration: 300,    // 180ms squeeze + 120ms flip = 300ms total
+      dealDelay: 240 + i * 90, // sequenced after board-card window
+      isHero: true,
+    };
+    Scene3D.scene.add(mesh);
+    Scene3D.heroHole.push(mesh);
+  }
+}
+
+// Per-seat face-down stack indicators. Small 2-card pile near each occupied
+// non-hero seat. Cleared between hands.
+function scene3dSyncSeatCards(t) {
+  if (!Scene3D.ready || !Scene3D.scene) return;
+  const T = window.THREE; const tex = scene3dBuildCardTextures(); if (!tex || !tex.back) return;
+  if (!Scene3D.seatCards) Scene3D.seatCards = [];
+  // Clear previous
+  for (const m of Scene3D.seatCards) {
+    Scene3D.scene.remove(m);
+    if (m.geometry) m.geometry.dispose();
+  }
+  Scene3D.seatCards = [];
+  if (!t || !t.handState) return;
+  const h = t.handState;
+  const seated = h.seated || [];
+  const youSeatIdx = t.seats.findIndex(s => s && s.playerId === 0);
+  const cardW = 0.42, cardH = 0.60;
+  for (const idx of seated) {
+    if (idx === youSeatIdx) continue; // hero gets dedicated 3D hole cards
+    if (h.folded && h.folded[idx]) continue; // folded seats: no cards shown
+    // Compute felt-coord position for this seat
+    const pos = scene3dSeatPosition(idx, t.maxSeats);
+    // Two slightly-fanned face-down meshes
+    for (let k = 0; k < 2; k++) {
+      const geo = new T.PlaneGeometry(cardW, cardH);
+      const mat = new T.MeshStandardMaterial({ map: tex.back, roughness: 0.55, metalness: 0.10 });
+      const mesh = new T.Mesh(geo, mat);
+      const fanAngle = (k - 0.5) * 0.32;
+      mesh.position.set(pos.x + Math.cos(fanAngle) * 0.05 * (k === 0 ? -1 : 1), 0.06, pos.z + 0.05 * k);
+      mesh.rotation.set(-Math.PI / 2, fanAngle, 0);
+      Scene3D.scene.add(mesh);
+      Scene3D.seatCards.push(mesh);
+    }
+  }
+}
+
+// === Phase K: dealer button + rotation between hands ========================
+// White disc with engraved "D" sits at the rail edge near the dealer seat.
+// On hand-end the button slides to the next active seat with a 360° spin.
+function scene3dSyncDealerButton(t) {
+  if (!Scene3D.ready || !Scene3D.scene) return;
+  const T = window.THREE;
+  if (!Scene3D.dealerButton) {
+    // Create once — re-positioned per hand
+    const geo = new T.CylinderGeometry(0.22, 0.22, 0.05, 32);
+    const mat = new T.MeshStandardMaterial({
+      color: 0xF5F0E6, roughness: 0.30, metalness: 0.20, emissive: 0x222222, emissiveIntensity: 0.15,
+    });
+    const btn = new T.Mesh(geo, mat);
+    btn.rotation.x = 0; // disc face up
+    Scene3D.scene.add(btn);
+    // Engraved "D" — small canvas texture overlay
+    const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#F5F0E6'; ctx.fillRect(0, 0, 64, 64);
+    ctx.fillStyle = '#4A2C1F'; ctx.font = 'bold 42px serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('D', 32, 34);
+    const dTex = new T.CanvasTexture(cv);
+    btn.material.map = dTex; btn.material.needsUpdate = true;
+    Scene3D.dealerButton = btn;
+  }
+  if (!t || t.button == null) return;
+  // Position just outside the seat at the dealer's index
+  const pos = scene3dSeatPosition(t.button, t.maxSeats);
+  // Place button slightly inward toward felt center (it sits on the felt at the
+  // dealer's rail edge in real poker)
+  const inward = 0.85;
+  Scene3D.dealerButton.position.set(pos.x * inward, 0.08, pos.z * inward);
+  // Schedule a one-time spin animation (handled in tick via auto-rotate)
+}
+
+// === Phase I: celebration — bloom + winner camera zoom ======================
+// Triggers on showdown wins. Applies a CSS filter "bloom" to the canvas for
+// ~2s, then pans the camera toward the winner's seat for a dramatic close-up.
+// Camera returns to default position via decay tween over the next 1.5s.
+function scene3dCelebrate(t, winnerIdx) {
+  if (!Scene3D.ready || !Scene3D.canvas) return;
+  // Bloom CSS class on canvas
+  Scene3D.canvas.classList.add('celebrating');
+  setTimeout(() => {
+    if (Scene3D.canvas) Scene3D.canvas.classList.remove('celebrating');
+  }, 2000);
+  // Camera zoom toward winner — set a transient target for the drift loop
+  if (Scene3D.camera) {
+    const winnerPos = scene3dSeatPosition(winnerIdx, t.maxSeats);
+    Scene3D._celebrateUntil = performance.now() + 1500;
+    Scene3D._celebrateTarget = {
+      // Pan camera halfway to winner, lower altitude for drama
+      x: winnerPos.x * 0.5,
+      y: 4.2,
+      z: 9.0 + winnerPos.z * 0.3,
+    };
+  }
+}
+
+// === Phase G: seat positioning helper =======================================
+// Maps a seat index (0..maxSeats-1) to a position on the 3D felt that mirrors
+// the 2D CSS layout (which uses circular distribution around the oval).
+// The 2D layout starts at 90° (top of table) and goes clockwise; we mirror
+// that in 3D space where +Z is toward the camera.
+function scene3dSeatPosition(seatIndex, maxSeats) {
+  // 2D layout angle: -π/2 + (i / maxSeats) * 2π — top of table is index 0
+  const angle = -Math.PI / 2 + (seatIndex / maxSeats) * Math.PI * 2;
+  // Felt is oval (1.6× horizontal, 1.0× vertical in 3D coords)
+  const radius = 4.4;
+  const x = Math.cos(angle) * radius * 1.6;
+  const z = Math.sin(angle) * radius * 1.0;
+  return { x, y: 0.06, z };
+}
+
+// === Phase E: 3D chip travel (bet → pot) ====================================
+// Spawn a metallic gold chip cylinder at a seat position and animate it to
+// the pot. Pure Three.js (no Rapier) — uses cubic ease interp. Each chip
+// includes a slight rotation tween for "tumbling" feel.
+function scene3dSpawnChip(t, seatIdx, opts) {
+  if (!Scene3D.ready || !Scene3D.scene) return;
+  if (!Scene3D.chips) Scene3D.chips = [];
+  const T = window.THREE;
+  opts = opts || {};
+  const fromPos = scene3dSeatPosition(seatIdx, t.maxSeats);
+  const toPos = opts.toPotPile ? { x: 0, y: 0.10 + (Scene3D.potPile?.length || 0) * 0.04, z: 0 } : { x: 0, y: 0.10, z: 0 };
+  // Gold cylinder chip — small, lit
+  const geo = new T.CylinderGeometry(0.18, 0.18, 0.06, 24);
+  const mat = new T.MeshStandardMaterial({
+    color: 0xD4A017, roughness: 0.30, metalness: 0.85, emissive: 0x4A3408, emissiveIntensity: 0.4,
+  });
+  const mesh = new T.Mesh(geo, mat);
+  mesh.position.set(fromPos.x, fromPos.y + 0.4, fromPos.z); // slight pop-up
+  mesh.userData = {
+    fromX: fromPos.x, fromY: fromPos.y + 0.4, fromZ: fromPos.z,
+    toX: toPos.x, toY: toPos.y, toZ: toPos.z,
+    travelStart: performance.now(),
+    travelDuration: 240,   // Grok spec: 240ms ease-out cubic
+    landed: false,
+    isPotChip: !!opts.toPotPile,
+    fromSeat: seatIdx,
+  };
+  Scene3D.scene.add(mesh);
+  Scene3D.chips.push(mesh);
+}
+
+// Pot collection — winner pull. Existing pot pile chips fly to the winner's
+// seat with cascading 60ms stagger between chips for "raking the pot" feel.
+function scene3dCollectPot(t, winnerIdx) {
+  if (!Scene3D.ready || !Scene3D.scene) return;
+  if (!Scene3D.chips || Scene3D.chips.length === 0) {
+    // No pot pile — simulate a small celebratory chip burst from center to winner
+    const winnerPos = scene3dSeatPosition(winnerIdx, t.maxSeats);
+    for (let i = 0; i < 8; i++) {
+      const T = window.THREE;
+      const geo = new T.CylinderGeometry(0.16, 0.16, 0.05, 18);
+      const mat = new T.MeshStandardMaterial({
+        color: 0xD4A017, roughness: 0.30, metalness: 0.85, emissive: 0x4A3408, emissiveIntensity: 0.5,
+      });
+      const mesh = new T.Mesh(geo, mat);
+      mesh.position.set(0, 0.10, 0);
+      mesh.userData = {
+        fromX: 0, fromY: 0.10, fromZ: 0,
+        toX: winnerPos.x, toY: winnerPos.y, toZ: winnerPos.z,
+        travelStart: performance.now() + i * 60,
+        travelDuration: 380,
+        landed: false,
+        isPotChip: false,
+      };
+      Scene3D.scene.add(mesh);
+      Scene3D.chips.push(mesh);
+    }
+    return;
+  }
+  const winnerPos = scene3dSeatPosition(winnerIdx, t.maxSeats);
+  Scene3D.chips.forEach((chip, i) => {
+    const u = chip.userData; if (!u) return;
+    u.fromX = chip.position.x; u.fromY = chip.position.y; u.fromZ = chip.position.z;
+    u.toX = winnerPos.x; u.toY = winnerPos.y; u.toZ = winnerPos.z;
+    u.travelStart = performance.now() + i * 60;
+    u.travelDuration = 380;
+    u.landed = false;
+    u.isPotChip = false;
+  });
+}
+
+// Per-frame chip animation. Despawns chips once they land at non-pot
+// destinations (winner pull); chips landing in pot pile stay until pot collection.
+function scene3dAnimateChips(now) {
+  if (!Scene3D.chips || Scene3D.chips.length === 0) return;
+  const survivors = [];
+  for (const chip of Scene3D.chips) {
+    const u = chip.userData; if (!u) continue;
+    const elapsed = now - u.travelStart;
+    if (elapsed < 0) { survivors.push(chip); continue; }
+    const k = Math.min(1, elapsed / u.travelDuration);
+    // Cubic ease-out, with arc rise mid-flight
+    const e = 1 - Math.pow(1 - k, 3);
+    const arc = Math.sin(k * Math.PI) * 0.4;
+    chip.position.x = u.fromX + (u.toX - u.fromX) * e;
+    chip.position.y = u.fromY + (u.toY - u.fromY) * e + arc;
+    chip.position.z = u.fromZ + (u.toZ - u.fromZ) * e;
+    chip.rotation.x = k * Math.PI * 4;  // tumbling spin
+    chip.rotation.z = k * Math.PI * 2;
+    if (k >= 1 && !u.landed) {
+      u.landed = true;
+      if (!u.isPotChip) {
+        // Despawn after landing at non-pot destination
+        Scene3D.scene.remove(chip);
+        if (chip.geometry) chip.geometry.dispose();
+        if (chip.material) chip.material.dispose();
+        continue;
+      }
+      // Pot chip — flatten orientation for stack
+      chip.rotation.x = 0; chip.rotation.z = 0;
+    }
+    survivors.push(chip);
+  }
+  Scene3D.chips = survivors;
+}
+
+// Clear all chips (called at hand start)
+function scene3dClearChips() {
+  if (!Scene3D.chips) return;
+  for (const chip of Scene3D.chips) {
+    Scene3D.scene && Scene3D.scene.remove(chip);
+    if (chip.geometry) chip.geometry.dispose();
+    if (chip.material) chip.material.dispose();
+  }
+  Scene3D.chips = [];
+}
+
+function scene3dStartLoop() {
+  if (Scene3D.rafHandle) return;
+  function tick() {
+    if (!Scene3D.ready || !Scene3D.canvas || !Scene3D.canvas.parentNode) {
+      Scene3D.rafHandle = null;
+      return;
+    }
+    const t = (performance.now() - Scene3D.startTime) / 1000;
+    // Camera drift — subtle 3-axis sway for organic feel
+    let targetX = Math.sin(t * 0.13) * 0.18;
+    let targetY = 6.5 + Math.sin(t * 0.09) * 0.15;
+    let targetZ = 9.0 + Math.cos(t * 0.11) * 0.12;
+    // Phase I: celebration override — pan toward winner during showdown win
+    if (Scene3D._celebrateUntil && performance.now() < Scene3D._celebrateUntil) {
+      const tt = Scene3D._celebrateTarget;
+      // Blend toward celebration target with cubic ease
+      const remain = (Scene3D._celebrateUntil - performance.now()) / 1500;
+      const blend = 1 - Math.pow(remain, 3); // 0 at start, 1 at end of celebration
+      const peakBlend = Math.sin(blend * Math.PI); // peaks at midpoint
+      targetX = targetX * (1 - peakBlend) + tt.x * peakBlend;
+      targetY = targetY * (1 - peakBlend) + tt.y * peakBlend;
+      targetZ = targetZ * (1 - peakBlend) + tt.z * peakBlend;
+    }
+    // Smooth current → target (light damping for organic motion)
+    Scene3D.camera.position.x += (targetX - Scene3D.camera.position.x) * 0.08;
+    Scene3D.camera.position.y += (targetY - Scene3D.camera.position.y) * 0.08;
+    Scene3D.camera.position.z += (targetZ - Scene3D.camera.position.z) * 0.08;
+    Scene3D.camera.lookAt(0, 0, 0);
+    // Light breathing — key light pulses very subtly
+    if (Scene3D.lights && Scene3D.lights.key) {
+      Scene3D.lights.key.intensity = 4.2 + Math.sin(t * 0.5) * 0.18;
+    }
+    // Sheen rotation — animated gold specular sweep across felt
+    if (Scene3D.sheenMesh) {
+      Scene3D.sheenMesh.rotation.z = t * 0.04;
+      Scene3D.sheenMesh.material.opacity = 0.045 + Math.sin(t * 0.25) * 0.025;
+    }
+    // Phase J: feed time uniform to velvet shader for animated sweep
+    if (Scene3D.feltMaterial && Scene3D.feltMaterial.uniforms && Scene3D.feltMaterial.uniforms.uTime) {
+      Scene3D.feltMaterial.uniforms.uTime.value = t;
+    }
+    // Phase C/D: animate board cards + hero hole cards (deal interpolation)
+    scene3dAnimateCards(performance.now());
+    // Phase E/F: animate chip travel (bet → pot, pot → winner)
+    scene3dAnimateChips(performance.now());
+    // Phase H: step Rapier physics world (only if physics is enabled + loaded)
+    if (Physics.loaded) physicsStep(performance.now());
+    // Phase K: dealer button gentle rotation animation
+    if (Scene3D.dealerButton) {
+      Scene3D.dealerButton.rotation.z += 0.005;
+    }
+    Scene3D.renderer.render(Scene3D.scene, Scene3D.camera);
+    Scene3D.rafHandle = requestAnimationFrame(tick);
+  }
+  Scene3D.rafHandle = requestAnimationFrame(tick);
+}
+
+function scene3dStopLoop() {
+  if (Scene3D.rafHandle) cancelAnimationFrame(Scene3D.rafHandle);
+  Scene3D.rafHandle = null;
+}
+
+function scene3dDispose() {
+  scene3dStopLoop();
+  scene3dUnmount();
+  if (Scene3D.renderer) {
+    try { Scene3D.renderer.dispose(); } catch (_) {}
+    try { if (Scene3D.renderer.forceContextLoss) Scene3D.renderer.forceContextLoss(); } catch (_) {}
+  }
+  if (Scene3D.scene) {
+    Scene3D.scene.traverse(obj => {
+      if (obj.geometry) try { obj.geometry.dispose(); } catch (_) {}
+      if (obj.material) {
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const m of mats) try { m.dispose(); } catch (_) {}
+      }
+    });
+  }
+  // Phase C/D/E/F cleanup — release card textures + meshes + chips
+  if (Scene3D.cardTextures) {
+    for (const k in Scene3D.cardTextures) {
+      try { Scene3D.cardTextures[k].dispose(); } catch (_) {}
+    }
+    Scene3D.cardTextures = null;
+  }
+  // Phase H: release Rapier physics world
+  try { physicsDispose(); } catch (_) {}
+  // Hero hole, seat cards, chips, dealer button, velvet shader — geos already
+  // disposed in the scene traversal above; null the references to allow GC
+  Scene3D.heroHole = null;
+  Scene3D.seatCards = null;
+  Scene3D.chips = null;
+  Scene3D.boardCards = null;
+  Scene3D.dealerButton = null;
+  Scene3D.feltMaterial = null;
+  Scene3D._celebrateUntil = 0;
+  Scene3D._celebrateTarget = null;
+  Scene3D.renderer = null;
+  Scene3D.scene = null;
+  Scene3D.camera = null;
+  Scene3D.feltMesh = null;
+  Scene3D.lights = null;
+  Scene3D.canvas = null;
+  Scene3D.ready = false;
+}
+
 function ensureCashLobby() {
   if (CashLobby.tables.length > 0) return;
   // Default lobby: 5 stake levels × 3 variants = 15 tables. AI seats fill
@@ -8870,6 +10103,35 @@ function renderCashTableView(tableId) {
   const feltWrap = el('div', { style: 'max-width: 720px; margin: 0 auto;' });
   const fourColor = !!(TourState.preferences && TourState.preferences.fourColorDeck);
   const felt = el('div', { class: 'felt-table' + (fourColor ? ' fourcolor' : '') });
+  // v69.9: gold dashed inner ring layered as separate child (the ::before
+  // pseudo is now used for the mahogany bevel).
+  felt.appendChild(el('div', { class: 'felt-table-ring' }));
+  // v69.10 Phase B: mount Scene3D atmospheric layer if user has it enabled.
+  // Deferred until after the felt is in the DOM so getBoundingClientRect
+  // returns valid dimensions. Falls back silently if Three.js isn't loaded.
+  setTimeout(() => {
+    if (typeof scene3dEnabled === 'function' && scene3dEnabled() && felt.isConnected) {
+      try {
+        scene3dMount(felt);
+        // Phase H: kick off Rapier load if user opted in (idempotent — cached)
+        if (physicsEnabled() && !Physics.loaded && !Physics.loading) {
+          try { physicsInit(); } catch (_) {}
+        }
+        // v69.11 Phase C: 3D board cards
+        if (handState && handState.board) scene3dSyncBoard(handState.board);
+        else scene3dSyncBoard([]);
+        // v69.12 Phase D: hero hole cards + per-seat face-down indicators
+        if (handState && handState.hole && youSeatIdx >= 0 && handState.hole[youSeatIdx]) {
+          scene3dSyncHole(handState.hole[youSeatIdx], youSeatIdx, t.maxSeats);
+        } else {
+          scene3dSyncHole(null);
+        }
+        scene3dSyncSeatCards(t);
+        // Phase K: dealer button position
+        scene3dSyncDealerButton(t);
+      } catch (_) { /* graceful */ }
+    }
+  }, 0);
   // Pot.
   const pot = el('div', { class: 'pot-display' });
   const potVal = (handState && handState.pot) || 0;
@@ -9574,6 +10836,13 @@ function startCashHand(t) {
     goldenCard,
   };
   for (const i of seated) recordHUDAction(t.seats[i].playerId, 'dealt', true);
+  // Phase E/F/H: clear pot pile from previous hand at the start of a new deal
+  try {
+    if (scene3dEnabled()) {
+      if (Physics.loaded) physicsClearChips();
+      if (typeof scene3dClearChips === 'function') scene3dClearChips();
+    }
+  } catch (_) {}
   if (isCashViewActive()) refreshCashView();
   scheduleCashTick(t);
   foley('card-deal');
@@ -9838,7 +11107,19 @@ function applyCashAction(t, seatIdx, action) {
     seat.stack -= real; h.bets[seatIdx] += real; h.contributed[seatIdx] += real; h.pot += real;
     h.log.push(seat.name + ' calls ' + real);
     recordHUDAction(seat.playerId, 'call', isPreflop);
-    if (real > 0) spawnChipTravel(t, seatIdx);
+    if (real > 0) {
+      spawnChipTravel(t, seatIdx);
+      // Phase H: try Rapier physics chips first; fallback to Phase E tweens
+      let physicsHandled = false;
+      try {
+        if (physicsEnabled() && Physics.loaded && scene3dEnabled()) {
+          physicsHandled = physicsSpawnChip(t, seatIdx, { toPotPile: true });
+        }
+      } catch (_) {}
+      if (!physicsHandled) {
+        try { if (typeof scene3dSpawnChip === 'function' && scene3dEnabled()) scene3dSpawnChip(t, seatIdx, { toPotPile: true }); } catch (_) {}
+      }
+    }
   } else if (action.kind === 'raise' || action.kind === 'bet') {
     const targetTotal = action.amount;
     const cap = seat.stack + h.bets[seatIdx];
@@ -9850,7 +11131,19 @@ function applyCashAction(t, seatIdx, action) {
     h.currentBet = total;
     h.log.push(seat.name + ' ' + (wasReraise ? 'raises to ' : 'bets ') + total);
     recordHUDAction(seat.playerId, wasReraise ? 'raise' : 'bet', isPreflop);
-    if (real > 0) spawnChipTravel(t, seatIdx);
+    if (real > 0) {
+      spawnChipTravel(t, seatIdx);
+      // Phase H: try Rapier physics chips first; fallback to Phase E tweens
+      let physicsHandled = false;
+      try {
+        if (physicsEnabled() && Physics.loaded && scene3dEnabled()) {
+          physicsHandled = physicsSpawnChip(t, seatIdx, { toPotPile: true });
+        }
+      } catch (_) {}
+      if (!physicsHandled) {
+        try { if (typeof scene3dSpawnChip === 'function' && scene3dEnabled()) scene3dSpawnChip(t, seatIdx, { toPotPile: true }); } catch (_) {}
+      }
+    }
     const others = h.activeMask.filter(x => x !== seatIdx && !h.folded[x]);
     h.toAct = others.concat([]);
   }
@@ -9916,6 +11209,16 @@ function resolveCashHand(t) {
     fundGoldenPoolFromRake(rakeAmt);
   }
   if (winnerIdx != null) t.seats[winnerIdx].stack += rakedPot;
+  // Phase F/H: pot collection — physics or tween, whichever is active
+  try {
+    if (winnerIdx != null && scene3dEnabled()) {
+      let handled = false;
+      if (physicsEnabled() && Physics.loaded) handled = physicsCollectPot(t, winnerIdx);
+      if (!handled) scene3dCollectPot(t, winnerIdx);
+    }
+  } catch (_) {}
+  // Phase I: trigger celebration bloom + winner camera zoom on showdown wins
+  try { if (winnerIdx != null && scene3dEnabled() && isShowdown) scene3dCelebrate(t, winnerIdx); } catch (_) {}
   // Golden Card Lottery — entry trigger. Winner enters if the Golden Card is
   // in their hole or on the board AND it was a real win (showdown OR fold-
   // around with the card visible in their hole). Buried golden cards are no-op.
@@ -9926,6 +11229,19 @@ function resolveCashHand(t) {
       recordGoldenLotteryEntry(t.seats[winnerIdx], t, h.handId);
       h.goldenWinTriggered = true;
       foley('win-fanfare');
+      // v69.9 Buzz honey-droplet burst — Golden Hand celebration. Origin
+      // anchored to the pot display for visual continuity.
+      try {
+        const pot = document.querySelector('.felt-table .pot-display');
+        const r = pot ? pot.getBoundingClientRect() : null;
+        spawnHoneyDropletBurst({
+          count: 14,
+          originX: r ? (r.left + r.width / 2) : window.innerWidth / 2,
+          originY: r ? (r.top + r.height / 2) : window.innerHeight / 2,
+          distance: 220,
+        });
+        toast('🌟 Golden Hand! Lottery entry confirmed', 3200);
+      } catch (_) {}
     }
   }
   // Auto-trigger a draw if the configured interval has elapsed.
@@ -10378,6 +11694,8 @@ function checkBadBeatTrigger(active, hole, board, t, winnerIdx) {
   BBJackpot.history.push({ ts: Date.now(), payout: total * 0.75, tableId: t.id });
   if (BBJackpot.history.length > 100) BBJackpot.history.splice(0, BBJackpot.history.length - 100);
   toast('🏆 BAD BEAT JACKPOT — ' + Math.round(total * 0.75).toLocaleString() + ' ◈ paid out!', 5000);
+  // v69.9 Buzz droplet burst on jackpot — full-screen origin
+  try { spawnHoneyDropletBurst({ count: 28, distance: 380 }); } catch (_) {}
   foley('bb-jackpot');
 }
 
@@ -10555,8 +11873,37 @@ function showChampionCelebration(opts) {
   }
   document.body.appendChild(overlay);
   foley('win-fanfare');
+  // v69.9: Buzz mascot honey-droplet burst — fires from screen center
+  // outward in addition to the gold/green particles. Brand asset for
+  // major celebrations (champion / royal / quads / BB jackpot).
+  spawnHoneyDropletBurst({ count: 18, originX: window.innerWidth / 2, originY: window.innerHeight / 2, distance: 320 });
   setTimeout(() => overlay.classList.add('fade-out'), 3500);
   setTimeout(() => overlay.remove(), 4400);
+}
+
+// v69.9 Buzz honey-droplet burst — call directly with origin + count to fire
+// off-cycle from the celebration overlay (e.g., on Golden Card wins).
+function spawnHoneyDropletBurst(opts) {
+  opts = opts || {};
+  const count = opts.count || 14;
+  const originX = opts.originX != null ? opts.originX : window.innerWidth / 2;
+  const originY = opts.originY != null ? opts.originY : window.innerHeight / 2;
+  const distance = opts.distance || 240;
+  for (let i = 0; i < count; i++) {
+    const drop = document.createElement('div');
+    drop.className = 'honey-droplet';
+    const angle = (i / count) * Math.PI * 2 + Math.random() * 0.5 - 0.25;
+    // Bias droplets to fall slightly downward (gravity feel)
+    const dx = Math.cos(angle) * (distance * (0.7 + Math.random() * 0.6));
+    const dy = Math.sin(angle) * (distance * (0.7 + Math.random() * 0.6)) + (distance * 0.25);
+    drop.style.left = (originX - 7) + 'px';
+    drop.style.top = (originY - 9) + 'px';
+    drop.style.setProperty('--dx', dx + 'px');
+    drop.style.setProperty('--dy', dy + 'px');
+    drop.style.animationDelay = (i * 18) + 'ms';
+    document.body.appendChild(drop);
+    setTimeout(() => drop.remove(), 1700 + i * 18);
+  }
 }
 
 // Compact macro-economy ticker in the sidebar — circulating + gini at a glance.
@@ -10724,6 +12071,55 @@ Views.bankroll = function() {
   };
   foleyCard.appendChild(foleyTog);
   view.appendChild(foleyCard);
+
+  // Rapier physics chips toggle (Phase H · v69.13). Requires 3D mode.
+  const physCard = el('div', { class: 'card', style: 'margin-bottom: 18px; display:flex; align-items:center; justify-content:space-between; gap: 12px; background: linear-gradient(135deg, rgba(212,160,23,0.10), rgba(74,44,31,0.18));' });
+  physCard.appendChild(el('div', null,
+    el('div', { style: 'font-weight: 600; font-size: 14px;', text: '⚛ Chip physics — Rapier WASM (beta)' }),
+    el('div', { style: 'font-size: 11px; opacity: 0.65; margin-top: 3px;', text: 'Rigid-body chip stacking + collision settling. Chips fly to the pot with real velocity, tumble, and pile up via physics. ~600KB WASM module loaded on demand. Requires 3D atmospheric felt to be on. Falls back to tween chips on any failure.' })
+  ));
+  const physDef = !!TourState.preferences.physicsChips;
+  const physTog = el('button', { class: 'btn' }, physDef ? 'On — disable' : 'Off — enable');
+  physTog.onclick = () => {
+    TourState.preferences.physicsChips = !physDef;
+    if (TourState.preferences.physicsChips) {
+      // Kick off async load; user will see physics chips next time they spawn
+      try {
+        physicsInit().then(ok => {
+          if (ok) toast('Rapier loaded — physics chips active');
+          else toast('Rapier load failed — staying with tween chips');
+        });
+      } catch (_) {}
+    } else {
+      try { physicsClearChips(); } catch (_) {}
+    }
+    unifiedSave(); Views.bankroll();
+  };
+  physCard.appendChild(physTog);
+  view.appendChild(physCard);
+
+  // 3D atmospheric layer toggle (Phase B · v69.10).
+  const s3dCard = el('div', { class: 'card', style: 'margin-bottom: 18px; display:flex; align-items:center; justify-content:space-between; gap: 12px; background: linear-gradient(135deg, rgba(212,160,23,0.12), rgba(11,60,46,0.18));' });
+  s3dCard.appendChild(el('div', null,
+    el('div', { style: 'font-weight: 600; font-size: 14px;', text: '✨ 3D atmospheric felt (beta)' }),
+    el('div', { style: 'font-size: 11px; opacity: 0.65; margin-top: 3px;', text: 'WebGL-rendered velvet felt with chandelier lighting and drifting camera. Cards/chips/seats remain 2D HTML for full reliability — this is a pure atmosphere layer. Phase B foundation; chip physics & 3D cards land in Phase C+.' })
+  ));
+  const s3dDef = !!TourState.preferences.scene3d;
+  const s3dTog = el('button', { class: 'btn' }, s3dDef ? 'On — disable' : 'Off — enable');
+  s3dTog.onclick = () => {
+    TourState.preferences.scene3d = !s3dDef;
+    if (!TourState.preferences.scene3d) {
+      // Tear down active scene immediately
+      try { scene3dUnmount(); } catch (_) {}
+    } else if (window._yj3dReady === false) {
+      toast('Three.js failed to load — check connection / blockers');
+    } else {
+      toast('3D layer enabled — next cash table sit will show the lit felt');
+    }
+    unifiedSave(); Views.bankroll();
+  };
+  s3dCard.appendChild(s3dTog);
+  view.appendChild(s3dCard);
 
   // 4-color deck toggle (Grok-spec: SOTA grinder default).
   const fcCard = el('div', { class: 'card', style: 'margin-bottom: 18px; display:flex; align-items:center; justify-content:space-between; gap: 12px;' });
@@ -10993,9 +12389,9 @@ function renderCashView(gameMode) {
 
     const hint = el('div', { class: 'ui-sans', style: 'font-size:11px; opacity:0.65; margin-top:14px; line-height:1.5;' });
     if (isBB) {
-      hint.innerHTML = '<strong>Bumblebee.</strong> The casual league. Showdown losers score their own hand class (-5..+2) — flush-loser still posts -1 birdie. Gentler ledger, golf-realistic scoring band. Dual-ledger Honey-Stroke applies — chip P/L + per-hand stroke score, settled at session end with stroke-weight × hands<sup>-1</sup>.';
+      hint.innerHTML = '<strong>Bumblebee.</strong> The casual league. Showdown losers score their own hand class (-5..+2) — flush-loser still posts -1 birdie. Gentler ledger, golf-realistic scoring band. <em>Cash chips are Nectar 1:1</em> — your stack IS your bankroll. Dual ledger: Nectar P/L + per-hand stroke score (deterministic given hand class), settled at session end via stroke-weight × hands<sup>-1</sup>.';
     } else {
-      hint.innerHTML = '<strong>Yellow Jacket Cash.</strong> Two variants. <strong>Pure NLHE</strong>: chip P/L only — standard online poker. <strong>YJ Honey-Stroke</strong>: dual-ledger — chip P/L + per-hand stroke score, with Bogey Loss (loser fixed +1). Sharper skill expression. Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a>.';
+      hint.innerHTML = '<strong>Yellow Jacket Cash.</strong> <em>Cash chips are Nectar 1:1</em> — your stack IS your bankroll, no Honey indirection. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker). <strong>YJ Honey-Stroke</strong> adds a parallel stroke score per hand (deterministic given hand class) with Bogey Loss (loser fixed +1) — sharper skill expression, settled at session end. Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a>.';
     }
     lobby.appendChild(hint);
     view.appendChild(lobby);
