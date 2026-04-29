@@ -1359,7 +1359,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.28-v69.7-multiway-calib";
+const APP_VERSION = "2026.04.29-v69.8-multiway-econ";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -4284,7 +4284,14 @@ function playMultiwayHole(players, opts) {
   // Initialize hand state. Mandatory opener: each player contributes 1 honey.
   // (Front 9; back-9 doubling at multi-way uses 2 honey per player. Caller
   // sets opts.openerPerPlayer if needed.)
-  const openerPerPlayer = +opts.openerPerPlayer || 1;
+  // v69.8 calibration: opener scales with table size. At 9-handed the 1-honey
+  // opener leaves callAmount = 0 for nearly every preflop decision (mandatory
+  // contribution = currentLevel), so the fold-cliff math couldn't fire. Bumping
+  // to 2 honey/player at N > 6 tightens preflop by forcing more decisions
+  // through callAmount > 0, where v69.7's table-size-scaled HARD_FOLD_FLOOR
+  // can express the right action.
+  const defaultOpener = N > 6 ? 2 : 1;
+  const openerPerPlayer = +opts.openerPerPlayer || defaultOpener;
   const contributions = new Array(N).fill(openerPerPlayer);
   const folded = new Array(N).fill(false);
   const useLoserBogey = (opts.gameContext && typeof opts.gameContext.loserBogey === 'boolean')
@@ -4524,7 +4531,14 @@ function runMultiwayStrokePlayEvent(players, holesPerRound, rounds, cfg, eventTy
       // Multi-way table.
       const result = playMultiwayMatch(table, holesPerRound, {
         strokeCap: cfg.regularStrokeCap || CurrentStrokeCap || 6,
-        gameContext: { mode: 'strokePlay', tableSize: table.length, holeNumber: r * holesPerRound + 1, totalHoles: rounds * holesPerRound, loserBogey: !!CurrentLoserBogey },
+        gameContext: { mode: 'strokePlay', tableSize: table.length, holeNumber: r * holesPerRound + 1, totalHoles: rounds * holesPerRound,
+          // v69.8: multi-way defaults to Bumblebee variant (Honored Loss). The
+          // YJ Bogey rule is calibrated for HU; at multi-way it accumulates
+          // 8 × (+1 bogey) per pot, pulling Major champion scores to ~+12 above
+          // par (vs. golf-realistic ~-4). cfg.multiwayVariant = 'yellowjacket'
+          // explicitly opts into the harsher rule for those who want it.
+          loserBogey: (cfg.multiwayVariant === 'yellowjacket') ? !!CurrentLoserBogey : false,
+        },
       });
       for (let i = 0; i < table.length; i++) {
         agg.get(table[i].id).score += result.totals[i];
@@ -12478,7 +12492,20 @@ const DEFAULT_SIM_CONFIG = {
   // 1.031, so Elite's natural skill premium produces clear positive ROI. Real WSOP
   // Main rake is ~6%, real PGA tour is effectively 0% (sponsor-funded). 3% is the
   // calibrated midpoint that makes skill expression visible at typical run lengths.
-  rakePercent: 0.03,
+  rakePercent: 0.03,                         // legacy flat-rate fallback (cash tables + pre-v69.8 configs)
+  // v69.8 TIERED RAKE — different rake per event tier. Calibrated so elite
+  // skill expression produces neutral-to-positive ROI on regulars and majors,
+  // while the marquee Main keeps full 3% to fund the elite tier's career
+  // upside via sponsor purse + lottery payouts. Lab sliders expose all three.
+  rakePercentRegular: 0.015,
+  rakePercentMajor:   0.020,
+  rakePercentMain:    0.030,
+  // v69.8 — multi-way variant default. 'bumblebee' (Honored Loss) is canonical
+  // at multi-way because YJ's Bogey Loss + 8 losers/pot pulls Major champion
+  // scores to ~+12 above par (golf-implausible). 'yellowjacket' explicitly
+  // opts in to harsher scoring. HU (tableSize=2) is unaffected — uses
+  // cfg.gameVariant directly.
+  multiwayVariant: 'bumblebee',
   payoutDecay: 0.74,       // geometric decay per ITM position (lower = flatter curve)
   // Run
   seed: 0, // 0 means unseeded
@@ -13282,7 +13309,22 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   // (2% rake) where skill-bracket pairing eliminated edge — they paid more
   // rake without skill recoupment. v48 reverts to flat rake; the F revert
   // (R1) is what actually fixes the underlying skill-edge problem.
-  const rake = cfg.rakePercent != null ? cfg.rakePercent : 0.03;
+  // v69.8 TIERED RAKE BY EVENT TIER. Calibration goal: keep elite nonMain ROI
+  // close to neutral by reducing the per-event rake friction on regulars and
+  // majors (where skill edge is small per event). Main keeps full 3% — its
+  // sponsor purse + lottery payouts fund the elite tier's career upside.
+  //   regular: 1.5% (was 3%)   — high volume, thin edges, low rake
+  //   major:   2.0% (was 3%)   — medium volume, prestige events, mid rake
+  //   main:    3.0% (unchanged) — annual marquee, heavy sponsor purse, high rake
+  // Per-tier sliders live in Lab → Economy section. cfg.rakePercent is
+  // retained as a legacy fallback used only if a tier-specific value is
+  // missing AND for cash tables (separate code path).
+  const rakeFromTier = eventType === 'main' ? cfg.rakePercentMain
+                     : eventType === 'major' ? cfg.rakePercentMajor
+                     : cfg.rakePercentRegular;
+  const rake = (rakeFromTier != null) ? rakeFromTier
+             : (cfg.rakePercent != null ? cfg.rakePercent
+             : (eventType === 'main' ? 0.03 : eventType === 'major' ? 0.02 : 0.015));
   const revenue = grossPool * rake;
   // Sponsor purse: fixed prize-pool contribution from sponsors/TV (PGA Tour model). Rake does
   // not apply to sponsor money — it goes directly to the purse.
@@ -14859,6 +14901,10 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('ai.profileOpt.raise', 0.75);
   cfgRow('ai.profileOpt.noise', 0);
   cfgRow('rakePercent', snapCfg.rakePercent != null ? snapCfg.rakePercent : 0.03);
+  cfgRow('rakePercentRegular', snapCfg.rakePercentRegular != null ? snapCfg.rakePercentRegular : 0.015);
+  cfgRow('rakePercentMajor',   snapCfg.rakePercentMajor   != null ? snapCfg.rakePercentMajor   : 0.020);
+  cfgRow('rakePercentMain',    snapCfg.rakePercentMain    != null ? snapCfg.rakePercentMain    : 0.030);
+  cfgRow('multiwayVariant',    snapCfg.multiwayVariant || 'bumblebee');
   cfgRow('payoutDecay', snapCfg.payoutDecay);
   cfgRow('poolSize', snapCfg.poolSize);
   cfgRow('seasons', snapCfg.seasons);
@@ -15475,8 +15521,14 @@ function renderConfigPanel(panel, mode) {
     for (const [key, label, min, max, step] of moneyCfg) {
       appendSliderControl(ecoSec, { key, label, min, max, step });
     }
-    // Rake %
-    appendSliderControl(ecoSec, { key: 'rakePercent', label: 'Rake %', min: 0, max: 0.25, step: 0.005 });
+    // v69.8 TIERED RAKE — three sliders, one per event tier. The legacy flat
+    // rakePercent slider is preserved as a cash-table / fallback control.
+    ecoSec.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 10px; color: var(--text-secondary); margin-top: 8px; font-style: italic;',
+      text: 'Tiered rake (v69.8). Regulars: small edge per event, low rake. Majors: prestige, mid rake. Main: marquee + sponsor-funded, high rake.' }));
+    appendSliderControl(ecoSec, { key: 'rakePercentRegular', label: 'Reg rake %',  min: 0, max: 0.10, step: 0.001 });
+    appendSliderControl(ecoSec, { key: 'rakePercentMajor',   label: 'Major rake %', min: 0, max: 0.10, step: 0.001 });
+    appendSliderControl(ecoSec, { key: 'rakePercentMain',    label: 'Main rake %',  min: 0, max: 0.10, step: 0.001 });
+    appendSliderControl(ecoSec, { key: 'rakePercent',        label: 'Cash rake %',  min: 0, max: 0.25, step: 0.005 });
     // Payout curve decay
     appendSliderControl(ecoSec, { key: 'payoutDecay', label: 'Payout curve', min: 0.50, max: 0.90, step: 0.01 });
     ecoSec.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 10px; color: var(--text-secondary); margin-top: 6px; font-style: italic;', text: 'Flat (0.50) pays bottom more. Top-heavy (0.90) concentrates on champion.' }));
@@ -15590,10 +15642,10 @@ function renderConfigPanel(panel, mode) {
   tsRow.appendChild(el('label', { text: 'Table size', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
   const tsSel = el('select', { style: 'width: 100%;' });
   [
-    { v: 2, label: '2 — Heads-up (canonical · max skill expression)' },
+    { v: 2, label: '2 — Heads-up (HU finals · canonical engine)' },
     { v: 4, label: '4 — Foursome (golf-realistic groups)' },
-    { v: 6, label: '6 — Six-max (recommended · online poker SOTA)' },
-    { v: 9, label: '9 — Full table (live tournament drama · variance-heavy)' },
+    { v: 6, label: '6 — Six-max (recommended for Regulars + Majors · online poker SOTA)' },
+    { v: 9, label: '9 — Full ring (Main Event · WSOP live standard · 2-honey opener)' },
   ].forEach(o => {
     const opt = el('option', { value: o.v, text: o.label });
     if ((+LabState.config.tableSize || 2) === o.v) opt.selected = true;
@@ -15609,7 +15661,32 @@ function renderConfigPanel(panel, mode) {
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'HU (2) is the canonical engine. 4 / 6 / 9 route aggregate stroke-play events through the multi-way matched-contribution runner — R1-R3 played at tables of N, then R4 collapses to a heads-up final between the top-2 survivors. Per-player honey caps auto-scale and v69.7 fold thresholds tighten with N to maintain skill expression. Bracket format ignores this setting. Recommendation: 6-max for general use, 4-max for golf-realistic foursome flavor, 9 for tournament drama (variance-heavy — Elite dominance suffers vs HU baseline).'
+    text: 'HU (2) is the canonical engine. 4 / 6 / 9 route aggregate stroke-play events through the multi-way matched-contribution runner — R1-R3 played at tables of N, then R4 collapses to a heads-up final between the top-2 survivors. v69.8 calibrations: opener 2 honey/player at N>6 (preflop pressure); Bumblebee variant default at multi-way (Honored Loss; YJ at multi-way overshoots scoring). Recommendation: 6-max for Regulars + Majors (WSOP-online SOTA), 9 for the Main Event (full ring · WSOP live), 2 for HU finals.'
+  }));
+
+  // === MULTI-WAY VARIANT (v69.8) ============================================
+  const mwvRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  mwvRow.appendChild(el('label', { text: 'Multi-way var', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const mwvSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 'bumblebee',    label: '🌼 Bumblebee (Honored Loss · default · golf-realistic scoring)' },
+    { v: 'yellowjacket', label: '🐝 Yellow Jacket (Bogey Loss · harsh · scores climb to +12)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if ((LabState.config.multiwayVariant || 'bumblebee') === o.v) opt.selected = true;
+    mwvSel.appendChild(opt);
+  });
+  mwvSel.onchange = () => {
+    LabState.config.multiwayVariant = mwvSel.value;
+    saveLabState();
+    toast('Multi-way variant: ' + (mwvSel.value === 'bumblebee' ? 'Bumblebee (Honored Loss)' : 'Yellow Jacket (Bogey Loss)'));
+  };
+  mwvRow.appendChild(mwvSel);
+  evSec.appendChild(mwvRow);
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'At multi-way, every showdown loser posts a stroke. The YJ Bogey Loss rule (loser fixed +1) was calibrated for HU; at 9-way it accumulates 8×(+1) per pot, pulling Major averages to +12 above par (golf-implausible). Bumblebee (loser scores own hand class -5..+2) keeps Major champions in the realistic -5 to +5 band. HU events ignore this setting and use the main Variant control above.'
   }));
 
   // === LATE REGISTRATION (v69.2) =============================================
