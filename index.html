@@ -1884,7 +1884,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.29-v69.20-forensic-fixes";
+const APP_VERSION = "2026.04.29-v69.21-multiway-rake-tighten";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -15283,15 +15283,18 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
                  : (eventType === 'main' ? 0.03 : eventType === 'major' ? 0.02 : 0.015));
   // Multi-way rake scaling. At HU (tableSize 2) the configured rake stands.
   // At larger tables, per-event Elite skill edge thins roughly as 1/(N−1)
-  // because the elite player must beat N−1 opponents instead of one. To keep
-  // Elite ROI neutral-to-positive on non-Main events at multi-way, the
-  // non-Main rake scales down with table size: 6-handed runs at 70% of base,
-  // 9-handed at 55% of base. The Main is left untouched — its rake funds
-  // the elite-tier upside via the sponsor purse + lottery payouts.
+  // because the elite player must beat N−1 opponents instead of one. The
+  // non-Main rake scales down with table size to keep Elite ROI positive on
+  // non-Main events: 6-handed runs at 60% of base, 9-handed at 40% of base.
+  // (Initial v69.20 calibration of 0.55 at 9-handed left Elite at −0.9% non-Main
+  // ROI on a Tour-Standard run — short of the target. 0.40 puts Elite clearly
+  // positive while keeping aggregate non-Main rake meaningful.) Main is left
+  // untouched — its rake funds the elite-tier upside via the sponsor purse
+  // + lottery payouts.
   const tableSize = +cfg.tableSize || 2;
   const multiwayRakeScale = (eventType === 'main' || tableSize <= 2) ? 1
-                          : tableSize <= 6 ? 0.70
-                          : 0.55;
+                          : tableSize <= 6 ? 0.60
+                          : 0.40;
   const rake = rakeBase * multiwayRakeScale;
   const revenue = grossPool * rake;
   // Sponsor purse: fixed prize-pool contribution from sponsors/TV (PGA Tour model). Rake does
@@ -18464,12 +18467,18 @@ function renderRunCard(r) {
   card.appendChild(el('div', { class: 'run-meta', text: new Date(r.timestamp).toLocaleString() + ' · ' + r.metrics.eventCount + ' events · ' + (r.elapsedMs / 1000).toFixed(1) + 's' }));
   const kpis = el('div', { class: 'run-kpis' });
   const m = r.metrics;
-  kpis.appendChild(el('span', { class: 'run-kpi' }, 'R²: ', el('b', { text: m.varianceDecomp.skillR2.toFixed(2) })));
-  if (m.varianceDecomp_nonMain) {
-    kpis.appendChild(el('span', { class: 'run-kpi', title: 'Skill R² excluding Main Event' }, 'R² NM: ', el('b', { text: m.varianceDecomp_nonMain.skillR2.toFixed(2) })));
+  // Spearman rank correlation leads — it's the truthful headline at heavy-tail
+  // honey-stroke distributions. Linear R² stays available as a secondary KPI
+  // labelled "lin" to make explicit it lower-bounds the skill signal.
+  if (typeof m.skillSpearman === 'number') {
+    kpis.appendChild(el('span', { class: 'run-kpi', title: 'Spearman rank correlation between skill and career win totals — primary skill metric' }, 'ρ: ', el('b', { text: m.skillSpearman.toFixed(2) })));
   }
   if (typeof m.skillEVSpearman_nonMain === 'number') {
     kpis.appendChild(el('span', { class: 'run-kpi', title: 'EV-skill Spearman (regulars + majors)' }, 'EV ρ NM: ', el('b', { text: m.skillEVSpearman_nonMain.toFixed(2) })));
+  }
+  kpis.appendChild(el('span', { class: 'run-kpi', title: 'Skill R² (linear fit) — lower bound; reads low at heavy-tail distributions' }, 'R² lin: ', el('b', { text: m.varianceDecomp.skillR2.toFixed(2) })));
+  if (m.varianceDecomp_nonMain) {
+    kpis.appendChild(el('span', { class: 'run-kpi', title: 'Skill R² (linear) excluding Main Event' }, 'R² NM: ', el('b', { text: m.varianceDecomp_nonMain.skillR2.toFixed(2) })));
   }
   kpis.appendChild(el('span', { class: 'run-kpi' }, 'Gini: ', el('b', { text: m.gini.toFixed(2) })));
   kpis.appendChild(el('span', { class: 'run-kpi' }, 'Below par: ', el('b', { text: (m.belowParRate * 100).toFixed(0) + '%' })));
@@ -18513,29 +18522,32 @@ function renderActiveRun(root, r) {
     if (delta) b.appendChild(el('div', { class: 'kpi-delta' + (delta.startsWith('+') ? ' up' : delta.startsWith('-') ? ' down' : ''), text: delta }));
     return b;
   }
-  kpis.appendChild(kpi('Skill R² (linear · wins)', m.varianceDecomp.skillR2.toFixed(3), 'lower bound — linear assumption'));
-  if (m.varianceDecomp_nonMain) {
-    kpis.appendChild(kpi('Skill R² · non-Main', m.varianceDecomp_nonMain.skillR2.toFixed(3), 'regulars + majors only'));
-  }
-  kpis.appendChild(kpi('Luck share', (m.varianceDecomp.luckR2 * 100).toFixed(0) + '%', 'incl. model noise + nonlinearity'));
-  // Spearman rank correlation: non-linear-friendly version of skill signal. If skill really
-  // matters but wins are lumpy/threshold-based, Spearman will be much higher than R².
+  // Spearman rank correlation leads. R² stays in the strip but moves later
+  // and labels itself a "linear lower-bound" — at heavy-tail honey-stroke
+  // distributions a linear fit collapses (single Main lottery wins dominate
+  // career earnings) while the rank order remains intact and meaningful, so
+  // R² alone reads as failure even when skill IS expressing.
   if (typeof m.skillSpearman === 'number') {
     const rho = m.skillSpearman;
     const tag = rho > 0.7 ? 'strong' : rho > 0.4 ? 'moderate' : rho > 0.2 ? 'weak' : 'near noise';
     kpis.appendChild(kpi('Skill ρ (Spearman rank)', rho.toFixed(3), tag + ' rank alignment'));
   }
-  // Headline poker-skill KPIs: Spearman of authoredSkill vs EV-realization.
-  // Non-Main is the cleanest read because it strips the 25k-field Main lottery.
-  if (typeof m.skillEVSpearman === 'number') {
-    const rho = m.skillEVSpearman;
-    const tag = rho > 0.7 ? 'strong' : rho > 0.4 ? 'moderate' : rho > 0.2 ? 'weak' : 'near noise';
-    kpis.appendChild(kpi('EV ρ (skill ↔ EV)', rho.toFixed(3), tag + ' poker-skill signal'));
-  }
   if (typeof m.skillEVSpearman_nonMain === 'number') {
     const rho = m.skillEVSpearman_nonMain;
     const tag = rho > 0.7 ? 'strong' : rho > 0.4 ? 'moderate' : rho > 0.2 ? 'weak' : 'near noise';
     kpis.appendChild(kpi('EV ρ · non-Main', rho.toFixed(3), tag + ' (regulars + majors)'));
+  }
+  kpis.appendChild(kpi('Skill R² (linear · wins)', m.varianceDecomp.skillR2.toFixed(3), 'linear lower-bound'));
+  if (m.varianceDecomp_nonMain) {
+    kpis.appendChild(kpi('Skill R² · non-Main', m.varianceDecomp_nonMain.skillR2.toFixed(3), 'regulars + majors only'));
+  }
+  kpis.appendChild(kpi('Luck share', (m.varianceDecomp.luckR2 * 100).toFixed(0) + '%', 'incl. model noise + nonlinearity'));
+  // EV ρ (all events) — companion to the non-Main version emitted earlier.
+  // Non-Main is the cleanest read; the all-events number is kept for diff'ing.
+  if (typeof m.skillEVSpearman === 'number') {
+    const rho = m.skillEVSpearman;
+    const tag = rho > 0.7 ? 'strong' : rho > 0.4 ? 'moderate' : rho > 0.2 ? 'weak' : 'near noise';
+    kpis.appendChild(kpi('EV ρ (skill ↔ EV)', rho.toFixed(3), tag + ' poker-skill signal'));
   }
   // Authored vs measured skill: sanity check on the simulator's internal skill metric.
   // > 0.7 = authored rating tracks empirical; < 0.3 = authored rating is decoupled (suspect).
