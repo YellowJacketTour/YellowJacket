@@ -884,7 +884,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.28-v68";
+const APP_VERSION = "2026.04.28-v69";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3355,7 +3355,32 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
   // Final scoring normalizes total net honey by 18 in playMatch/runFinals.
   // Initialize aggregate scores.
   const agg = new Map();
-  for (const p of players) agg.set(p.id, { player: p, score: 0, rounds: [] });
+  for (const p of players) agg.set(p.id, { player: p, score: 0, rounds: [], eliminatedAtRound: null, eliminationReason: null });
+
+  // v69 SURVIVAL CUSHION + ROUND-BOUNDARY CUTS — golf-realistic structural cuts
+  // plus WSOP-style elimination drama. Two mechanisms working together:
+  //
+  // CUSHION: After each round, compare every active player's cumulative score
+  // against the round leader's. Players whose gap exceeds the cushion for that
+  // round are eliminated mid-tournament. Cushion tightens each round —
+  // generous in R1 (R1 narrative protected), severe by R4.
+  //
+  // CUT: After each round, additionally sort the surviving field by score and
+  // remove the bottom % per the cut schedule. R1 typically has no cut (golf-
+  // realistic); R2/R3 have cuts at the standard PGA milestones (50% / further
+  // 50% reduction).
+  //
+  // Eliminated players freeze their score at elimination and skip subsequent
+  // rounds. Their finish position is determined by (round-of-elimination desc,
+  // cumulative-score asc) producing a clean WSOP-style finish ladder where
+  // making the cut beats missing it, and surviving R3 beats missing R3.
+  const survivalCushion = (cfg && Array.isArray(cfg.survivalCushion))
+    ? cfg.survivalCushion
+    : [12, 8, 5, 3];   // default: lenient → tight by round
+  const cutSchedule = (cfg && Array.isArray(cfg.cutSchedule))
+    ? cfg.cutSchedule
+    : [null, 0.50, 0.50, null];   // default: no cut R1, 50% cut R2/R3, no cut R4
+  let activePlayers = players.slice();
   // === v46 TIERED PAIRING SYSTEM ===
   // Different event tiers use different pairing logics, mirroring how real
   // tournament hierarchies work:
@@ -3428,8 +3453,16 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
   // Helper functions (pairBySkillBracket, pairWoven) preserved for future
   // bracket-format experiments where higher-seed-advances logic applies.
   const byeHistory = new Set();
+  // v69: track elimination order for finish-position calculation. Players are
+  // pushed in order of elimination (latest eliminated first → earliest last);
+  // sortedFinishers later combines: surviving players (by R-final score) +
+  // eliminated players in reverse elimination order.
+  const eliminatedHistory = []; // [{ player, round, score, reason }]
   for (let r = 0; r < rounds; r++) {
-    const rotation = pairRandom(players);
+    // Each round only the still-active players play. Eliminated players
+    // record a "did not play" round so their rounds[] array stays len-aligned
+    // with surviving peers (downstream code may iterate by index).
+    const rotation = pairRandom(activePlayers);
     let byePlayer = null;
     if (rotation.length % 2 === 1) {
       // Pull the first player not previously bye-d (or the first if all have).
@@ -3452,15 +3485,85 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
       aRec.rounds.push({ round: r + 1, score: m.aTotal, opponent: pB.id });
       bRec.rounds.push({ round: r + 1, score: m.bTotal, opponent: pA.id });
     }
+
+    // v69 ROUND-BOUNDARY ELIMINATIONS — applied after every round except the
+    // last (R4 is the championship round; eliminations after it are moot).
+    // Two checks run in sequence: cushion first (fairness — eliminate by
+    // absolute gap to leader), then cut (structural — eliminate bottom %).
+    if (r < rounds - 1) {
+      // Compute leader score among active players for the cushion check.
+      const activeSorted = activePlayers.slice().sort(
+        (a, b) => agg.get(a.id).score - agg.get(b.id).score);
+      const leaderScore = activeSorted.length > 0 ? agg.get(activeSorted[0].id).score : 0;
+
+      // CUSHION CHECK. Cushion for the round just played (r is 0-indexed).
+      const cushion = (survivalCushion && Number.isFinite(+survivalCushion[r]))
+        ? +survivalCushion[r] : Infinity;
+      const cushionEliminated = [];
+      const stillActive = [];
+      for (const p of activeSorted) {
+        const score = agg.get(p.id).score;
+        const gap = score - leaderScore;
+        if (gap > cushion) {
+          // Player exceeded survival cushion — eliminated mid-tournament.
+          const a = agg.get(p.id);
+          a.eliminatedAtRound = r + 1;
+          a.eliminationReason = 'cushion';
+          cushionEliminated.push(p);
+          eliminatedHistory.push({ player: p, round: r + 1, score: a.score, reason: 'cushion' });
+        } else {
+          stillActive.push(p);
+        }
+      }
+
+      // CUT CHECK. Cut % for the round just played. After cushion eliminations,
+      // sort remaining players by score and cut the bottom %.
+      const cutPct = (cutSchedule && Number.isFinite(+cutSchedule[r])) ? +cutSchedule[r] : null;
+      let cutEliminated = [];
+      if (cutPct && cutPct > 0 && cutPct < 1 && stillActive.length > 1) {
+        // stillActive is already sorted by score (best first). Cut bottom cutPct.
+        const keepCount = Math.max(1, Math.floor(stillActive.length * (1 - cutPct)));
+        cutEliminated = stillActive.slice(keepCount);
+        for (const p of cutEliminated) {
+          const a = agg.get(p.id);
+          a.eliminatedAtRound = r + 1;
+          a.eliminationReason = 'cut';
+          eliminatedHistory.push({ player: p, round: r + 1, score: a.score, reason: 'cut' });
+        }
+        activePlayers = stillActive.slice(0, keepCount);
+      } else {
+        // No cut this round — still-active players continue.
+        activePlayers = stillActive;
+      }
+    }
   }
-  // Sort by aggregate score (lowest first).
-  const sorted = players.slice().sort((p1, p2) => agg.get(p1.id).score - agg.get(p2.id).score);
+  // v69 SORT WITH ELIMINATION TIERS. Surviving (active R4) players ranked by
+  // aggregate score (lowest first). Eliminated players slot below all
+  // survivors, ordered by elimination round (later round = better finish),
+  // then by cumulative score within the same elimination round (lower = better).
+  // This produces a clean WSOP-style finish ladder where:
+  //   - The R4 champion ranks 1
+  //   - R4 survivors rank 2..N by R4 final score
+  //   - R3-eliminated players rank just below R4 survivors (best of R3 first)
+  //   - R2-eliminated players rank below R3-eliminated
+  //   - R1-eliminated (cushion only — R1 has no cut by default) rank lowest
+  const surviving = activePlayers.slice().sort(
+    (p1, p2) => agg.get(p1.id).score - agg.get(p2.id).score);
+  // Eliminated players: highest round first (best finish), then by score asc.
+  const eliminated = eliminatedHistory.slice().sort((a, b) => {
+    if (b.round !== a.round) return b.round - a.round; // later round = earlier in this list
+    return a.score - b.score; // lower score within round = earlier
+  }).map(e => e.player);
+  const sorted = surviving.concat(eliminated);
   // Sudden-death playoff: if 2+ players tied for first after 72 holes, pair
   // them up and play short 4-hole aggregates until someone leads. Bounded at
   // 8 playoff rounds total.
+  // v69: playoff is among SURVIVING (R4-active) players only — eliminated
+  // players are out, even if their pre-elimination cumulative score happened
+  // to match a survivor's R4 final.
   let playoffsRun = 0;
-  const lowest = agg.get(sorted[0].id).score;
-  let tied = sorted.filter(p => agg.get(p.id).score === lowest);
+  const lowest = surviving.length > 0 ? agg.get(surviving[0].id).score : 0;
+  let tied = surviving.filter(p => agg.get(p.id).score === lowest);
   while (tied.length > 1 && playoffsRun < 8) {
     const playoffField = tied.slice();
     for (let i = playoffField.length - 1; i > 0; i--) {
@@ -3479,18 +3582,35 @@ function runStrokePlayEvent(players, holesPerRound, rounds, cfg, eventType) {
       agg.get(pB.id).score += m.bTotal;
     }
     playoffsRun++;
-    sorted.sort((p1, p2) => agg.get(p1.id).score - agg.get(p2.id).score);
-    const newLowest = agg.get(sorted[0].id).score;
-    tied = sorted.filter(p => agg.get(p.id).score === newLowest);
+    // v69: re-sort only surviving players for next playoff iteration.
+    surviving.sort((p1, p2) => agg.get(p1.id).score - agg.get(p2.id).score);
+    const newLowest = surviving.length > 0 ? agg.get(surviving[0].id).score : 0;
+    tied = surviving.filter(p => agg.get(p.id).score === newLowest);
   }
+  // v69: re-build final sorted array after playoff resolves the leader, so
+  // the surviving players retain the playoff-determined order.
+  const finalSorted = surviving.concat(eliminated);
+  // Replace the original sorted reference so downstream code sees the post-
+  // playoff order. (Mutating sorted in place to preserve any external refs.)
+  sorted.length = 0;
+  for (const p of finalSorted) sorted.push(p);
   // Build placements array (1 = champion, 2 = runner-up, etc., with tied tiers).
-  // Group adjacent equal-score players into tiers.
+  // v69: Group by (eliminationRound, score) so a tie only forms within the same
+  // elimination tier. An R3-eliminated player with score -10 and an R4 survivor
+  // with the same score occupy DIFFERENT tiers — survival is the primary key.
   const placements = [];
   let i = 0;
   while (i < sorted.length) {
-    const tierScore = agg.get(sorted[i].id).score;
+    const tierAgg = agg.get(sorted[i].id);
+    const tierScore = tierAgg.score;
+    const tierElimRound = tierAgg.eliminatedAtRound; // null for survivors
     let tierEnd = i;
-    while (tierEnd < sorted.length && agg.get(sorted[tierEnd].id).score === tierScore) tierEnd++;
+    while (tierEnd < sorted.length) {
+      const next = agg.get(sorted[tierEnd].id);
+      if (next.score !== tierScore) break;
+      if (next.eliminatedAtRound !== tierElimRound) break;
+      tierEnd++;
+    }
     const tierSize = tierEnd - i;
     const rankFloor = i + 1;
     for (let k = i; k < tierEnd; k++) {
@@ -5256,6 +5376,30 @@ Views.rules = function() {
     'Player A receives 12 honey (the agreed total at the end of hole 3, which already incorporated the stacked carry). The 2+5+8 from earlier holes never accumulates separately; it lives inside the hole-3 agreed total via the carry-forward opener. ' +
     'BOUNDARIES. Carries stay within a single match. They do not persist across match boundaries (a new heads-up pairing starts fresh) or across rounds in aggregate stroke play (each new round\'s first hole opens at the unscaled mandatory). ' +
     'STRATEGIC NOTE. Tied-hole stacking is a free option for the next hole\'s decisive winner — large carries reward whoever has the stronger holding on the next decisive hole, not the player who built the prior pot. With suspected board-runout ties (e.g. paired boards), a small bet that survives a tie is often higher EV than a large bet that gets folded to.'
+  ));
+  core.appendChild(rule('Survival cushion + round-boundary cuts (v69)',
+    'WHAT IT IS. v69 introduces two complementary elimination mechanics for aggregate stroke-play events: ' +
+    '(1) a SURVIVAL CUSHION that eliminates players whose cumulative score exceeds the round leader\'s by more than a stroke threshold; ' +
+    '(2) a ROUND-BOUNDARY CUT SCHEDULE that removes the bottom % of the field at the end of each round per a configurable schedule. ' +
+    'Together these produce both golf-realistic missed-cut narratives AND WSOP-style elimination drama within tournament arcs. ' +
+    'CUSHION SCHEDULE (default). Survival cushion tightens each round: ' +
+    '+12 strokes after R1 (R1 narrative protected, only catastrophic falls eliminate); ' +
+    '+8 strokes after R2 (moderate); ' +
+    '+5 strokes after R3 (tight, bubble-bursting); ' +
+    '+3 strokes after R4 (moot — final round resolves the championship). ' +
+    'CUT SCHEDULE (default). PGA-Tour-realistic cuts: ' +
+    'no cut after R1; ' +
+    '50% of survivors cut after R2 (the "primary cut" at hole 36); ' +
+    '50% additional cut after R3 (the "secondary cut" at hole 54); ' +
+    'no cut after R4 (championship round). ' +
+    'CUSHION FIRES BEFORE CUT. At each round boundary, cushion check applies first (eliminating players too far from the leader regardless of field position), then the cut applies to remaining players (removing the bottom %). A player eliminated by cushion does not occupy a "cut spot." ' +
+    'ELIMINATED PLAYER STATE. Eliminated players freeze their cumulative score and skip subsequent rounds entirely. They do NOT auto-fill remaining holes with par or any other value — their scorecard is final at elimination. They earn a finish position based on (round-of-elimination DESC, cumulative-score ASC), so making the cut beats missing it, surviving R3 beats missing R3, and within an elimination tier, lower cumulative score earns a better finish. ' +
+    'INTERACTION WITH PRIZE PAYOUT. The top 15% of finish positions cash, regardless of elimination round. A player eliminated R2 may still earn a paid finish if they\'re in the top 15% of the elimination ladder. Cuts don\'t change who cashes; they reorder finishes by elimination depth. ' +
+    'CONFIG. cfg.survivalCushion = [12, 8, 5, 3] (per-round stroke threshold), cfg.cutSchedule = [null, 0.50, 0.50, null] (per-round cut fraction; null = no cut). Both indexed 0-based by round.'
+  ));
+  core.appendChild(rule('Multiplayer table format (planned for v70)',
+    'YJ\'s heads-up engine is the v68 baseline. v70 will introduce multi-way table play: 6-9 players at a single table, matched-contribution wagering, last-player-standing elimination. R1-R3 played multi-way at the table, R4 collapses to heads-up between the top 2 survivors. Per-player honey caps scale with player count to keep per-pair stroke variance comparable to HU. ' +
+    'cfg.tableSize is the forward-compatibility flag; setting it > 2 in v69 has no effect — the engine still runs HU. The multi-way engine, scoring resolution, and cushion/cut integration ship together in v70.'
   ));
   core.appendChild(rule('Bet-tier vocabulary — wagering diversity without chip stacks',
     'PROBLEM TO SOLVE. WSOP wagering feels rich because every bet has a NAMED INTENT — min-raise, 3-bet, 4-bet, shove — that communicates strategic meaning beyond the dollar amount. YJ\'s integer honey wagers risk feeling flat (4 honey vs 5 honey vs 6 honey are categorically indistinguishable to a viewer). The fix is not finer increments or larger numbers; the fix is a NAMED TIER VOCABULARY mirroring the poker lexicon. ' +
@@ -8080,6 +8224,26 @@ const DEFAULT_SIM_CONFIG = {
   // bracket matches stay flat (never reach hole 10). Playoff/sudden-death
   // holes always run at the doubled rate. Set to 1 to disable.
   backNineOpenerMultiplier: 2,
+  // v69 SURVIVAL CUSHION — per-round elimination threshold in strokes vs the
+  // round leader. Players whose cumulative score exceeds the leader's by more
+  // than the cushion at round-end are eliminated (cushion-cut, mid-tournament).
+  // Cushion tightens each round to produce escalating drama: R1 generous (let
+  // narratives form), R4 razor (final-round survival pressure). Index r is
+  // 0-based: survivalCushion[0] applies after R1, [3] after R4 (no-op since
+  // R4 is the last round; eliminations after the final are moot). Set any
+  // entry to Infinity (or omit) to disable cushion for that round.
+  survivalCushion: [12, 8, 5, 3],
+  // v69 ROUND-BOUNDARY CUT SCHEDULE — fraction of remaining field eliminated
+  // after each round. PGA-Tour-default: no cut R1, primary cut at R2 (50%),
+  // secondary cut at R3 (50% of remainder). null/0/undefined disables cut for
+  // that round. R4 cut is moot (final round — winner determined by score).
+  cutSchedule: [null, 0.50, 0.50, null],
+  // v69 MULTIPLAYER TABLE SIZE (FUTURE) — when > 2, switches the engine to
+  // multi-way matched-contribution wagering. Default 2 = HU (current engine).
+  // 6 / 9 = table-format play. Multi-way engine is NOT YET IMPLEMENTED in v69;
+  // this flag exists for forward-compatibility only. Setting > 2 has no effect
+  // until v70+ ships the multi-way engine.
+  tableSize: 2,
   // POT-ELASTIC CAP MULTIPLIER (v43). When > 0, streetCap can exceed the
   // legacy progressive floor proportionally to current pot size. Default 3
   // calibrates: opener=2 → preflop cap = 6 (4 honey of preflop room, was 0);
@@ -10434,6 +10598,10 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('decision.foldRule', 'pot-odds + EV (v42 base, v51 polarity-corrected)');
   cfgRow('decision.foldOptSlack', 0.20);
   cfgRow('decision.hardFoldFloor', 0.05);
+  // v69: cushion + cut schedule + multi-way scaffolding
+  cfgRow('elimination.survivalCushion', Array.isArray(snapCfg.survivalCushion) ? snapCfg.survivalCushion.join('|') : '12|8|5|3');
+  cfgRow('elimination.cutSchedule', Array.isArray(snapCfg.cutSchedule) ? snapCfg.cutSchedule.map(c => c === null ? 'none' : c).join('|') : 'none|0.50|0.50|none');
+  cfgRow('elimination.tableSize', Number.isFinite(+snapCfg.tableSize) ? +snapCfg.tableSize : 2);
   // v43: pot-elastic streetCap multiplier. effectiveCap = max(progressive,
   // min(globalCap×3, k×agreedTotal)). k=3 default unlocks preflop play and
   // restores overbet pressure on hot pots.
@@ -13263,6 +13431,9 @@ function init() {
       // honeyMagnitude removed in v66 (flat divisor table is canonical)
       backNineOpenerMultiplier: 2,
       scoring: { useShowdownMatrix: true },
+      survivalCushion: [12, 8, 5, 3],         // v69 cushion mechanic
+      cutSchedule: [null, 0.50, 0.50, null],  // v69 round-boundary cuts
+      tableSize: 2,                           // v69 future-multi-way scaffold
       payoutDecay: 0.74,
       buyInRegular: 100, buyInMajor: 1000, buyInMain: 10000,
       rakePercent: 0.03,
