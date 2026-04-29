@@ -255,6 +255,11 @@
   .felt-table {
     position: relative;
     aspect-ratio: 16/9;
+    /* v69.14: contain seats / chips / 3D canvas inside the felt's bounds.
+       Prevents stray "empty" seat bleed below the felt when perspective
+       transform stretches positions. */
+    overflow: visible;
+    isolation: isolate;
     /* Layered felt: velvet sheen via radial highlight + base gradient + subtle
        noise via repeating gradient. The result is a "lit-from-above" velvet
        that shifts with the gold specular pass. */
@@ -308,6 +313,7 @@
   }
   .seat {
     position: absolute; transform: translate(-50%, -50%);
+    z-index: 5; /* sit above the felt and the WebGL canvas, below action panel */
     width: 96px; padding: 10px 12px;
     /* Layered seat plate: leather-tone with cream edge + warm bottom shadow */
     background:
@@ -372,6 +378,8 @@
     will-change: transform, opacity;
   }
   .pkr-card.red { color: #c62828; }
+  /* v69.14 — suppress deal/squeeze animations on stable re-renders */
+  .pkr-card.no-animate { animation: none !important; }
   /* 4-color deck (toggleable via TourState.preferences.fourColorDeck). */
   .felt-table.fourcolor .pkr-card.suit-h { color: #c62828; } /* hearts red */
   .felt-table.fourcolor .pkr-card.suit-d { color: #1565C0; } /* diamonds blue */
@@ -622,8 +630,18 @@
   .preaction-row label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; user-select: none; }
   .preaction-row input { accent-color: var(--gold, #C9A857); }
   /* Opponent note tags */
-  .seat .seat-tags { display: flex; gap: 2px; justify-content: center; margin-top: 3px; }
-  .tag-pill { font-size: 11px; padding: 0 4px; border-radius: 6px; background: rgba(0,0,0,0.5); border: 1px solid rgba(201,168,87,0.3); cursor: pointer; }
+  .seat .seat-tags { display: flex; gap: 3px; justify-content: center; align-items: center; margin-top: 3px; flex-wrap: wrap; }
+  .tag-pill { font-size: 12px; padding: 1px 5px; border-radius: 6px; background: rgba(0,0,0,0.5); border: 1px solid rgba(212,160,23,0.35); cursor: pointer; line-height: 1.2; }
+  .tag-add-btn {
+    font-size: 9px; letter-spacing: 0.5px;
+    padding: 1px 5px; border-radius: 6px;
+    background: rgba(0,0,0,0.40);
+    border: 1px dashed rgba(212,160,23,0.40);
+    color: rgba(212,160,23,0.85);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .tag-add-btn:hover { background: rgba(212,160,23,0.20); border-color: var(--augusta-gold-hi,#F0C75E); color: #fff; }
   /* Expanded HUD stats — second row */
   .hud-row.expanded { flex-wrap: wrap; max-width: 110px; }
   .hud-pill.adv { background: rgba(110,90,180,0.45); border-color: rgba(150,120,200,0.45); color: #DCD0FF; }
@@ -1619,7 +1637,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.29-v69.13-physics-velvet";
+const APP_VERSION = "2026.04.29-v69.14-render-fixes";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -8918,6 +8936,47 @@ function ensureNotes(playerId) {
   if (!PlayerNotes[playerId]) PlayerNotes[playerId] = { tags: [], text: '' };
   return PlayerNotes[playerId];
 }
+// v69.14: opponent-tag editor as a modal. Replaces the inline 5-emoji row.
+function openTagMenu(playerId) {
+  const notes = ensureNotes(playerId);
+  const m = $('#modal-body'); if (!m) return;
+  clear(m);
+  const pool = TourState.pool || [];
+  const player = pool.find(p => p.id === playerId);
+  m.appendChild(el('h2', { text: 'Notes — ' + (player ? player.name : 'Player #' + playerId) }));
+  m.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-bottom: 14px;', text: 'Click a tag to toggle it. Free-text note saved automatically below.' }));
+  // Tag grid
+  const grid = el('div', { style: 'display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; margin-bottom: 16px;' });
+  const renderTag = (tag, on) => {
+    const btn = el('button', {
+      class: 'btn ghost',
+      style: 'padding: 10px 8px; font-size: 13px; ' + (on ? 'background: rgba(212,160,23,0.40); border-color: var(--augusta-gold-hi,#F0C75E);' : ''),
+    });
+    btn.appendChild(el('div', { style: 'font-size: 22px;', text: tag.label }));
+    btn.appendChild(el('div', { style: 'font-size: 10px; opacity: 0.85; margin-top: 3px;', text: tag.key }));
+    btn.onclick = () => {
+      const idx = notes.tags.indexOf(tag.key);
+      if (idx === -1) notes.tags.push(tag.key); else notes.tags.splice(idx, 1);
+      openTagMenu(playerId); // re-render
+      refreshCashView();
+    };
+    return btn;
+  };
+  for (const tag of NOTE_TAGS) {
+    grid.appendChild(renderTag(tag, notes.tags.indexOf(tag.key) !== -1));
+  }
+  m.appendChild(grid);
+  // Free-text note
+  m.appendChild(el('label', { style: 'font-size: 11px; opacity: 0.7; display: block; margin-bottom: 4px;', text: 'Free-text note' }));
+  const ta = el('textarea', { style: 'width: 100%; min-height: 80px; padding: 8px 10px; background: rgba(0,0,0,0.04); border: 1px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 12px;' });
+  ta.value = notes.text || '';
+  ta.oninput = () => { notes.text = ta.value; };
+  m.appendChild(ta);
+  m.appendChild(el('div', { style: 'display:flex; gap:8px; justify-content:flex-end; margin-top: 14px;' },
+    el('button', { class: 'btn ghost', text: 'Done', onclick: () => { document.getElementById('modal-root').classList.remove('open'); refreshCashView(); } })
+  ));
+  document.getElementById('modal-root').classList.add('open');
+}
 const NOTE_TAGS = [
   { key: 'fish',   label: '🐟', tooltip: 'Fish (loose passive)' },
   { key: 'reg',    label: '🤖', tooltip: 'Reg (solid regular)' },
@@ -10142,7 +10201,23 @@ function renderCashTableView(tableId) {
   const board = el('div', { class: 'board-row' });
   const boardCards = (handState && handState.board) || [];
   const golden = handState && handState.goldenCard;
-  boardCards.forEach((c, i) => board.appendChild(renderCard(c, { golden: isGoldenCard(c, golden), dealDelay: i * 80 })));
+  // v69.14 fix: per-card timestamp gating so re-renders don't re-deal already-
+  // shown board cards. handState._boardShownAt is an array of length =
+  // board.length tracking when each card first rendered.
+  if (handState) {
+    if (!handState._boardShownAt) handState._boardShownAt = [];
+    while (handState._boardShownAt.length < boardCards.length) handState._boardShownAt.push(Date.now());
+  }
+  boardCards.forEach((c, i) => {
+    const showTime = handState && handState._boardShownAt ? handState._boardShownAt[i] : 0;
+    const sinceShown = Date.now() - showTime;
+    const animate = sinceShown < 500; // window slightly wider than 240ms+stagger
+    board.appendChild(renderCard(c, {
+      golden: isGoldenCard(c, golden),
+      dealDelay: animate ? i * 80 : 0,
+      noAnimate: !animate,
+    }));
+  });
   felt.appendChild(board);
   // Seats around the felt.
   for (let i = 0; i < t.maxSeats; i++) {
@@ -10182,25 +10257,31 @@ function renderCashTableView(tableId) {
           }
           seatEl.appendChild(hudWrap);
         }
-        // Note tags on opponent seats. Click any tag to toggle. Long-press for free-text note.
+        // v69.14 — compact tag display: show only ACTIVE tags inline, with
+        // a small "+" affordance to open a popover menu for editing. The
+        // previous all-5-emoji-always layout overflowed the 96px seat width
+        // and crashed against HUD pills.
         const notes = ensureNotes(s.playerId);
+        const activeTags = NOTE_TAGS.filter(tag => notes.tags.indexOf(tag.key) !== -1);
         const tagRow = el('div', { class: 'seat-tags' });
-        NOTE_TAGS.forEach(tag => {
-          const isOn = notes.tags.indexOf(tag.key) !== -1;
+        activeTags.forEach(tag => {
           const pill = el('span', {
-            class: 'tag-pill' + (isOn ? ' on' : ''),
+            class: 'tag-pill on',
             title: tag.tooltip,
             text: tag.label,
-            style: isOn ? 'background: rgba(201,168,87,0.45); border-color: var(--gold,#C9A857);' : '',
+            style: 'background: rgba(212,160,23,0.50); border-color: var(--augusta-gold-hi,#F0C75E);',
           });
-          pill.onclick = (e) => {
-            e.stopPropagation();
-            const idx = notes.tags.indexOf(tag.key);
-            if (idx === -1) notes.tags.push(tag.key); else notes.tags.splice(idx, 1);
-            refreshCashView();
-          };
+          pill.onclick = (e) => { e.stopPropagation(); openTagMenu(s.playerId); };
           tagRow.appendChild(pill);
         });
+        // "+" affordance — small button to open the tag menu
+        const addBtn = el('span', {
+          class: 'tag-add-btn',
+          text: activeTags.length === 0 ? '+ note' : '+',
+          title: activeTags.length === 0 ? 'Add note tag' : 'Edit tags',
+        });
+        addBtn.onclick = (e) => { e.stopPropagation(); openTagMenu(s.playerId); };
+        tagRow.appendChild(addBtn);
         seatEl.appendChild(tagRow);
         // Click name to open free-text note dialog.
         const nameEl = seatEl.querySelector('.seat-name');
@@ -10229,11 +10310,18 @@ function renderCashTableView(tableId) {
   card.appendChild(feltWrap);
 
   // === Your hole cards (visible only to you) — squeeze reveal animation ====
+  // v69.14 fix: only apply the .squeeze animation class within the deal
+  // window (~600ms after hole cards arrived). Subsequent re-renders during
+  // the same hand (action ticks, log updates, time-bank refreshes) skip the
+  // animation, so the cards stay still instead of re-squeezing on every event.
   if (youSeatIdx >= 0 && handState && handState.hole && handState.hole[youSeatIdx]) {
+    if (handState._holeShownAt == null) handState._holeShownAt = Date.now();
+    const sinceDeal = Date.now() - handState._holeShownAt;
+    const animateDeal = sinceDeal < 600;
     const yourCards = el('div', { class: 'hole-cards' + (fourColor ? ' fourcolor' : ''), style: 'display:flex; gap:8px; justify-content:center; margin-top: 12px;' });
     handState.hole[youSeatIdx].forEach((c, i) => {
-      const cardEl = renderCard(c, { golden: isGoldenCard(c, golden), dealDelay: 240 + i * 90 });
-      cardEl.classList.add('squeeze');
+      const cardEl = renderCard(c, { golden: isGoldenCard(c, golden), dealDelay: animateDeal ? 240 + i * 90 : 0 });
+      if (animateDeal) cardEl.classList.add('squeeze');
       yourCards.appendChild(cardEl);
     });
     card.appendChild(yourCards);
@@ -10526,7 +10614,9 @@ function renderCard(card, opts) {
   const red = (suitCh === '♥' || suitCh === '♦');
   const isGolden = !!opts.golden;
   const suitClass = ({'♥':'suit-h','♦':'suit-d','♣':'suit-c','♠':'suit-s'})[suitCh] || '';
-  const cls = 'pkr-card ' + suitClass + (red ? ' red' : '') + (isGolden ? ' golden' : '');
+  // v69.14: noAnimate suppresses the deal animation entirely (used on
+  // re-renders of already-shown cards) so they don't pop in repeatedly.
+  const cls = 'pkr-card ' + suitClass + (red ? ' red' : '') + (isGolden ? ' golden' : '') + (opts.noAnimate ? ' no-animate' : '');
   const styleParts = [];
   if (typeof opts.dealDelay === 'number') styleParts.push('animation-delay:' + opts.dealDelay + 'ms');
   const c = el('div', { class: cls, style: styleParts.join(';') || null });
