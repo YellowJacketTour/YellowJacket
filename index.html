@@ -1884,7 +1884,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.29-v69.24-multiway-fixes-final-sweep";
+const APP_VERSION = "2026.04.29-v69.25-cash-variant-rename";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -6232,7 +6232,7 @@ const BuzzKnowledge = {
     { cat: 'strategy', q: 'How should I play near the cushion / cut bubble?', a: 'If your cumulative score is approaching cushion-elimination distance, you must press for strokes — defensive play locks you out. Take aggressive lines on every hole: bet for value with any made hand, call thin equities, force pots. Conversely if you\'re comfortably above the cut line, protect the lead — bet only with premium hands, fold marginal calls cheaply. The cut bubble is the only spot in YJ where survival mode should override pure EV optimization.' },
     { cat: 'strategy', q: 'Does making the cut earn money?', a: 'Yes. Top 15% of finish positions cash. Eliminated players earn finish positions ranked by elimination round, so a player who survives R3 always finishes higher than a player eliminated R2 — and earns the corresponding higher cash prize even if the latter had a "better" cumulative score at elimination. Making the cut is structurally rewarded.' },
     { cat: 'tournament', q: 'What is the multiplayer table format?', a: 'A 6- or 9-player table variant via cfg.tableSize (HU=2 / 6 / 9). R1-R3 are played at multi-player tables with matched-contribution wagering (poker-native pot construction); R4 collapses to a heads-up final between the top 2 survivors. Multi-way calibration: per-player honey caps scale by tableSize, foldOpt slack tightens by 0.025 per extra seat (slack = 0.20 − 0.025·(N−2)) so AI fold discipline doesn\'t collapse at 9-handed, and at tableSize > 6 the mandatory opener doubles to 2 honey to compensate for thinner per-seat equity. Cushion + cut mechanics apply identically with a tighter [8, 5, 3, 2] cushion at multi-way. Bumblebee (Honored Loss) is the multi-way default because YJ Bogey Loss × 8 losers/pot drags Major champion scores well above par at 9-handed; v69.24 collapsed the mw-yj profile optima onto the mw-bb numbers (0.40 / 0.15 / 0.70) after audit-confirmed inversion (authoredVsMeasured = −0.55 in v69.23 → +0.04 in v69.24), so the variant difference now lives purely in the scoring rule, not in AI behavior.' },
-    { cat: 'rules', q: 'What\'s the difference between Nectar and Honey?', a: 'Nectar is the BANKROLL currency — your USD-equivalent wallet, what you use to pay tournament buy-ins and what cash-table chips convert to 1:1. Honey is the WAGER abstraction inside a tournament event — the per-hole pot unit that gets normalized by the round divisor and subtracted from the golf scorecard. Nectar moves between events; Honey lives and dies inside a single event. They never interconvert directly: you spend Nectar to enter, and inside the event Honey is the scoring instrument. Cash chips at the cash tables are denominated in Nectar, not Honey.' },
+    { cat: 'rules', q: 'What\'s the difference between Nectar and Honey?', a: 'Nectar is the BANKROLL currency — your USD-equivalent wallet, what you use to pay tournament buy-ins and what cash-table chips ARE 1:1. Honey is the WAGER abstraction inside a TOURNAMENT EVENT only — the per-hole pot unit that gets normalized by the round divisor and subtracted from the golf scorecard. Nectar moves between events; Honey lives and dies inside a single tour event. They never interconvert directly: you spend Nectar to enter, and inside a tour event Honey is the scoring instrument; finish position determines your Nectar payout. CASH TABLES DO NOT USE HONEY AT ALL. The YJ-Stroke and Bumblebee-Stroke cash variants borrow only the stroke half of the tour scoring law — they accumulate an integer stroke ledger (from hand class) that settles to Nectar at cashout (+$0.50 per net stroke). The "Honey-Stroke" name is the tour scoring law\'s name, not a description of the cash variants\' wager unit.' },
     { cat: 'rules', q: 'What is the Golden Card Lottery?', a: 'A per-event lottery layer: each hand has a tiny chance of drawing a Golden Card, which awards a bonus payout drawn from a separate prize pool funded by a slice of the rake. Modeled after BB Jackpot mechanics in real cash poker rooms — provides a long-tail upside that lifts mid-tier ROI without distorting skill expression at the top.' },
     { cat: 'rules', q: 'What is the BB Jackpot?', a: 'A cash-table progressive jackpot: when an exceptionally rare hand-vs-hand cooler hits at a cash table (e.g. quads beaten by a higher hand, or a royal flush at showdown), the table draws from an accumulating pool funded by a small slice of every cash-table rake. Both the loser of the cooler and the winner share the jackpot; remaining seated players get smaller seed shares. Models real-card-room BB Jackpot promotions.' },
     { cat: 'tournament', q: 'What is the staking marketplace?', a: 'A peer-to-peer marketplace where players sell action in upcoming events: a backer pays a fraction of the buy-in upfront and receives that same fraction of the player\'s prize-pool earnings, typically with a markup the seller chooses (e.g. 1.2× = 20% markup). Models real-world tournament staking. Backers spread variance across multiple players; sellers get capital relief. The marketplace tracks buy-in obligations, payouts, and ROI per backer-seller pair.' },
@@ -7508,7 +7508,7 @@ Views.rules = function() {
     'YJT runs on TWO denominations and they have different roles. Confusing them is the most common newcomer error. ' +
     'NECTAR ◈ — the bankroll currency. Functionally USD. Paid in/out at session boundaries. Used for: tour event buy-ins (Regular $100, Major $1000, Main $10,000), cash-table buy-ins, prize payouts, P2P transfers, staking marketplace, BB jackpot, Golden Lottery, and promo bonuses. Single ledger, persists across sessions, displayed in the sidebar widget. ' +
     'HONEY — the in-event wager unit. Exists ONLY inside the boundary of a tour event. Honey is what gets bet/raised per hole, what the per-event stroke caps are denominated in, and what gets divided by the round divisor at end-of-round to produce the honey credit added to the golf scorecard. Honey is NOT a separate balance you hold — it\'s an abstraction inside the event engine that lets per-hand wagering be capped without it touching your bankroll. When the event ends, the only thing that crosses the boundary is the Nectar prize (or zero). ' +
-    'CASH GAMES — no Honey indirection. At a cash table your chips ARE Nectar 1:1. You sit with N Nectar, your stack shows N, every bet/call/raise moves Nectar between stack and pot. Pure NLHE = Nectar P/L only. Honey-Stroke variants add a parallel STROKE LEDGER (deterministic per-hand class score, not a currency) which settles to Nectar at session end via the stroke-weight × hands<sup>-1</sup> formula. ' +
+    'CASH GAMES — no honey at cash. At a cash table your chips ARE Nectar 1:1. You sit with N Nectar, your stack shows N, every bet/call/raise moves Nectar between stack and pot. Pure NLHE = Nectar P/L only. YJ-Stroke and Bumblebee-Stroke cash variants add a parallel STROKE LEDGER (integer per-hand class score — NOT honey, despite the family resemblance to the tour scoring law) which settles to Nectar at session end as +$0.50 per net stroke (cfg.nectarPerStrokePoint). The cash variants borrow only the stroke half of the tour Honey-Stroke law; the honey wager primitive lives only in tour events. ' +
     'WHY TWO DENOMINATIONS. The split lets the tour engine impose stroke caps + decision-divisor mechanics on per-hole wagering without those caps having to deflate the player\'s real bankroll. It also keeps cash and tour as conceptually distinct experiences while sharing the same ledger backbone for buy-ins and payouts. The two-tier design mirrors how real poker works (chips at a tournament are not directly redeemable; only the final prize is paid in dollars).'
   ));
   core.appendChild(rule('Multiplayer table format',
@@ -10459,8 +10459,8 @@ function ensureCashLobby() {
   ];
   const variants = [
     { v: 'pure', label: 'Pure' },
-    { v: 'yj', label: 'YJ Honey-Stroke' },
-    { v: 'bb', label: 'Bumblebee Honey-Stroke' },
+    { v: 'yj', label: 'YJ Stroke' },
+    { v: 'bb', label: 'Bumblebee Stroke' },
   ];
   let id = 0;
   for (const s of stakes) {
@@ -10572,7 +10572,7 @@ function renderCashTableView(tableId) {
         onclick: () => { CashLobby.focusedTableId = id; refreshCashView(); },
       });
       tab.appendChild(el('span', { text: tt.smallBlind + '/' + tt.bigBlind }));
-      tab.appendChild(el('span', { class: 'cash-tab-variant', text: tt.variant === 'pure' ? 'NLHE' : tt.variant === 'yj' ? 'YJ-HS' : 'BB-HS' }));
+      tab.appendChild(el('span', { class: 'cash-tab-variant', text: tt.variant === 'pure' ? 'NLHE' : tt.variant === 'yj' ? 'YJ-Stroke' : 'BB-Stroke' }));
       // Notification dot when this tab needs your action.
       const tts = tt.handState;
       if (tts && tts.phase === 'awaitingUser' && tts.actingSeat != null && tt.seats[tts.actingSeat] && tt.seats[tts.actingSeat].playerId === 0 && id !== CashLobby.focusedTableId) {
@@ -10590,7 +10590,7 @@ function renderCashTableView(tableId) {
 
   const head = el('div', { class: 'cash-table-head' });
   head.appendChild(el('h2', {
-    text: t.smallBlind + '/' + t.bigBlind + ' ' + (t.variant === 'pure' ? 'NLHE' : t.variant === 'yj' ? 'YJ Honey-Stroke' : 'Bumblebee HS') + ' · Table #' + t.id,
+    text: t.smallBlind + '/' + t.bigBlind + ' ' + (t.variant === 'pure' ? 'NLHE' : t.variant === 'yj' ? 'YJ Stroke' : 'Bumblebee Stroke') + ' · Table #' + t.id,
     style: 'margin:0; color:#F5F1E8;'
   }));
   const ctrl = el('div', { style: 'display:flex; gap:8px; flex-wrap:wrap;' });
@@ -13008,7 +13008,7 @@ function renderCashView(gameMode) {
     filteredTables.forEach(t => {
       const tr = el('tr');
       tr.appendChild(el('td', null, el('strong', { text: t.smallBlind + '/' + t.bigBlind + ' ◈' })));
-      const variantLabel = t.variant === 'pure' ? 'Pure' : t.variant === 'yj' ? 'YJ Honey-Stroke' : 'Bumblebee';
+      const variantLabel = t.variant === 'pure' ? 'Pure' : t.variant === 'yj' ? 'YJ Stroke' : 'Bumblebee Stroke';
       const variantPill = el('span', { class: 'ledger-type-pill ' + (t.variant === 'pure' ? 'cash' : 'tour'), text: variantLabel });
       tr.appendChild(el('td', null, variantPill));
       tr.appendChild(el('td', { text: t.maxSeats + '-max' }));
@@ -13040,9 +13040,9 @@ function renderCashView(gameMode) {
 
     const hint = el('div', { class: 'ui-sans', style: 'font-size:11px; opacity:0.65; margin-top:14px; line-height:1.5;' });
     if (isBB) {
-      hint.innerHTML = '<strong>Bumblebee.</strong> The casual league. Showdown losers score their own hand class (-5..+2) — flush-loser still posts -1 birdie. Gentler ledger, golf-realistic scoring band. <em>Cash chips are Nectar 1:1</em> — your stack IS your bankroll. Dual ledger: Nectar P/L + per-hand stroke score (deterministic given hand class), settled at session end via stroke-weight × hands<sup>-1</sup>.';
+      hint.innerHTML = '<strong>Bumblebee Cash.</strong> The casual league. Showdown losers score their own hand class (-5..+2) — flush-loser still posts -1 birdie. Gentler ledger, golf-realistic scoring band. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Dual ledger: Nectar P/L (chip stack) + per-hand stroke score (integer, from hand class), settled at session end as +$0.50 per net stroke.';
     } else {
-      hint.innerHTML = '<strong>Yellow Jacket Cash.</strong> <em>Cash chips are Nectar 1:1</em> — your stack IS your bankroll, no Honey indirection. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker). <strong>YJ Honey-Stroke</strong> adds a parallel stroke score per hand (deterministic given hand class) with Bogey Loss (loser fixed +1) — sharper skill expression, settled at session end. Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a>.';
+      hint.innerHTML = '<strong>Yellow Jacket Cash.</strong> <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker). <strong>YJ Stroke</strong> adds a parallel integer stroke score per hand (from hand class) with Bogey Loss (loser fixed +1) — sharper skill expression, settled at session end as +$0.50 per net stroke. Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a>.';
     }
     lobby.appendChild(hint);
     view.appendChild(lobby);
