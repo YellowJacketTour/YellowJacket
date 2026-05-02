@@ -1,3 +1,11 @@
+<!--
+  Copyright (c) 2026 Blank Canvas, Inc. All Rights Reserved.
+  Author: Dalton Graham. "Yellow Jacket Tour", "Yellow Jacket", "Honey-Stroke",
+  "Sweet Stroke", "Bumblebee", and the eight-beat hand-flow lexicon (Tea Box,
+  Fairway, Lay-Up, Hazard, Approach, Green, Putt, The Cup) are trademarks of
+  Blank Canvas, Inc.
+-->
+
 # Yellow Jacket Tour
 
 Single-file HTML build of the Yellow Jacket Tour — a hybrid of heads-up Texas Hold'em and tournament golf, scored on a single law called **Honey-Stroke**. Plays in any modern browser. No install, no server, no accounts. The whole product is one `index.html`.

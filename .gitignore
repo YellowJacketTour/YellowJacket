@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Sensitive (do not commit)
+IP/executed-NDAs/
+IP/registrations/
+IP/trademark-applications/
+IP/trademark-search/
+IP/infringement-watch/
+audit-data/
+*.csv
+*.xlsx
+secrets.*
+.env

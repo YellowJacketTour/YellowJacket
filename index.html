@@ -1,4 +1,18 @@
 <!DOCTYPE html>
+<!--
+  Yellow Jacket Tour
+  Copyright (c) 2026 Blank Canvas, Inc. All Rights Reserved.
+  Author: Dalton Graham
+  "Yellow Jacket Tour", "Yellow Jacket", "Honey-Stroke", "Sweet Stroke",
+  "Bumblebee", and the Buzz mascot are trademarks of Blank Canvas, Inc.
+  The eight-beat hand structure (Tea Box, Fairway, Lay-Up, Hazard, Approach,
+  Green, Putt, The Cup) is a proprietary brand-term suite of Blank Canvas,
+  Inc. The scoring law, agreed-total wagering primitive, honey-divisor
+  normalization, and dual-variant (Yellow Jacket / Bumblebee) loss-rule
+  system are proprietary to Blank Canvas, Inc.
+  Unauthorized reproduction, distribution, or derivative-work creation of
+  this source file or its rule system is prohibited.
+-->
 <!-- HONEY-STROKE AGGREGATE + NET HONEY NORMALIZED BY 18 IS NOW FINAL AND SHIP-READY -->
 <!-- ECONOMIC & ANTI-SYBIL MODEL IS NOW FINAL AND SHIP-READY -->
 <!-- SMART REFRESH + PERSISTENT PROGRESS IS NOW FINAL AND SHIP-READY -->
@@ -6204,8 +6218,8 @@ const BuzzKnowledge = {
     { cat: 'rules', q: 'How does a fold work?', a: 'When you fold to a proposal, you lose ONLY the previously agreed total in honey (the level both players had agreed to BEFORE the new proposal). You also take a +1 bogey on the scorecard. The non-folder takes 0 par AND receives that previous agreed total in honey. Same rule on every street — there is no street-based fold penalty table.' },
     { cat: 'rules', q: 'How does betting work?', a: 'Agreed-total wagering. Every hole opens at 2 honey. A "bet" or "raise" is a PROPOSAL to set a new total agreed pot size (capped by the stroke cap). A "call" is acceptance — the pot then stands at the proposed total. No summing, no doubling, no matched contributions. The pot at any moment is the LAST agreed total only.' },
     { cat: 'rules', q: 'What happens on a tied hole?', a: 'Both players score 0 (par) and the wagered-strokes pot accumulates into a carry pot for the next decisive hole. Multiple consecutive ties stack; the winner of the next decisive hole sweeps the entire accumulated carry.' },
-    { cat: 'rules', q: 'What happens on a fold?', a: 'The folder takes +1 bogey on the scorecard and loses the previously agreed pot to the bettor. The bettor takes 0 par on the scorecard and gains that pot in honey. The fold penalty is the same on every street — Tea Box, Drive, Hazard, and Putt — exactly +1 stroke.' },
-    { cat: 'rules', q: 'How many strokes can be bet per hole?', a: 'The event\'s stroke-cap controls the maximum total agreed pot per hole, partitioned across streets (25% by Tea Box, 50% by Drive, 75% by Hazard, 100% by Putt). v66 anchored caps to divisor 9: regular 6 (2/3 anchor), major 9 (anchor — exactly one stroke per max-pot win at 18-hole divisor), main 8 (8/9 anchor), main finals 18 (2× anchor — apex pressure). The pot-elastic multiplier (default 3) lets late-street caps scale with the live pot when carry-over has stacked it.' },
+    { cat: 'rules', q: 'What happens on a fold?', a: 'The folder takes +1 bogey on the scorecard and loses the previously agreed pot to the bettor. The bettor takes 0 par on the scorecard and gains that pot in honey. The fold penalty is the same on every betting beat — Tea Box, Lay-Up, Approach, and Putt — exactly +1 stroke.' },
+    { cat: 'rules', q: 'How many strokes can be bet per hole?', a: 'The event\'s stroke-cap controls the maximum total agreed pot per hole, partitioned across the four betting beats (25% by Tea Box, 50% by Lay-Up, 75% by Approach, 100% by Putt). v66 anchored caps to divisor 9: regular 6 (2/3 anchor), major 9 (anchor — exactly one stroke per max-pot win at 18-hole divisor), main 8 (8/9 anchor), main finals 18 (2× anchor — apex pressure). The pot-elastic multiplier (default 3) lets late-beat caps scale with the live pot when carry-over has stacked it.' },
     { cat: 'rules', q: 'How do sudden-death playoffs work?', a: 'If round totals are tied after the full event length (9-hole knockouts, 18-hole later rounds, 72-hole finals), players continue one hole at a time. First to end a hole ahead wins. Up to 30 playoff holes before a fair-coin tiebreaker.' },
     { cat: 'rules', q: 'What counts as the official tournament score?', a: 'The 72-hole Grand Finals total decides the championship. Bracket-round scores accumulate into careerScore for the Career Total chart but do not affect the official champion number.' },
     { cat: 'rules', q: 'Why do strong hands matter even when bets are large?', a: 'Hands set the scorecard; bets only set the size of the side pot. To win a round you need both — a strong scorecard (negative golf scores from good hands) AND honey-pot leverage (winning the bigger pots). Pure aggression with weak hands gets you the pot but a worse golf number.' },
@@ -6246,13 +6260,13 @@ const BuzzKnowledge = {
     { phase: 'preflop', situation: 'Premium pair (QQ+)', tip: 'Always bet. At 80%+ equity, the only question is sizing. Open for 1 stroke; 3-bet with 2 if you face a raise.' },
     { phase: 'preflop', situation: 'Ace-rag offsuit (A9o and lower)', tip: 'Marginal. 55-60% equity heads-up. Bet cautiously from position; fold to big aggression.' },
     { phase: 'preflop', situation: 'Suited connectors (98s, 76s)', tip: 'Call 1-stroke bets; fold to 2-stroke raises. Implied odds matter — you play for flush/straight equity.' },
-    { phase: 'preflop', situation: 'Small pair (22-66)', tip: 'Set-mining. Play cheaply, aim for three-of-a-kind. Fold to aggression if no Drive-card interest.' },
-    { phase: 'flop', situation: 'Top pair with good kicker', tip: 'Value bet 1. Heads-up on the Drive, top pair is often best. Extract from weaker hands; fold only to massive action.' },
+    { phase: 'preflop', situation: 'Small pair (22-66)', tip: 'Set-mining. Play cheaply, aim for three-of-a-kind. Fold to aggression if no Fairway interest.' },
+    { phase: 'flop', situation: 'Top pair with good kicker', tip: 'Value bet 1. Heads-up on the Lay-Up, top pair is often best. Extract from weaker hands; fold only to massive action.' },
     { phase: 'flop', situation: 'Overpair (pocket pair higher than board)', tip: 'Bet for value. 85%+ equity — you are ahead of any one-pair hand.' },
     { phase: 'flop', situation: 'Made 3-of-a-kind', tip: 'Usually fast: bet for value. Opponents rarely fold top pair, so extract while you can.' },
-    { phase: 'flop', situation: 'Flush draw', tip: 'Semi-bluff. Bet 1 to represent made hand; if called, you have ~35% equity to improve. Free Putt card if opponent checks.' },
+    { phase: 'flop', situation: 'Flush draw', tip: 'Semi-bluff. Bet 1 to represent made hand; if called, you have ~35% equity to improve. Free Green card if opponent checks.' },
     { phase: 'turn', situation: 'Made straight or flush', tip: 'Bet big (2+). You are almost certainly ahead. Fold-equity PLUS value.' },
-    { phase: 'turn', situation: 'Missed draw', tip: 'Give up. A Hazard check-call line is fine; do not bluff a missed draw into a calling opponent.' },
+    { phase: 'turn', situation: 'Missed draw', tip: 'Give up. An Approach check-call line is fine; do not bluff a missed draw into a calling opponent.' },
     { phase: 'river', situation: 'Facing max bet with Pair', tip: 'Usually fold. Pot odds need 40%+ win equity to call a 3-stroke bet profitably. Pair equity vs aggressive betting is ~25%.' },
     { phase: 'river', situation: 'Made top two pair or better', tip: 'Value bet. Even if you lose sometimes to Straights, you extract enough from weaker made hands to be profitable.' },
     { phase: 'river', situation: 'Opponent checks after aggression', tip: 'Careful. Slow-play often signals a missed draw or pair looking to check down. If you are behind, check; if ahead, small value bet.' },
@@ -6752,7 +6766,7 @@ Views.codex = function() {
     h3('Pot-control wins seasons'),
     p('The hand-strength distribution puts most showdowns at One Pair or worse — the modal showdown posts a slight bogey. Net scorecard improvement comes almost entirely from winning honey pots, not from holding strong hands. Build pots when you have an equity edge; concede them cheaply when you do not. The honey divisor (72 for full-event scoring) means you need many small pots — or a few large ones — to move the round score by a single stroke.'),
     h3('The fold rule rewards ALL fold pressure equally'),
-    p('Every fold returns the same outcome to the bettor: 0 (par) on the scorecard plus the previously agreed pot in honey. There is NO street-based bonus — a Putt-street fold is no more valuable than a Tea Box fold in scorecard terms. What changes by street is the SIZE of the previously agreed pot: pots grow as betting progresses, so late-street folds tend to deliver more honey simply because the agreed total has had more rounds to climb.'),
+    p('Every fold returns the same outcome to the bettor: 0 (par) on the scorecard plus the previously agreed pot in honey. There is NO beat-based bonus — a Putt fold is no more valuable than a Tea Box fold in scorecard terms. What changes by beat is the SIZE of the previously agreed pot: pots grow as betting progresses, so late-beat folds tend to deliver more honey simply because the agreed total has had more rounds to climb.'),
     h3('Folds do NOT reveal cards — strategic implications'),
     p('When a player folds, the non-folder ALWAYS scores 0 par regardless of the actual hand they were holding. Cards are never revealed on a fold. This is a deliberate design choice — it preserves the "concession" semantic of golf match play, where a conceded hole is scored par without playing it out. But it has two strategic implications most poker players miss:'),
     ul([
@@ -6761,7 +6775,7 @@ Views.codex = function() {
       'IMPLICATION FOR AGGRESSION. Classic-poker intuition says "premium hand → bet big → opponent folds → you win the pot." In Yellow Jacket, that pattern caps your reward at the previously-agreed honey + 0 par. The richer reward path is "premium hand → bet to a level the opponent CALLS → showdown → realize -3 to -5 plus the agreed honey." Skilled players bet for value (extraction), not for fold equity (denial).',
     ]),
     h3('Per-event stroke caps — strategic implications'),
-    p('Stroke caps and the 25/50/75/100 progressive street unlock are documented in the Rulebook ("Per-event stroke caps and progressive street unlock") with worked examples for Regular and Major caps. Strategic note: the progressive unlock means committed value bets must be staged across streets — you cannot reach a Major\'s 10-honey ceiling on Tea Box. This forces information-revealing escalation, which is one of the main skill levers in YJ. Watch how an opponent paces their Tea-Box / Drive proposals: aggressive early proposals at the unlock ceiling signal commitment to a strong hand; passive early streets followed by a Putt-cap shove often signals a missed draw turning bluff.'),
+    p('Stroke caps and the 25/50/75/100 progressive bet-cap unlock are documented in the Rulebook ("Per-event stroke caps and progressive bet-cap unlock") with worked examples for Regular and Major caps. Strategic note: the progressive unlock means committed value bets must be staged across betting beats — you cannot reach a Major\'s 10-honey ceiling on Tea Box. This forces information-revealing escalation, which is one of the main skill levers in YJ. Watch how an opponent paces their Tea-Box / Lay-Up proposals: aggressive early proposals at the unlock ceiling signal commitment to a strong hand; passive early beats followed by a Putt-cap shove often signals a missed draw turning bluff.'),
     h3('Tied-hole carry — strategic implications'),
     p('Tied-hole stacking math is documented in the Rulebook ("Tied holes carry forward — and stack across consecutive ties") with a three-hole worked example. Strategic implications: (1) tied holes are a free option for whoever wins the NEXT decisive hole, not for the player who built the prior pot. With suspected board-runout ties (paired boards, four-card straights/flushes on the board), a small bet that survives a tie outperforms a large bet that gets folded to — the small carry compounds; the fold loses the agreed total outright. (2) After two or more consecutive ties, the next decisive hole becomes a high-leverage spot — both players are now competing for an inflated stack, so equity edges that would normally call for moderate bets justify aggressive proposals.'),
     h3('Major qualifier path'),
@@ -6807,15 +6821,18 @@ Views.codex = function() {
 
   // ---- The Phases of a Hole ----
   const phases = section('6 · The Phases of a Hole',
-    p('Every hole has five named phases. Internal logic still uses standard poker street names; the display is themed throughout the UI. Stroke-cap unlocks at each phase are documented in the Rulebook ("Per-event stroke caps and progressive street unlock").'),
+    p('Every hole has eight named beats: a state (where the ball is) followed by an action (the next bet), real-golf-order. Internal logic still uses standard poker street names; the display is themed throughout the UI. Stroke-cap unlocks at each betting beat are documented in the Rulebook ("Per-event stroke caps and progressive bet-cap unlock").'),
     tbl(
-      ['Phase', 'Poker street', 'What happens', 'Stroke-cap unlock'],
+      ['Beat', 'Type', 'Poker phase', 'What happens', 'Stroke-cap unlock'],
       [
-        ['Tea Box', 'Pre-flop', 'Hole cards dealt; mandatory opener already posted (2 honey on holes 1–9, ' + (2 * (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2)) + ' honey on holes 10–18 of an 18-hole round); first round of betting.', '25%'],
-        ['Drive', 'Flop', 'Three community cards revealed; second round of betting.', '50%'],
-        ['Hazard', 'Turn', 'Fourth community card; third round of betting.', '75%'],
-        ['Putt', 'River', 'Fifth and final community card; final round of betting.', '100%'],
-        ['The Cup', 'Showdown', 'Cards revealed (only on a decisive showdown — folds never reveal cards); hole resolves; honey + scorecard credited per the variant rule (Yellow Jacket: loser +1 bogey; Bumblebee: loser scores own hand).', '—'],
+        ['Tea Box', 'state + action', 'Pre-flop', 'Hole cards dealt; mandatory opener already posted (2 honey on holes 1–9, ' + (2 * (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2)) + ' honey on holes 10–18 of an 18-hole round); first round of betting. (Tea Box collapses tee-up + drive into one beat — at a real tee box you tee up and immediately drive.)', '25%'],
+        ['The Fairway', 'state', 'Flop deal', 'Three community cards revealed — where your tee-shot ball landed.', '—'],
+        ['The Lay-Up', 'action', 'Flop bet', 'Second-shot betting based on the Fairway position.', '50%'],
+        ['The Hazard', 'state', 'Turn deal', 'Fourth community card — where your second shot landed.', '—'],
+        ['The Approach', 'action', 'Turn bet', 'Third-shot betting; the shot toward the green.', '75%'],
+        ['The Green', 'state', 'River deal', 'Fifth community card — ball is on the green.', '—'],
+        ['The Putt', 'action', 'River bet', 'Final round of betting; the last shot.', '100%'],
+        ['The Cup', 'resolution', 'Showdown', 'Cards revealed (only on a decisive showdown — folds never reveal cards); hole resolves; honey + scorecard credited per the variant rule (Yellow Jacket: loser +1 bogey; Bumblebee: loser scores own hand). The ball drops in the cup.', '—'],
       ]
     ),
     p('For caps of 3 or less the progressive unlock is disabled and the full cap is available from Tea Box (a 25% step would round to <1 honey and break wagerability).')
@@ -7325,11 +7342,11 @@ function maybeEmitBuzzTip(g) {
   if (street === 'preflop') {
     if (strength > 0.65) tip = 'Premium starting hand. Sweeten the pot off the Tea Box.';
     else if (strength < 0.35) tip = 'Weak starting cards. Check or fold to any raise.';
-    else tip = 'Middling Tea Box read. See a cheap Drive if you can.';
+    else tip = 'Middling Tea Box read. See a cheap Fairway if you can.';
   } else if (street === 'flop') {
     if (strength > 0.72) tip = 'Strong connection to this board. Pour honey in the pot.';
-    else if (strength < 0.35) tip = "This Drive didn't help. Pot-control or fold.";
-    else tip = 'Marginal Drive. Keep the pot manageable.';
+    else if (strength < 0.35) tip = "This Fairway didn't help. Pot-control or fold.";
+    else tip = 'Marginal Fairway. Keep the pot manageable.';
   } else if (street === 'turn') {
     if (strength > 0.75) tip = 'You likely lead. Charge the draws — make them pay.';
     else if (strength < 0.4) tip = "The Hazard didn't improve you. Consider giving up — or sting them.";
@@ -7526,8 +7543,8 @@ Views.rules = function() {
     'POT — pot grows 100% to 200% (full pot commitment, "I\'m engaged"); ' +
     'POLARIZE — pot grows more than 200% but stays under the street cap (nuts-or-bluff polarization); ' +
     'SHOVE — proposal at or near the street\'s ceiling (final commitment, no further escalation legal). ' +
-    'AVAILABLE TIERS BY STREET. The cap unlock structure (25/50/75/100% of the per-event cap by Tea Box / Drive / Hazard / Putt) determines which tiers are LEGAL at each street: Tea Box typically only allows Probe and Press; Drive opens Pot; Hazard opens Polarize; Putt opens Shove. Each street unlocks a new tier — that\'s the escalation primitive. The decision space genuinely expands as the hand develops, exactly as in poker where 4-bet wars only happen when stacks are deep. ' +
-    'WHY THIS DELIVERS DIVERSITY. Five named categories with structurally distinct strategic meanings is the same depth WSOP delivers (the min-raise / 2.5× / 3-bet / 4-bet / shove ladder). Players reason in tier-language ("Polarize the Putt," "Probe the Hazard"), commentators narrate in tier-language, AI decision profiles can be tier-conditioned (a "polarizing player" persona, a "probe-heavy player" persona). The integer honey amounts remain — they\'re just labels for what\'s happening at the strategic layer. ' +
+    'AVAILABLE TIERS BY BETTING BEAT. The cap unlock structure (25/50/75/100% of the per-event cap by Tea Box / Lay-Up / Approach / Putt) determines which tiers are LEGAL at each beat: Tea Box typically only allows Probe and Press; Lay-Up opens Pot; Approach opens Polarize; Putt opens Shove. Each beat unlocks a new tier — that\'s the escalation primitive. The decision space genuinely expands as the hand develops, exactly as in poker where 4-bet wars only happen when stacks are deep. ' +
+    'WHY THIS DELIVERS DIVERSITY. Five named categories with structurally distinct strategic meanings is the same depth WSOP delivers (the min-raise / 2.5× / 3-bet / 4-bet / shove ladder). Players reason in tier-language ("Polarize the Putt," "Probe the Approach"), commentators narrate in tier-language, AI decision profiles can be tier-conditioned (a "polarizing player" persona, a "probe-heavy player" persona). The integer honey amounts remain — they\'re just labels for what\'s happening at the strategic layer. ' +
     'NOT A NEW UNIT. Honey is still the per-hole wager unit. Tiers are a CLASSIFICATION on top of honey amounts — every honey wager fits exactly one tier based on its pot-fraction. Implemented via the betTierForProposal() helper.'
   ));
   core.appendChild(rule('Probability-calibrated showdown matrix',
@@ -7543,8 +7560,8 @@ Views.rules = function() {
     'BUMBLEBEE (casual league). The loser at a decisive showdown scores their own hand\'s golf value (range −5..+2) — a flush-loser still records −1 birdie. The "your hand always counts" texture is preserved; champion scores typically land in the −10 to −18 range, golf-realistic below-par totals. ' +
     'BOTH share: the per-hole engine, the mandatory openers, agreed-total wagering, per-event stroke caps with progressive unlock, the fold rule, tied-hole carry, the round-length divisor table, tournament formats, field selection, payout structure, and economics. Folds and ties are not affected by the variant choice — only the decisive-showdown loser score differs.'
   ));
-  core.appendChild(rule('Folds — uniform on every street',
-    'The fold rule is the same on Tea Box, Drive, Hazard, and Putt: the folder posts +1 (bogey) on the scorecard and gains 0 honey. The non-folder posts 0 (par) on the scorecard and takes the PREVIOUSLY AGREED pot (the level both players had already accepted before the proposal that triggered the fold) as a honey credit. Example: pot is agreed at 5. Opponent raises to 8. You fold. You post +1 bogey. Opponent posts 0 par and gains 5 honey. The unaccepted proposal of 8 is moot — only the prior agreed total transfers. There is no street-based penalty table; what makes late-street folds more valuable in practice is that the previously agreed pot has had more chances to climb.'
+  core.appendChild(rule('Folds — uniform on every betting beat',
+    'The fold rule is the same on Tea Box, Lay-Up, Approach, and Putt: the folder posts +1 (bogey) on the scorecard and gains 0 honey. The non-folder posts 0 (par) on the scorecard and takes the PREVIOUSLY AGREED pot (the level both players had already accepted before the proposal that triggered the fold) as a honey credit. Example: pot is agreed at 5. Opponent raises to 8. You fold. You post +1 bogey. Opponent posts 0 par and gains 5 honey. The unaccepted proposal of 8 is moot — only the prior agreed total transfers. There is no beat-based penalty table; what makes late-beat folds more valuable in practice is that the previously agreed pot has had more chances to climb.'
   ));
   core.appendChild(rule('Folds DO NOT reveal cards — strategic note',
     'When a player folds, the non-folder always scores 0 par REGARDLESS of the actual hand they were holding. Cards are never revealed on a fold. This is intentional — it preserves the "concession" semantic of golf match play, where a conceded hole is scored par without playing it out. ' +
@@ -7552,13 +7569,13 @@ Views.rules = function() {
     'STRATEGIC CONSEQUENCE FOR WEAK HANDS: folding a weak hand costs +1 bogey but caps your honey loss at the PREVIOUSLY agreed pot (not the new proposal). Reaching showdown and losing also costs +1 in Yellow Jacket (or up to +2 in Bumblebee), but loses the LARGER agreed honey. Folding can be the cheaper escape, especially when the previously-agreed pot is small. ' +
     'BOTTOM LINE: in Yellow Jacket, bet for value (extraction), not for fold equity (denial). Classic-poker pressure plays under-reward you here.'
   ));
-  core.appendChild(rule('Per-event stroke caps and progressive street unlock',
+  core.appendChild(rule('Per-event stroke caps and progressive bet-cap unlock',
     'STROKE CAP. Each event sets a maximum agreed pot size for any single hole — the stroke cap. v66 defaults, anchored to the divisor 9: Regular ' + (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6) + ' honey, Major ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 9) + ' honey (= divisor → 1 stroke per max pot), Main early rounds ' + (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 8) + ' honey, Main 72-hole finals ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 18) + ' honey (= 2× anchor → apex drama tier). ' +
-    'PROGRESSIVE UNLOCK. Within each hole the cap unlocks by street: 25% available by Tea Box (preflop), 50% by Drive (flop), 75% by Hazard (turn), 100% by Putt (river). Integer rounding via ceil. ' +
-    'WORKED EXAMPLE — Major (cap 9). Tea Box: max agreed total 3 (25% of 9 = 2.25, ceil to 3). Drive: max 5 (50% = 4.5, ceil to 5). Hazard: max 7. Putt: max 9. So an early-street raise to 8 is illegal on Tea Box but legal on Hazard. ' +
-    'WORKED EXAMPLE — Main finals (cap 18). Tea Box: max 5. Drive: max 9. Hazard: max 14. Putt: max 18 = 2 strokes per max pot. ' +
+    'PROGRESSIVE UNLOCK. Within each hole the cap unlocks across the four betting beats: 25% available by Tea Box (preflop), 50% by Lay-Up (flop bet), 75% by Approach (turn bet), 100% by Putt (river bet). Integer rounding via ceil. ' +
+    'WORKED EXAMPLE — Major (cap 9). Tea Box: max agreed total 3 (25% of 9 = 2.25, ceil to 3). Lay-Up: max 5 (50% = 4.5, ceil to 5). Approach: max 7. Putt: max 9. So an early-beat raise to 8 is illegal on Tea Box but legal on Approach. ' +
+    'WORKED EXAMPLE — Main finals (cap 18). Tea Box: max 5. Lay-Up: max 9. Approach: max 14. Putt: max 18 = 2 strokes per max pot. ' +
     'SHORT-CAP EXEMPTION. For caps of 3 or less the progressive unlock is disabled and the full cap is available from Tea Box (a 25% unlock would round to <1 honey and break wagerability). ' +
-    'WHY IT EXISTS. Forcing pot escalation across streets mirrors real no-limit Hold\'em — players have to commit to escalation in stages, which surfaces information about hand strength along the way. A single-cap free-for-all on Tea Box would collapse all betting decisions into one street.'
+    'WHY IT EXISTS. Forcing pot escalation across betting beats mirrors real no-limit Hold\'em — players have to commit to escalation in stages, which surfaces information about hand strength along the way. A single-cap free-for-all on Tea Box would collapse all betting decisions into one beat.'
   ));
   core.appendChild(rule('AI decision logic — pure Honey-Stroke EV',
     'AI opponents evaluate each decision in Honey-Stroke EV, not in classic poker pot odds. On every street they estimate their adjusted equity, compare expected value across every available action, and pick the highest-EV move — perturbed by player-specific decision noise. Lower-skill profiles inject more randomness; elites act closer to optimal. ' +
@@ -7643,7 +7660,8 @@ Views.rules = function() {
 
 // =============================================================================
 // DECISION TREE — visual walkthrough of every stage of a Yellow Jacket hole.
-// Tea Box → Drive → Hazard → Putt → Cup mapped to preflop/flop/turn/river/showdown,
+// Tea Box → Fairway → Lay-Up → Hazard → Approach → Green → Putt → The Cup
+// mapped to preflop/flop/turn/river/showdown,
 // with CSS-rendered playing cards and YJ-aware decision rationale at every node.
 // Card art is drawn with HTML/CSS (no external images) so this works fully offline.
 // =============================================================================
@@ -7837,7 +7855,7 @@ Views.decisiontree = function() {
 
   // ===== Intro =====
   const intro = section('Walking the Course',
-    p('A Yellow Jacket hole is a heads-up Texas Hold\'em hand re-skinned as a single hole of golf. Five named stages — Tea Box, Drive, Hazard, Putt, The Cup — map directly to preflop, flop, turn, river, and showdown. Below, each stage shows the cards you typically see, the actions available to you, and the YJ-aware decision logic that distinguishes Yellow Jacket strategy from classic poker.'),
+    p('A Yellow Jacket hole is a heads-up Texas Hold\'em hand re-skinned as a single hole of golf. Eight named beats — Tea Box, Fairway, Lay-Up, Hazard, Approach, Green, Putt, The Cup — alternate between state (where the ball / cards are) and action (the next bet), real-golf order. They map onto preflop / flop deal / flop bet / turn deal / turn bet / river deal / river bet / showdown. Below, each beat shows the cards you typically see, the actions available to you, and the YJ-aware decision logic that distinguishes Yellow Jacket strategy from classic poker.'),
     p('The core insight: in Yellow Jacket, the pot itself improves your scorecard (winning honey is divided by the round-length divisor and subtracted from your golf total). That changes the math at every street — folding is more expensive than poker intuition suggests, and calling thin equities is more profitable than it looks.'),
     p('Three insights drive every YJ decision and recur in the rationale boxes below:'),
     el('ul', { class: 'ui-sans', style: 'font-size: 13px; line-height: 1.7; color: var(--text-primary); margin-top: 6px; padding-left: 22px;' },
@@ -7870,10 +7888,10 @@ Views.decisiontree = function() {
   const river = [['9', 'S']];
 
   view.appendChild(el('h2', {
-    text: 'A worked example: A♠K♠ from Tea Box to Cup',
+    text: 'A worked example: A♠K♠ from Tea Box to The Cup',
     style: 'margin:24px 0 12px 0;color:var(--gold);font-size:18px;'
   }));
-  view.appendChild(p('Follow one strong-but-not-locked starting hand through every stage. Decisions adapt as the board comes; rationale boxes show the YJ-aware EV lens at each step.'));
+  view.appendChild(p('Follow one strong-but-not-locked starting hand through every beat. Decisions adapt as the board comes; rationale boxes show the YJ-aware EV lens at each step.'));
 
   // Tea Box
   view.appendChild(dtStage({
@@ -7897,15 +7915,33 @@ Views.decisiontree = function() {
     ]
   }));
 
-  // Drive
+  // The Fairway (state — flop deal)
   view.appendChild(dtStage({
-    title: '2 · Drive',
-    mapping: 'flop · three community cards · stroke cap unlocks to 50%',
+    title: '2 · The Fairway',
+    mapping: 'flop deal · three community cards revealed · no betting (yet)',
     accent: '#f0a020',
-    lede: 'Three community cards are dealt face-up. The stroke cap unlocks to 50% (e.g. 5 honey on a Major\'s 10-cap). Most made hands and big draws are decided here.',
+    lede: 'Three community cards are dealt face-up. This is where your tee-shot ball landed. No betting on the Fairway itself — players just see the new state. The Lay-Up (next beat) is where bets resume.',
     cards: [
       dtCardRow(heroHole, 'Hero hole'),
       dtCardRow(flop, 'Flop · K♥ 7♠ 2♣'),
+    ],
+    actions: [
+      '**Read the board** — assess made hands, draws, and texture before the Lay-Up bet.'
+    ],
+    rationale: [
+      'You just landed top pair top kicker on a dry K-7-2 rainbow. The Fairway state is favorable; the Lay-Up bet (next beat) is where the engine commits stroke-cap value.'
+    ]
+  }));
+
+  // The Lay-Up (action — flop bet)
+  view.appendChild(dtStage({
+    title: '3 · The Lay-Up',
+    mapping: 'flop bet · stroke cap unlocks to 50%',
+    accent: '#e89018',
+    lede: 'The second-shot bet, made from the Fairway position. The stroke cap unlocks to 50% (e.g. 5 honey on a Major\'s 10-cap). Most made hands and big draws drive their primary value here.',
+    cards: [
+      dtCardRow(heroHole, 'Hero hole'),
+      dtCardRow(flop, 'Board · K♥ 7♠ 2♣ (the Fairway)'),
     ],
     actions: [
       '**Check** — pot stays at the previously-agreed total.',
@@ -7920,50 +7956,84 @@ Views.decisiontree = function() {
     ]
   }));
 
-  // Hazard
+  // The Hazard (state — turn deal)
   view.appendChild(dtStage({
-    title: '3 · Hazard',
-    mapping: 'turn · fourth community card · stroke cap unlocks to 75%',
+    title: '4 · The Hazard',
+    mapping: 'turn deal · fourth community card revealed · no betting (yet)',
     accent: '#c44b8a',
-    lede: 'A fourth community card lands. Stroke cap reaches 75%. Drawing hands have one card left to complete; made hands have one more chance to be outdrawn.',
+    lede: 'A fourth community card lands. This is where your second shot ended up — could be a real hazard or could put you in a great spot. No betting on the Hazard itself; the Approach (next beat) is where bets resume.',
     cards: [
       dtCardRow(heroHole, 'Hero hole'),
       dtCardRow(flop.concat(turn), 'Board · K♥ 7♠ 2♣ 4♠'),
     ],
     actions: [
-      '**Check / Bet / Call / Fold** — same menu as previous streets, with a 75%-of-cap ceiling on any new agreed total.',
+      '**Read the new card** — assess how the turn changed equity, draws, and texture before the Approach bet.'
     ],
     rationale: [
-      'Turn brings 4♠ — you now hold the **nut flush draw** on top of top-pair-top-kicker. ~9 outs to the nut flush by the river (≈19.6% on the river alone, ≈35% by the river cumulative if the turn missed).',
+      'Turn brings 4♠ — you now hold the **nut flush draw** on top of top-pair-top-kicker. ~9 outs to the nut flush by the river (≈19.6% on the river alone, ≈35% by the river cumulative if the turn missed). The Hazard state is favorable; the Approach bet (next beat) is where the engine commits.'
+    ]
+  }));
+
+  // The Approach (action — turn bet)
+  view.appendChild(dtStage({
+    title: '5 · The Approach',
+    mapping: 'turn bet · stroke cap unlocks to 75%',
+    accent: '#b03a7a',
+    lede: 'The third-shot bet — the shot toward the green. Stroke cap reaches 75%. Drawing hands have one card left to complete; made hands have one more chance to be outdrawn.',
+    cards: [
+      dtCardRow(heroHole, 'Hero hole'),
+      dtCardRow(flop.concat(turn), 'Board · K♥ 7♠ 2♣ 4♠ (the Hazard)'),
+    ],
+    actions: [
+      '**Check / Bet / Call / Fold** — same menu as previous betting beats, with a 75%-of-cap ceiling on any new agreed total.',
+    ],
+    rationale: [
       'Pot odds vs YJ EV: classic poker would compute (call cost) / (call cost + pot) and call only if that ratio ≤ outs%. YJ adjusts: ev_call subtracts **showdownGolfCost(adj)** (the expected stroke penalty if you reach showdown and lose), so calling thin draws is slightly LESS profitable than poker math suggests on a per-decision basis — but folding is structurally penalized too, so the net effect is "call wider than poker, fold tighter than poker, with the wedge depending on the divisor."',
       'True fold cost: `1 + agreedTotal/divisor` — the +1 bogey plus the honey you forfeit, normalised by round length. The 72-hole final\'s divisor is 36; the EV math at every decision uses that same divisor, so AI choices stay consistent with how the round actually scores.'
     ]
   }));
 
-  // Putt
+  // The Green (state — river deal)
   view.appendChild(dtStage({
-    title: '4 · Putt',
-    mapping: 'river · fifth community card · stroke cap fully unlocked',
+    title: '6 · The Green',
+    mapping: 'river deal · fifth community card revealed · no betting (yet)',
     accent: '#7ec96b',
-    lede: 'The final community card is revealed. The full stroke cap is now available. This is the last betting street; folds here are most expensive (the previously-agreed pot has had every prior round to climb), but a successful value bet here harvests the pot you spent the whole hole building.',
+    lede: 'The final community card is dealt face-up. Your ball is on the green. No betting on the Green itself; the Putt (next beat) is the final bet.',
     cards: [
       dtCardRow(heroHole, 'Hero hole'),
       dtCardRow(flop.concat(turn).concat(river), 'Board · K♥ 7♠ 2♣ 4♠ 9♠'),
     ],
     actions: [
-      '**Bet/raise** up to 100% of the per-event cap.',
-      '**Check / Call / Fold** as before. The agreed total at the end of this street is what transfers as honey at showdown.'
+      '**Read the final board** — every made hand and every missed draw is now decided. The Putt bet (next beat) plays on locked equity.'
     ],
     rationale: [
-      'River brings 9♠ — your nut-flush draw completes. Hand is now A-high flush, golf score −2 (premium-kicker bucket: T-high or better posts −2; lower flushes post −1).',
-      'Bet for value. Sizing target: maximize the agreed total villain will **call**, not the size that folds them out. Forcing a fold here scores 0 par + previously-agreed honey; reaching showdown scores −2 + new agreed honey, a much richer outcome.',
-      'If villain raises, the YJ kernel re-runs the EV decision: ev_call now compares "accept villain\'s proposal, realize −2 at showdown, claim the larger honey pot" vs "fold and post +1 bogey, lose the previously-agreed honey." With nut-flush certainty, calling is dominant.'
+      'River brings 9♠ — your nut-flush draw completes. Hand is now A-high flush, golf score −2 (premium-kicker bucket: T-high or better posts −2; lower flushes post −1).'
+    ]
+  }));
+
+  // The Putt (action — river bet)
+  view.appendChild(dtStage({
+    title: '7 · The Putt',
+    mapping: 'river bet · stroke cap fully unlocked',
+    accent: '#5fa84a',
+    lede: 'The final shot. The full stroke cap is now available. Folds here are most expensive (the previously-agreed pot has had every prior beat to climb), but a successful value bet here harvests the pot you spent the whole hole building.',
+    cards: [
+      dtCardRow(heroHole, 'Hero hole'),
+      dtCardRow(flop.concat(turn).concat(river), 'Board · K♥ 7♠ 2♣ 4♠ 9♠ (the Green)'),
+    ],
+    actions: [
+      '**Bet/raise** up to 100% of the per-event cap.',
+      '**Check / Call / Fold** as before. The agreed total at the end of this beat is what transfers as honey at The Cup.'
+    ],
+    rationale: [
+      'Bet for value. Sizing target: maximize the agreed total villain will **call**, not the size that folds them out. Forcing a fold here scores 0 par + previously-agreed honey; reaching The Cup scores −2 + new agreed honey, a much richer outcome.',
+      'If villain raises, the YJ kernel re-runs the EV decision: ev_call now compares "accept villain\'s proposal, realize −2 at The Cup, claim the larger honey pot" vs "fold and post +1 bogey, lose the previously-agreed honey." With nut-flush certainty, calling is dominant.'
     ]
   }));
 
   // The Cup
   view.appendChild(dtStage({
-    title: '5 · The Cup',
+    title: '8 · The Cup',
     mapping: 'showdown · cards reveal · honey + scorecard credited',
     accent: '#daa520',
     lede: 'Cards turn over. Hands are evaluated, golf scores assigned, the agreed pot transfers as honey to the winner. Decisive showdowns under Yellow Jacket rules: loser posts a fixed +1 bogey regardless of hand. Under Bumblebee rules: loser scores their own hand\'s golf value (−5..+2) — so a flush-loser still posts −1.',
@@ -8140,16 +8210,18 @@ function cardFaceDom(card) {
   );
 }
 
-// Yellow Jacket street jargon — every phase of the hole gets a golf-themed name.
-//   preflop  → Tea Box  (hole cards + blinds, the player addresses the ball)
-//   flop     → Drive    (first three community cards — the big opening swing)
-//   turn     → Hazard   (fourth card — the trouble street)
-//   river    → Putt     (fifth and final card — closing stroke)
-//   showdown → The Cup  (cards revealed; the ball is in the cup, hole complete)
+// Yellow Jacket 8-beat lexicon — each engine street maps to its action-beat name
+// (the betting event), with the deal-event name available via streetDealLabel().
+//   preflop  → Tea Box      (combined: hole cards + opening pot + first bet)
+//   flop     → Lay-Up       (the second-shot bet; deal-event name = "Fairway")
+//   turn     → Approach     (the shot toward the green; deal-event name = "Hazard")
+//   river    → Putt         (the final shot; deal-event name = "Green")
+//   showdown → The Cup      (ball drops; hand resolves)
 // Internal enum values stay as 'preflop'/'flop'/'turn'/'river'/'showdown' so all
 // existing game logic, betting rounds, and equity tables keep working. Only the
 // display label is themed.
-function streetLabel(s) { return { preflop: 'Tea Box', flop: 'Drive', turn: 'Hazard', river: 'Putt', showdown: 'The Cup' }[s] || s; }
+function streetLabel(s) { return { preflop: 'Tea Box', flop: 'Lay-Up', turn: 'Approach', river: 'Putt', showdown: 'The Cup' }[s] || s; }
+function streetDealLabel(s) { return { preflop: 'Tea Box', flop: 'Fairway', turn: 'Hazard', river: 'Green', showdown: 'The Cup' }[s] || s; }
 
 function mpAct(g, action, amount) {
   const c = g.current;

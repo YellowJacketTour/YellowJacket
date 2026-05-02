@@ -1,3 +1,12 @@
+<!--
+  Copyright (c) 2026 Blank Canvas, Inc. All Rights Reserved.
+  Author: Dalton Graham. "Yellow Jacket Tour", "Yellow Jacket", "Honey-Stroke",
+  "Sweet Stroke", "Bumblebee", and the eight-beat hand-flow lexicon (Tea Box,
+  Fairway, Lay-Up, Hazard, Approach, Green, Putt, The Cup) are trademarks of
+  Blank Canvas, Inc. The scoring law and rule set described herein are
+  proprietary. Unauthorized reproduction prohibited.
+-->
+
 # Yellow Jacket Tour — Complete Rules Manual
 
 This document covers **every game mode** in the build, in plain language with ASCII diagrams. Read top-to-bottom for the full picture, or jump to the mode you care about.
@@ -23,33 +32,49 @@ Every mode in the build uses **the same poker engine**: standard Texas Hold'em.
 
 ```
                     THE STANDARD HOLD'EM HOLE
-   ┌─────────────────────────────────────────────────────┐
-   │                                                       │
-   │   Each player gets:  [▒▒]  [▒▒]   ← 2 hole cards     │
-   │                                                       │
-   │   The board grows:                                   │
-   │     Tea Box (preflop)   no community cards yet       │
-   │     Drive (flop)        [♣][♦][♥]                    │
-   │     Hazard (turn)       [♣][♦][♥][♠]                 │
-   │     Putt  (river)       [♣][♦][♥][♠][♣]              │
-   │                                                       │
-   │   At showdown each player makes the BEST 5-card      │
-   │   hand from their 2 hole + 5 board cards.            │
-   │                                                       │
-   └─────────────────────────────────────────────────────┘
+   ┌─────────────────────────────────────────────────────────┐
+   │                                                          │
+   │   Each player gets:  [▒▒]  [▒▒]   ← 2 hole cards        │
+   │                                                          │
+   │   The hand unfolds in eight named beats. Real-golf       │
+   │   order: action → state → action → state.                │
+   │                                                          │
+   │     1. Tea Box™      tee up + opening pot + first bet   │
+   │                      (collapses tee+drive into one beat) │
+   │     2. The Fairway™  [♣][♦][♥]    (3 community cards)   │
+   │     3. The Lay-Up™   second-shot bet on what landed     │
+   │     4. The Hazard™   [♣][♦][♥][♠]  (4th community card) │
+   │     5. The Approach™ shot toward the green              │
+   │     6. The Green™    [♣][♦][♥][♠][♣] (5th community)    │
+   │     7. The Putt™     final shot                         │
+   │     8. The Cup™      ball drops — showdown resolves     │
+   │                                                          │
+   │   At The Cup each player makes the BEST 5-card hand     │
+   │   from their 2 hole + 5 board cards.                    │
+   │                                                          │
+   └─────────────────────────────────────────────────────────┘
 ```
 
-The five **streets** (poker terms in parentheses):
+The eight **beats** of a Yellow Jacket hand. Each is a proprietary, branded event of the YJT system. The order is the real-golf order — every shot (action) lands somewhere (state), and from that state you pick the next shot. (Familiar poker references in parentheses for first-time readers.)
 
-| YJ name | Poker term | What happens |
-|---------|-----------|--------------|
-| Tea Box | Preflop | Hole cards dealt, mandatory pot posted, betting |
-| Drive | Flop | 3 community cards dealt, betting |
-| Hazard | Turn | 4th community card, betting |
-| Putt | River | 5th community card, final betting |
-| The Cup | Showdown | Hands revealed, winner takes pot |
+| # | YJ beat | Type | Poker reference | What happens |
+|---|---------|------|-----------------|--------------|
+| 1 | **Tea Box** | state + action | Preflop | Hole cards dealt; mandatory pot posted; first betting round. (Collapses "tee + drive" into one beat — at a real tee box you tee up and immediately drive.) |
+| 2 | **The Fairway** | state | Flop deal | 3 community cards dealt face-up. Where your tee-shot ball landed. |
+| 3 | **The Lay-Up** | action | Flop bet | Players bet/check/raise/fold based on the Fairway position. The second shot. |
+| 4 | **The Hazard** | state | Turn deal | 4th community card dealt face-up. Where your second shot landed — could complicate or improve your line. |
+| 5 | **The Approach** | action | Turn bet | Players bet/check/raise/fold. The shot aiming for the green. |
+| 6 | **The Green** | state | River deal | 5th community card dealt face-up. Ball is on the green. |
+| 7 | **The Putt** | action | River bet | Final betting round. The last shot. |
+| 8 | **The Cup** | resolution | Showdown | Hands revealed, winner takes the pot (and the hole). The ball drops. |
 
-That's standard poker. **Every mode in the build uses these exact five streets.** The only differences are: (1) what you wager with, (2) what scoring layer (if any) sits on top, (3) whether play is continuous or organized into rounds/events.
+**Why the deal-vs-bet split.** Conventional poker collapses each street into "the flop" / "the turn" / "the river" — one word for both the card-reveal moment and the betting round that follows. YJT pulls them apart so each gets its own narrative beat: in real golf, your shot (action) lands somewhere (state), and from that state you decide your next shot. Beats 2/3, 4/5, and 6/7 mirror that action-state pattern exactly.
+
+**Every mode in the build uses these exact eight beats.** The only differences across modes are: (1) what you wager with, (2) what scoring layer (if any) sits on top, (3) whether play is continuous or organized into rounds/events.
+
+**Casual variants.** Across marketing copy, Buzz tips, lore, and conversational play, these primary marks are paired with documented *casual variants* — for example, "the Drive" remains in active use as a casual variant for the Tea Box (the tee-shot moment), and "the Iron" or "the Press" may appear as variants of the Lay-Up. See `IP/LEXICON.md` for the full variant pool.
+
+> **Trademark notice.** Tea Box, The Fairway, The Lay-Up, The Hazard, The Approach, The Green, The Putt, and The Cup are proprietary brand terms of Blank Canvas, Inc. used to name the eight events of the Yellow Jacket Tour hand structure. They are common-law trademarks as of 2026-05-02; paid USPTO registration is queued for the family-of-marks suite filing. The casual variants documented in `IP/LEXICON.md` accrue separate common-law rights through their use. See `IP/IP_INVENTORY.md` §2.3.
 
 ---
 
@@ -193,17 +218,17 @@ Tour wagering is **NOT** like standard poker. Read carefully:
    Only the most recent accepted proposal does.
 ```
 
-### 3.6 Stroke caps with progressive street unlock
+### 3.6 Stroke caps with progressive unlock across the betting beats
 
-Wagering is capped per event tier. The cap unlocks gradually across the four streets:
+Wagering is capped per event tier. The cap unlocks gradually across the four betting beats (Tea Box, Lay-Up, Approach, Putt). State beats (Fairway, Hazard, Green) carry no betting and inherit the cap of the betting beat that follows them.
 
 ```
-   PROGRESSIVE STREET UNLOCK
+   PROGRESSIVE BET-CAP UNLOCK
    ─────────────────────────────────────
-   Tea Box (preflop)   25% of cap
-   Drive (flop)        50% of cap
-   Hazard (turn)       75% of cap
-   Putt (river)       100% of cap
+   Tea Box   (preflop bet)  25% of cap
+   Lay-Up    (flop bet)     50% of cap
+   Approach  (turn bet)     75% of cap
+   Putt      (river bet)   100% of cap
 
    Per-tier caps (default):
      Regular event:        cap =  6 honey
@@ -212,11 +237,11 @@ Wagering is capped per event tier. The cap unlocks gradually across the four str
      Main 72-hole final:   cap = 18 honey
 ```
 
-So in a Major (cap 9): you can bet up to 3 honey on Tea Box, up to 5 on Drive, up to 7 on Hazard, up to 9 on Putt.
+So in a Major (cap 9): you can bet up to 3 honey on Tea Box, up to 5 on Lay-Up, up to 7 on Approach, up to 9 on Putt.
 
 ### 3.7 Folds
 
-Fold rule is **uniform on every street**:
+Fold rule is **uniform on every betting beat**:
 
 ```
    ─── FOLD RESOLUTION ────────────────────────
@@ -433,7 +458,8 @@ Despite the brand name "Stroke," these cash variants borrow only the **scorecard
    │                    SHARED BY ALL MODES                        │
    ├──────────────────────────────────────────────────────────────┤
    │  • Standard Texas Hold'em (2 hole + 5 board cards)            │
-   │  • Five streets: Tea Box, Drive, Hazard, Putt, The Cup        │
+   │  • Eight beats: Tea Box, Fairway, Lay-Up, Hazard, Approach,   │
+   │    Green, Putt, The Cup                                       │
    │  • Hand rankings: HC < Pair < 2P < Trips < Straight <         │
    │    Flush < FH < Quads < SF < RF                               │
    │  • Best 5-card hand from 7 cards wins at showdown             │
@@ -601,7 +627,7 @@ If two or more players are tied after the scheduled holes, a short 2–4 hole ag
 
 ## One-Line Summaries
 
-- **Tour Honey-Stroke**: 5-street Hold'em hole + bounded golf score per hole + honey pot that converts to strokes via round divisor. Two variants differ only on decisive-showdown loser score.
+- **Tour Honey-Stroke** (also marketed as **Sweet Stroke**): 8-beat Hold'em hole (Tea Box → Fairway → Lay-Up → Hazard → Approach → Green → Putt → The Cup) + bounded golf score per hole + honey pot that converts to strokes via round divisor. Two variants (Yellow Jacket / Bumblebee) differ only on decisive-showdown loser score.
 - **Pure NLHE Cash**: Standard online poker, no strokes, no honey, just chip P/L.
 - **YJ Stroke / Bumblebee Stroke Cash**: Pure NLHE wagering + parallel stroke ledger from hand class at showdown, settling at cashout for ±$0.50 per net stroke.
 
