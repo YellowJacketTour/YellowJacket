@@ -26,16 +26,16 @@ The sidebar has 19 tabs covering four product areas:
 - **Single Player** — heads-up vs a Yellow Jacket AI. Pick a skill tier (Beginner / Casual / Pro / Elite), match length, and stroke cap.
 - **Multiplayer · Hot-Seat** — two humans, one device. Pass-the-laptop with a cover overlay so each player only sees their own cards.
 - **Multiplayer · Share-Link** — chess-by-mail. Make your move, copy the encoded URL, send it. Each state carries a checksum so tampering is detectable.
-- **Yellow Jacket Cash** — drop-in cash tables with three sub-variants:
+- **Yellow Jacket Cash** — 6-max drop-in cash tables with three sub-variants:
   - **Pure NLHE** — standard cash poker, Nectar P/L only
   - **YJ Stroke** — adds an integer stroke ledger per hand (Bogey Loss), settles to Nectar at cashout at +$0.50 per net stroke
-  - Multi-table support (up to 6 simultaneous), keyboard shortcuts, time bank, pre-actions, opponent HUD, four-color deck, run-it-twice, all-in confirm
+  - Multi-table support (up to 6 tables open simultaneously), keyboard shortcuts, time bank, pre-actions, opponent HUD, four-color deck, run-it-twice, all-in confirm
 - **Bumblebee Cash** — same engine in pastel-kawaii skin, Honored Loss scoring (loser scores own hand class). Auto-toggles a particle/foley aesthetic when seated.
 
 ### Simulate
 - **Simulator** — run 1 to 100 seasons over a pool of up to 100,000 players. Two modes:
   - *Simple* — pick seasons, click run. Appends to your tour career.
-  - *Advanced* — every slider exposed: profile distribution, event structure, stroke caps, rake tiers, sponsor purses, satellite ladder, late registration, multi-way table size (HU / 6 / 9), CI repeats with mean ± SD aggregation.
+  - *Advanced* — every slider exposed: profile distribution, event structure, stroke caps, rake tiers, sponsor purses, satellite ladder, late registration window, multi-way table size (HU / 4 / 6 / 9), CI repeats with mean ± SD aggregation.
 - Background mode runs while you browse other tabs. Smart-refresh banner detects build-version changes and offers a one-click reload preserving progress.
 
 ### Career
@@ -76,9 +76,9 @@ Cash tables do NOT use honey. Chip stacks at cash are Nectar 1:1. The "YJ Stroke
 
 ## State of the build
 
-- **v69.25** — current head
-- Self-contained: one HTML file, no external dependencies except Three.js (CDN, optional, gracefully degrades) for the optional 3D atmospheric felt layer
-- Save state is browser-local via the unified `yellowJacketSave` key; smart-refresh banner handles version drift
+- **v69.25** — current head (`2026.04.29-v69.25-cash-variant-rename`)
+- Self-contained: one HTML file. Two optional CDN dependencies — Three.js (loaded synchronously for the 3D atmospheric felt) and Rapier WASM (loaded on demand for physics-based chip stacking). Both gracefully degrade if blocked; the 2D felt and tween chips take over.
+- Save state is browser-local via the unified `yellowJacketSave` key; smart-refresh banner handles version drift across deploys
 - CSV export with full config snapshot ships with every simulator run for reproducible audits
 - Calibrated against the audit suite: skill expression confirmed (Spearman ≈ 0.49 in v69.24+), tier ROI separation positive, late-reg domination resolved, multi-way variant inversion fixed
 
@@ -104,6 +104,11 @@ Replace `index.html` in the repo. Pages redeploys within ~60 seconds. The smart-
 - `prefers-reduced-motion` disables all decorative animations (cards still deal, just without the squeeze/flip)
 - All keyboard shortcuts published in `?` help and the command palette (`Ctrl+K`)
 
+## Companion docs
+
+- [`RULES.md`](./RULES.md) — every game mode's rules in plain language with ASCII diagrams. Read this if you want to know exactly what each mode does.
+- The build's in-app **Rulebook**, **Codex**, **Decision Tree**, and **Buzz's Corner** tabs duplicate and extend this content live, with the current config snapshot.
+
 ## License & credits
 
-Single-author project. The bumblebee mascot, the lore, the scoring law, and the audit-driven calibration are original to this build. Three.js is used under its MIT license for the optional 3D scene.
+The bumblebee mascot, the lore, the Honey-Stroke scoring law, and the audit-driven calibration are original to this build. Three.js (MIT) is used for the optional 3D atmospheric scene; Rapier (Apache 2.0) for the optional physics chip stacking. Both are loaded from CDN.
