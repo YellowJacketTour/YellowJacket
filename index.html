@@ -554,6 +554,38 @@
     width: 78px; height: 108px;
     font-size: 1.55em;
   }
+  /* v69.30 — face-down opponent cards rendered in the felt at each occupied
+     non-folded seat. Two card-back rectangles side-by-side with slight
+     overlap, positioned ~30% from the seat toward pot center (between
+     the seat plate and the bet chip stack). */
+  .opp-cards {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    z-index: 12;
+    display: flex;
+    gap: 1px;
+    pointer-events: none;
+  }
+  .opp-cards .pkr-card-back {
+    width: 28px; height: 40px;
+    border-radius: 4px;
+    background:
+      linear-gradient(135deg, rgba(255,215,80,0.10), rgba(0,0,0,0)),
+      conic-gradient(from 0deg at 25% 25%, #4a2010, #2a1006 45%, #4a2010 90%),
+      #2a1006;
+    border: 1px solid rgba(212,160,23,0.45);
+    box-shadow: 0 3px 8px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.15);
+    position: relative;
+    overflow: hidden;
+  }
+  .opp-cards .pkr-card-back::after {
+    content: '◈';
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    color: rgba(201,168,87,0.55);
+    font-size: 14px;
+    text-shadow: 0 0 4px rgba(201,168,87,0.4);
+  }
   /* v69.28 — bet chip stack rendered IN the felt, between each seat and the
      pot. Replaces the prior text-only "200" pill on the seat. Position is
      set inline per seat by the render code (positioned at ~70% from seat
@@ -2114,7 +2146,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.02-v69.29-action-panel-pot-log-polish";
+const APP_VERSION = "2026.05.02-v69.31-hero-hole-card-animation-fix";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -11003,6 +11035,40 @@ function updateCashCardInPlace(t, cardNode) {
       const potVal = Math.round((handState && handState.pot) || 0);
       animatePotValue(potValEl, potVal, 220);
     }
+    // 1b. Community board cards — incremental append (v69.30)
+    // Critical bug fix: prior to v69.30 the incremental update path never
+    // touched the board element, so flop/turn/river never appeared during
+    // a live hand. The hand state had the cards but the DOM didn't.
+    const boardEl = cardNode.querySelector('[data-board]');
+    if (boardEl) {
+      const boardCards = (handState && handState.board) || [];
+      if (!handState._boardShownAt) handState._boardShownAt = [];
+      while (handState._boardShownAt.length < boardCards.length) handState._boardShownAt.push(Date.now());
+      const currentDomCount = boardEl.querySelectorAll('.pkr-card').length;
+      if (currentDomCount < boardCards.length) {
+        // Append the newly-dealt cards with deal animation timing
+        for (let bi = currentDomCount; bi < boardCards.length; bi++) {
+          const showTime = handState._boardShownAt[bi] || Date.now();
+          const sinceShown = Date.now() - showTime;
+          const animate = sinceShown < 500;
+          boardEl.appendChild(renderCard(boardCards[bi], {
+            golden: isGoldenCard(boardCards[bi], handState.goldenCard),
+            dealDelay: animate ? (bi - currentDomCount) * 80 : 0,
+            noAnimate: !animate,
+          }));
+        }
+      } else if (currentDomCount > boardCards.length) {
+        // Board shrank (new hand starting? defensive) — clear and re-render
+        clear(boardEl);
+        boardCards.forEach((c, bi) => {
+          boardEl.appendChild(renderCard(c, {
+            golden: isGoldenCard(c, handState.goldenCard),
+            dealDelay: 0,
+            noAnimate: true,
+          }));
+        });
+      }
+    }
     const potDisplay = cardNode.querySelector('[data-pot]');
     if (potDisplay) {
       potDisplay.setAttribute('aria-label', 'Pot: ' + Math.round((handState && handState.pot) || 0) + ' nectar');
@@ -11052,6 +11118,41 @@ function updateCashCardInPlace(t, cardNode) {
       seatEl.classList.toggle('acting', isActing);
       const isFolded = !!(handState && handState.folded && handState.folded[i]);
       seatEl.classList.toggle('folded', isFolded);
+      // v69.30 — turn-timer ring CSS variable on acting seats
+      if (isActing) {
+        if (seat.playerId === 0 && handState && handState.timeBankExp) {
+          const remaining = Math.max(0, (handState.timeBankExp - Date.now()) / 1000);
+          const pctLeft = Math.max(0, Math.min(100, (remaining / CashLobby.timeBankSec) * 100));
+          seatEl.style.setProperty('--timer-pct', String(pctLeft.toFixed(0)));
+        } else {
+          seatEl.style.setProperty('--timer-pct', '100');
+        }
+      }
+      // v69.30 — opponent face-down cards: show/hide based on folded state
+      const feltParent2 = seatEl.parentNode;
+      let oppCardsEl = feltParent2 ? feltParent2.querySelector('.opp-cards[data-opp-cards-for="' + i + '"]') : null;
+      const shouldShowOppCards = (seat.playerId !== 0 && handState &&
+        handState.phase !== 'complete' && handState.phase !== 'idle' && handState.phase != null &&
+        !isFolded && handState.hole && handState.hole[i]);
+      if (shouldShowOppCards && !oppCardsEl && feltParent2) {
+        // Compute position from the seat's own ellipse coordinates
+        const displayIdx2 = parseInt(seatEl.getAttribute('data-display-idx') || '0', 10);
+        const angle2 = (displayIdx2 / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
+        const x2 = 50 + Math.cos(angle2) * 48;
+        const y2 = 50 + Math.sin(angle2) * 44;
+        const oppX = x2 + 0.28 * (50 - x2);
+        const oppY = y2 + 0.28 * (58 - y2);
+        const newOpp = el('div', {
+          class: 'opp-cards',
+          'data-opp-cards-for': String(i),
+          style: 'left: ' + oppX + '%; top: ' + oppY + '%;',
+        });
+        newOpp.appendChild(el('div', { class: 'pkr-card-back' }));
+        newOpp.appendChild(el('div', { class: 'pkr-card-back' }));
+        feltParent2.appendChild(newOpp);
+      } else if (!shouldShowOppCards && oppCardsEl) {
+        oppCardsEl.remove();
+      }
       // Stroke pill text (variant !== 'pure')
       if (t.variant !== 'pure') {
         const pillEl = seatEl.querySelector('.stroke-pill');
@@ -11302,7 +11403,21 @@ function renderCashTableView(tableId) {
       // HUD/tags/notes/stroke pill all live in a popover triggered by the
       // avatar click. This keeps the seat footprint small (~80x62) so it
       // doesn't overlap the playing area.
-      const initials = (s.name || '?').replace(/[^A-Za-z0-9]/g, '').slice(-2).toUpperCase() || '??';
+      // v69.30 — better initials computation:
+      //   Hero ("You" or playerId 0) → "★"
+      //   Names with digits (e.g. "Player #1687") → last 2 digits ("87")
+      //   Word names ("Bob Smith") → first letter of each word, max 2 ("BS")
+      let initials;
+      if (s.playerId === 0) {
+        initials = '★';
+      } else {
+        const digits = (s.name || '').replace(/[^0-9]/g, '');
+        if (digits.length >= 2) {
+          initials = digits.slice(-2);
+        } else {
+          initials = (s.name || '?').split(/\s+/).map(w => w.charAt(0)).join('').slice(0, 2).toUpperCase() || '??';
+        }
+      }
       const avatarEl = el('div', {
         class: 'seat-avatar' + (i === t.button ? ' is-button' : ''),
         text: initials,
@@ -11315,7 +11430,21 @@ function renderCashTableView(tableId) {
       seatEl.appendChild(avatarEl);
       seatEl.appendChild(el('div', { class: 'seat-name', text: s.name + (i === t.button ? ' ⚪' : '') }));
       seatEl.appendChild(el('div', { class: 'seat-stack', text: Math.round(s.stack).toLocaleString() }));
-      if (handState && handState.actingSeat === i && handState.phase !== 'complete') seatEl.classList.add('acting');
+      if (handState && handState.actingSeat === i && handState.phase !== 'complete') {
+        seatEl.classList.add('acting');
+        // v69.30 — wire the turn-timer ring (CSS conic-gradient .seat.acting::before)
+        // For the hero, the legacy .tb-ring element provides additional countdown
+        // visualization; for opponents, the conic-gradient ring makes their
+        // turn visible. Static at 100% for opponents (visual indicator only);
+        // hero gets a real countdown from the time-bank.
+        if (s.playerId === 0 && handState.timeBankExp) {
+          const remaining = Math.max(0, (handState.timeBankExp - Date.now()) / 1000);
+          const pctLeft = Math.max(0, Math.min(100, (remaining / CashLobby.timeBankSec) * 100));
+          seatEl.style.setProperty('--timer-pct', String(pctLeft.toFixed(0)));
+        } else {
+          seatEl.style.setProperty('--timer-pct', '100');
+        }
+      }
       if (handState && handState.folded && handState.folded[i]) seatEl.classList.add('folded');
       // Stroke pill (HS variants only) — kept on plate as a tiny indicator.
       // Score belongs near the player; not hidden in a popover.
@@ -11419,6 +11548,25 @@ function renderCashTableView(tableId) {
       chipsEl.setAttribute('data-bet-for', String(i));
       felt.appendChild(chipsEl);
     }
+    // v69.30 — face-down opponent cards. Renders for each occupied non-folded
+    // non-hero seat during a live hand. Two card-back rectangles slightly
+    // closer to the seat than the bet chips. Lets the player see at a glance
+    // who is still in the hand.
+    if (s && s.playerId !== 0 && handState &&
+        handState.phase !== 'complete' && handState.phase !== 'idle' && handState.phase != null &&
+        !(handState.folded && handState.folded[i]) &&
+        handState.hole && handState.hole[i]) {
+      const oppX = x + 0.28 * (50 - x);
+      const oppY = y + 0.28 * (58 - y);
+      const oppCards = el('div', {
+        class: 'opp-cards',
+        'data-opp-cards-for': String(i),
+        style: 'left: ' + oppX + '%; top: ' + oppY + '%;',
+      });
+      oppCards.appendChild(el('div', { class: 'pkr-card-back' }));
+      oppCards.appendChild(el('div', { class: 'pkr-card-back' }));
+      felt.appendChild(oppCards);
+    }
   }
   feltWrap.appendChild(felt);
   card.appendChild(feltWrap);
@@ -11434,12 +11582,29 @@ function renderCashTableView(tableId) {
   // .hero-hole-cards CSS class positions them at left:50%, bottom:4% of
   // the felt with explicit z-index 22.
   if (youSeatIdx >= 0 && handState && handState.hole && handState.hole[youSeatIdx]) {
+    // v69.31 — flag-based animation gate. The prior 600ms timing window was
+    // fragile: any full re-mount within the window re-fired the deal/squeeze
+    // animation, AND when the window had elapsed the cards still had the
+    // default .pkr-card cardDeal animation (no `noAnimate` flag was set), so
+    // EVERY full re-mount re-fired the deal animation regardless of timing.
+    // The user reported "cards i was dealt were also glitching with every
+    // log update redealing them animation" — confirmed root cause.
+    //
+    // Fix: animate ONLY when _holeAnimated is unset (first time hole cards
+    // render this hand). On any subsequent full re-mount within the same
+    // hand, _holeAnimated is true → noAnimate flag suppresses the cardDeal
+    // animation entirely. New hand creates fresh handState with no flag,
+    // so the animation fires once on the new deal.
+    const animateDeal = !handState._holeAnimated;
+    handState._holeAnimated = true;
     if (handState._holeShownAt == null) handState._holeShownAt = Date.now();
-    const sinceDeal = Date.now() - handState._holeShownAt;
-    const animateDeal = sinceDeal < 600;
     const yourCards = el('div', { class: 'hero-hole-cards' + (fourColor ? ' fourcolor' : '') });
     handState.hole[youSeatIdx].forEach((c, i) => {
-      const cardEl = renderCard(c, { golden: isGoldenCard(c, golden), dealDelay: animateDeal ? 240 + i * 90 : 0 });
+      const cardEl = renderCard(c, {
+        golden: isGoldenCard(c, golden),
+        dealDelay: animateDeal ? 240 + i * 90 : 0,
+        noAnimate: !animateDeal,  // critical: suppress default cardDeal animation on re-mount
+      });
       if (animateDeal) cardEl.classList.add('squeeze');
       yourCards.appendChild(cardEl);
     });
