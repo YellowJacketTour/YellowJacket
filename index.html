@@ -347,9 +347,22 @@
   .ft-burst {
     will-change: transform, opacity;
   }
+  /* v69.34 — responsive felt sizing with proper aspect ratio.
+     Removed v69.33's min-height: 384px (which broke proportional shrinking
+     below ~700px parent width). Aspect-ratio: 16/9 + a stable parent width
+     is the correct mechanism: width comes from parent, height = width × 9/16.
+     Phase-stability comes from the parent container (cash-table-card) not
+     having any phase-dependent width — verified separately. */
+  .felt-wrap-container {
+    /* Container query target: lets internal elements scale based on the
+       container's inline (horizontal) size, independent of viewport. */
+    container-type: inline-size;
+    container-name: felt-container;
+  }
   .felt-table {
     position: relative;
     aspect-ratio: 16/9;
+    width: 100%;
     overflow: visible;
     isolation: isolate;
     background:
@@ -513,6 +526,38 @@
   .seat .seat-name { font-weight: 600; }
   .seat .seat-stack { font-variant-numeric: tabular-nums; color: var(--gold, #C9A857); margin-top: 2px; }
   .seat .seat-bet { display: inline-block; margin-top: 4px; padding: 1px 6px; background: rgba(201,168,87,0.25); border-radius: 8px; font-variant-numeric: tabular-nums; }
+  /* v69.34 — container queries scale internal elements up at larger felt
+     sizes. The felt container is named "felt-container" and uses
+     container-type: inline-size. Below 800px we use the base sizes; from
+     800px up we scale the pot, hero cards, board cards, and seat avatars
+     proportionally. State-of-the-art responsive design — internal scale
+     reflects the felt's actual rendered width, not the viewport width. */
+  @container felt-container (min-width: 800px) {
+    .pot-display .pot-value { font-size: 44px; }
+    .hero-hole-cards .pkr-card { width: 86px; height: 120px; font-size: 1.7em; }
+    .board-row .pkr-card { width: 56px; height: 78px; }
+    .seat .seat-avatar { width: 36px; height: 36px; font-size: 14px; margin-top: -24px; }
+    .seat .seat-name { font-size: 12px; max-width: 88px; }
+    .seat .seat-stack { font-size: 14px; }
+    .seat { width: 100px; }
+    .opp-cards .pkr-card-back { width: 32px; height: 46px; }
+    .bet-chips .chip-disc { width: 24px; height: 24px; }
+    .bet-chips .bet-amount { font-size: 12px; }
+  }
+  @container felt-container (min-width: 960px) {
+    .pot-display .pot-value { font-size: 50px; }
+    .pot-display .pot-label { font-size: 12px; letter-spacing: 4px; }
+    .hero-hole-cards .pkr-card { width: 96px; height: 134px; font-size: 1.85em; }
+    .board-row .pkr-card { width: 62px; height: 86px; font-size: 1.05em; }
+    .seat .seat-avatar { width: 40px; height: 40px; font-size: 15px; margin-top: -26px; }
+    .seat .seat-name { font-size: 13px; max-width: 96px; }
+    .seat .seat-stack { font-size: 15px; }
+    .seat { width: 108px; padding: 8px 10px 10px; }
+    .opp-cards .pkr-card-back { width: 36px; height: 52px; }
+    .bet-chips .chip-disc { width: 26px; height: 26px; }
+    .bet-chips .bet-amount { font-size: 12.5px; padding: 2px 7px; }
+  }
+
   /* v69.28 — pot moved DOWN to y=58% (below community cards at y=42%).
      This is the proper poker UI hierarchy: community cards above, pot below. */
   .pot-display {
@@ -2153,7 +2198,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.03-v69.32-cardkey-stable-dom";
+const APP_VERSION = "2026.05.03-v69.34-responsive-felt-container-queries";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -11158,20 +11203,17 @@ function updateCashCardInPlace(t, cardNode) {
         const newStack = Math.round(seat.stack).toLocaleString();
         if (stackEl.textContent !== newStack) stackEl.textContent = newStack;
       }
-      // v69.28 — bet pill removed from seat plate; bet is now a separate
-      // .bet-chips element rendered IN the felt between this seat and the
-      // pot. Find the felt parent (the seat's grandparent: seatEl is in
-      // .felt-table) and update or remove the corresponding bet-chips.
+      // v69.28/v69.33 — bet pill removed from seat plate; bet is now a
+      // separate .bet-chips element rendered IN the felt between this seat
+      // and the pot. Updated radii (54, 50) match the v69.33 seat ellipse.
       const feltParent = seatEl.parentNode;
       let chipsEl = feltParent ? feltParent.querySelector('.bet-chips[data-bet-for="' + i + '"]') : null;
       const hasBet = handState && handState.bets && handState.bets[i];
       if (hasBet && feltParent) {
-        // Recompute the chip position for this seat (in case ellipse changed
-        // or hero rotation moved this seat's display position).
         const displayIdx = parseInt(seatEl.getAttribute('data-display-idx') || '0', 10);
         const angle = (displayIdx / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
-        const x = 50 + Math.cos(angle) * 48;
-        const y = 50 + Math.sin(angle) * 44;
+        const x = 50 + Math.cos(angle) * 54;
+        const y = 50 + Math.sin(angle) * 50;
         const chipX = (x + 50) / 2;
         const chipY = (y + 58) / 2;
         const newChipsEl = renderBetChipStack(handState.bets[i]);
@@ -11208,11 +11250,11 @@ function updateCashCardInPlace(t, cardNode) {
         handState.phase !== 'complete' && handState.phase !== 'idle' && handState.phase != null &&
         !isFolded && handState.hole && handState.hole[i]);
       if (shouldShowOppCards && !oppCardsEl && feltParent2) {
-        // Compute position from the seat's own ellipse coordinates
+        // Compute position from the seat's own ellipse coordinates (v69.33 radii)
         const displayIdx2 = parseInt(seatEl.getAttribute('data-display-idx') || '0', 10);
         const angle2 = (displayIdx2 / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
-        const x2 = 50 + Math.cos(angle2) * 48;
-        const y2 = 50 + Math.sin(angle2) * 44;
+        const x2 = 50 + Math.cos(angle2) * 54;
+        const y2 = 50 + Math.sin(angle2) * 50;
         const oppX = x2 + 0.28 * (50 - x2);
         const oppY = y2 + 0.28 * (58 - y2);
         const newOpp = el('div', {
@@ -11373,7 +11415,16 @@ function renderCashTableView(tableId) {
   card.appendChild(head);
 
   // === Felt visualization ====================================================
-  const feltWrap = el('div', { style: 'max-width: 720px; margin: 0 auto;' });
+  // v69.34 — responsive sizing. The container scales from 600px min-width
+  // (cleanly down on tablets) up to 1080px max-width (uses the available
+  // space on wide displays without stretching to absurd dimensions).
+  // Aspect-ratio: 16/9 on .felt-table preserves the felt's shape at every
+  // size. Container queries on .felt-wrap-container scale internal
+  // elements (hero cards, pot font) up at larger felt sizes.
+  const feltWrap = el('div', {
+    class: 'felt-wrap-container',
+    style: 'width: 100%; max-width: clamp(600px, 95vw, 1080px); margin: 0 auto;',
+  });
   const fourColor = !!(TourState.preferences && TourState.preferences.fourColorDeck);
   const felt = el('div', { class: 'felt-table' + (fourColor ? ' fourcolor' : '') });
   // v69.9: gold dashed inner ring layered as separate child (the ::before
@@ -11430,18 +11481,23 @@ function renderCashTableView(tableId) {
   const golden = handState && handState.goldenCard;
   felt.appendChild(board);
   renderCardsStable(board, boardCards, { golden: golden, dealStaggerMs: 80 });
-  // v69.28 — Seats AT THE RIM with hero rotated to bottom-center.
+  // v69.28/v69.33 — Seats AT THE RIM with hero rotated to bottom-center.
   //
-  // Seat positioning ellipse: radius (48, 44). Seats sit at the felt rim,
-  // their avatar circles extending OUTWARD beyond the plate top via
-  // negative margin (per .seat .seat-avatar CSS). This is the proven
-  // pattern from PokerStars/GG/ClubGG/WSOP.
+  // Seat positioning ellipse: radius (54, 50). v69.33 pushed outward from
+  // (48, 44) so seat plates extend OUTSIDE the felt boundary (overflow:visible)
+  // rather than intruding into the central playing area. The user reported
+  // "seats covering important real estate" — these wider radii put the plate
+  // CENTERS at the rim, with their bodies extending outward into the cream
+  // border + beyond. The avatar circles extending upward via margin-top:-22
+  // sit just above the plate, perched on the rim itself.
   //
   // Hero rotation: the hero's data-index is rotated to the bottom-center
   // display position so the hero ALWAYS appears at the bottom of the
-  // visual table regardless of their actual seat number. Other players
-  // rotate around them. This is the universal commercial-poker
-  // convention.
+  // visual table regardless of their actual seat number.
+  const SEAT_RADIUS_X = 54;
+  const SEAT_RADIUS_Y = 50;
+  const POT_CENTER_X = 50;
+  const POT_CENTER_Y = 58;
   const bottomDisplayIdx = Math.floor(t.maxSeats / 2);
   const heroOffset = (youSeatIdx >= 0)
     ? ((bottomDisplayIdx - youSeatIdx + t.maxSeats) % t.maxSeats)
@@ -11449,8 +11505,8 @@ function renderCashTableView(tableId) {
   for (let i = 0; i < t.maxSeats; i++) {
     const displayIdx = (i + heroOffset) % t.maxSeats;
     const angle = (displayIdx / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
-    const x = 50 + Math.cos(angle) * 48;
-    const y = 50 + Math.sin(angle) * 44;
+    const x = 50 + Math.cos(angle) * SEAT_RADIUS_X;
+    const y = 50 + Math.sin(angle) * SEAT_RADIUS_Y;
     const s = t.seats[i];
     const seatEl = el('div', {
       class: 'seat' + (s ? '' : ' empty-seat'),
