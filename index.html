@@ -401,20 +401,48 @@
     border: 1px dashed rgba(212,160,23,0.30);
     border-radius: 50% / 30%; pointer-events: none;
   }
+  /* v69.28 — slim seat plate per the UI_REBUILD_PLAN. Avatar circle + name +
+     stack only. Everything else (HUD, tags, notes, stroke pill) lives in a
+     popover triggered by clicking the avatar. ~80x62px footprint vs the prior
+     ~96x130px, freeing the central felt area for the playing surface. */
   .seat {
     position: absolute; transform: translate(-50%, -50%);
-    z-index: 5; /* sit above the felt and the WebGL canvas, below action panel */
-    width: 96px; padding: 10px 12px;
-    /* Layered seat plate: leather-tone with cream edge + warm bottom shadow */
+    z-index: 10;
+    width: 92px; padding: 6px 8px 8px;
     background:
-      linear-gradient(180deg, rgba(245,240,230,0.06), rgba(0,0,0,0.10)),
-      linear-gradient(180deg, rgba(11,60,46,0.96), rgba(6,30,22,0.98));
+      linear-gradient(180deg, rgba(245,240,230,0.08), rgba(0,0,0,0.12)),
+      linear-gradient(180deg, rgba(11,60,46,0.97), rgba(6,30,22,0.99));
     color: #F5F1E8;
     border: 1px solid rgba(212,160,23,0.55);
-    border-radius: 10px;
+    border-radius: 12px;
     font-family: -apple-system, sans-serif; font-size: 11px; text-align: center;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
     transition: transform 0.22s cubic-bezier(.2,.7,.3,1), box-shadow 0.22s ease;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .seat .seat-avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background:
+      radial-gradient(circle at 35% 30%, rgba(255,255,255,0.18), transparent 55%),
+      linear-gradient(160deg, var(--augusta-gold-hi,#F0C75E) 0%, var(--augusta-gold,#D4A017) 60%, var(--augusta-gold-deep,#8E6E0E) 100%);
+    color: #1B1B1B;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 800;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.30);
+    cursor: pointer; user-select: none;
+    margin-top: -22px; /* avatar sits ABOVE the plate, like a poker chip */
+    border: 2px solid rgba(245,240,230,0.45);
+  }
+  .seat .seat-avatar:hover { transform: scale(1.06); }
+  .seat .seat-name {
+    font-weight: 600; font-size: 11px;
+    max-width: 78px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .seat .seat-stack {
+    font-variant-numeric: tabular-nums;
+    color: var(--augusta-gold-hi,#F0C75E);
+    font-size: 13px; font-weight: 700;
+    margin-top: 1px;
   }
   .seat.acting {
     box-shadow:
@@ -485,47 +513,83 @@
   .seat .seat-name { font-weight: 600; }
   .seat .seat-stack { font-variant-numeric: tabular-nums; color: var(--gold, #C9A857); margin-top: 2px; }
   .seat .seat-bet { display: inline-block; margin-top: 4px; padding: 1px 6px; background: rgba(201,168,87,0.25); border-radius: 8px; font-variant-numeric: tabular-nums; }
+  /* v69.28 — pot moved DOWN to y=58% (below community cards at y=42%).
+     This is the proper poker UI hierarchy: community cards above, pot below. */
   .pot-display {
-    position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%);
+    position: absolute; left: 50%; top: 58%; transform: translate(-50%, -50%);
     color: #F5F1E8; font-family: -apple-system, sans-serif;
     text-align: center; pointer-events: none;
-    /* v69.15: pot rises above seats so it doesn't get covered by the seat
-       at the top of the felt (which is closest to the pot's rendering position) */
-    z-index: 6;
+    z-index: 5;
   }
-  .pot-display .pot-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.7; }
+  .pot-display .pot-label { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; opacity: 0.7; }
   .pot-display .pot-value {
-    font-size: 32px; font-weight: 800;
-    /* Engraved gold metallic text — matches the chip finish */
+    font-size: 38px; font-weight: 800;
     background: linear-gradient(180deg, var(--augusta-gold-hi,#F0C75E) 0%, var(--augusta-gold,#D4A017) 55%, var(--augusta-gold-deep,#8E6E0E) 100%);
     -webkit-background-clip: text; background-clip: text;
     -webkit-text-fill-color: transparent;
-    text-shadow: 0 2px 6px rgba(0,0,0,0.55);
+    text-shadow: 0 2px 8px rgba(0,0,0,0.65);
     font-variant-numeric: tabular-nums; letter-spacing: -0.5px;
     filter: drop-shadow(0 1px 0 rgba(255,255,255,0.20));
   }
+  /* v69.28 — community cards at y=42% (ABOVE the pot at y=58%). This matches
+     state-of-the-art poker UIs: pot is the dead center of the playing area;
+     community cards immediately above; hero hole cards at the bottom. */
   .board-row {
-    position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%);
+    position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
     display: flex; gap: 6px;
-    /* v69.26 — explicit centering + min-width prevents flex-shrink from shifting
-       cards left when sibling elements are present. */
     justify-content: center; align-items: center;
-    min-width: 260px;
+    min-width: 280px;
     z-index: 15;
   }
-  /* v69.26 — hero hole-cards. Mounted INSIDE .felt-table at bottom-center to
-     unify the coordinate system with seats. Larger than community cards
-     (best-in-class hero card sizing per WSOP/PokerStars/GG). */
+  /* v69.28 — hero hole-cards at y=88% inside felt, sized 78x108 (best-in-class
+     hero sizing per WSOP/PokerStars/GG). */
   .hero-hole-cards {
-    position: absolute; left: 50%; bottom: 4%;
+    position: absolute; left: 50%; bottom: 6%;
     transform: translate(-50%, 0);
-    display: flex; gap: 8px;
+    display: flex; gap: 10px;
     z-index: 22;
     pointer-events: none;
   }
   .hero-hole-cards .pkr-card {
-    width: 70px; height: 98px;
-    font-size: 1.45em;
+    width: 78px; height: 108px;
+    font-size: 1.55em;
+  }
+  /* v69.28 — bet chip stack rendered IN the felt, between each seat and the
+     pot. Replaces the prior text-only "200" pill on the seat. Position is
+     set inline per seat by the render code (positioned at ~70% from seat
+     center toward pot center). */
+  .bet-chips {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    z-index: 7;
+    display: flex; flex-direction: column; align-items: center; gap: 0;
+    pointer-events: none;
+    transition: top 0.25s cubic-bezier(0.25,0.1,0.25,1), left 0.25s cubic-bezier(0.25,0.1,0.25,1);
+  }
+  .bet-chips .chip-stack {
+    position: relative; width: 24px; height: 18px;
+  }
+  .bet-chips .chip-disc {
+    position: absolute; left: 0; width: 22px; height: 22px;
+    border-radius: 50%;
+    border: 2px dashed rgba(255,255,255,0.45);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.25);
+  }
+  .bet-chips .chip-disc.tier-1 { background: linear-gradient(180deg, #F5F0E8 0%, #C8C0B0 100%); border-color: rgba(80,60,30,0.45); }
+  .bet-chips .chip-disc.tier-2 { background: linear-gradient(180deg, #E25555 0%, #B83333 100%); }
+  .bet-chips .chip-disc.tier-3 { background: linear-gradient(180deg, #5BAA5B 0%, #3A8A3A 100%); }
+  .bet-chips .chip-disc.tier-4 { background: linear-gradient(180deg, #1F1F1F 0%, #050505 100%); border-color: rgba(212,160,23,0.55); }
+  .bet-chips .chip-disc.tier-5 { background: linear-gradient(180deg, #6B4FA0 0%, #4A3478 100%); border-color: rgba(212,160,23,0.55); }
+  .bet-chips .chip-disc.tier-6 { background: linear-gradient(180deg, var(--augusta-gold-hi,#F0C75E) 0%, var(--augusta-gold-deep,#8E6E0E) 100%); border-color: #fff; }
+  .bet-chips .bet-amount {
+    margin-top: 4px;
+    font-size: 11px; font-weight: 700;
+    color: var(--augusta-gold-hi,#F0C75E);
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.85);
+    background: rgba(0,0,0,0.55);
+    padding: 1px 6px; border-radius: 8px;
+    border: 1px solid rgba(212,160,23,0.45);
   }
   /* v69.26 — explicit z-index stack inside the felt:
        background gradients/anim:  0
@@ -676,11 +740,36 @@
   }
   .cash-table-card { border-radius: 0 12px 12px 12px; }
   .cash-table-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+  /* v69.29 — color-coded action log lines. Bet/raise gold, fold red, call
+     green, check neutral. Also: smooth scroll, larger pad, monospaced. */
   .cash-log {
-    margin-top: 14px; padding: 10px 12px;
-    background: rgba(0,0,0,0.25); border-radius: 8px;
-    font-family: monospace; font-size: 11px; color: #E0C68C;
-    max-height: 200px; overflow-y: auto;
+    margin-top: 14px; padding: 12px 14px;
+    background: rgba(0,0,0,0.30);
+    border-radius: 10px;
+    border: 1px solid rgba(212,160,23,0.20);
+    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', Consolas, monospace;
+    font-size: 11.5px; color: #E0C68C;
+    max-height: 220px; overflow-y: auto;
+    scroll-behavior: smooth;
+    line-height: 1.55;
+  }
+  .cash-log > div {
+    padding: 1px 0;
+    border-bottom: 1px dashed rgba(212,160,23,0.08);
+  }
+  .cash-log > div:last-child { border-bottom: none; }
+  .cash-log .log-bet, .cash-log .log-raise {
+    color: var(--augusta-gold-hi,#F0C75E); font-weight: 600;
+  }
+  .cash-log .log-fold { color: #E08070; }
+  .cash-log .log-call { color: #7ED6A0; }
+  .cash-log .log-check { color: rgba(245,241,232,0.55); }
+  .cash-log .log-win, .cash-log .log-pot {
+    color: #FFE9A8; font-weight: 700;
+    background: rgba(212,160,23,0.10);
+    padding: 2px 6px; border-radius: 4px;
+    margin: 2px 0;
+    display: inline-block;
   }
   .cash-session-row { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
   .cash-stat { padding: 8px 10px; background: rgba(255,255,255,0.06); border-radius: 6px; }
@@ -860,38 +949,65 @@
   .buzz-toast.out { transform: translateX(-50%) translateY(-30px); opacity: 0; }
   .buzz-toast .buzz-emoji { font-size: 24px; }
   /* === Action panel ====================================================== */
+  /* v69.29 — action panel polish. Bigger primary buttons (Fold/Check/Call/Bet),
+     repositioned slider with prominent track + thumb, larger preset chips. */
   .action-panel {
     margin-top: 14px;
-    padding: 14px;
-    background: linear-gradient(180deg, rgba(0,0,0,0.40), rgba(0,0,0,0.25));
-    border: 1px solid rgba(201,168,87,0.35);
-    border-radius: 10px;
-    display: grid; grid-template-columns: auto 1fr; gap: 18px;
+    padding: 16px 18px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.45), rgba(0,0,0,0.28));
+    border: 1px solid rgba(201,168,87,0.45);
+    border-radius: 14px;
+    display: grid; grid-template-columns: auto 1fr; gap: 22px;
     align-items: center;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
   }
-  .action-left { display: flex; gap: 8px; }
-  .action-right { display: flex; flex-direction: column; gap: 8px; }
-  .action-presets { display: flex; gap: 4px; flex-wrap: wrap; }
+  .action-left { display: flex; gap: 10px; }
+  .action-left .btn {
+    min-width: 92px; padding: 12px 18px; font-size: 14px; font-weight: 700;
+    letter-spacing: 0.5px; border-radius: 10px;
+  }
+  .action-right { display: flex; flex-direction: column; gap: 10px; }
+  .action-presets { display: flex; gap: 6px; flex-wrap: wrap; }
   .action-presets .preset-btn {
-    padding: 5px 11px; font-size: 11px; min-width: 38px; font-weight: 700; letter-spacing: 0.4px;
-    /* Brushed-gold preset finish */
+    padding: 7px 14px; font-size: 12px; min-width: 44px; font-weight: 700; letter-spacing: 0.4px;
     background:
-      linear-gradient(180deg, rgba(255,255,255,0.14), rgba(0,0,0,0.06)),
-      linear-gradient(180deg, rgba(212,160,23,0.30) 0%, rgba(142,110,14,0.40) 100%);
+      linear-gradient(180deg, rgba(255,255,255,0.16), rgba(0,0,0,0.06)),
+      linear-gradient(180deg, rgba(212,160,23,0.34) 0%, rgba(142,110,14,0.44) 100%);
     color: var(--augusta-gold-hi,#F0C75E);
     border: 1px solid rgba(212,160,23,0.55);
     text-shadow: 0 1px 1px rgba(0,0,0,0.45);
     box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 2px 4px rgba(0,0,0,0.35);
+    border-radius: 8px;
+    cursor: pointer;
   }
   .action-presets .preset-btn:hover {
-    filter: brightness(1.18) saturate(1.10);
+    filter: brightness(1.20) saturate(1.12);
     border-color: var(--augusta-gold-hi,#F0C75E);
     color: #fff;
   }
-  .action-slider-row { display: flex; gap: 8px; align-items: center; }
-  .action-slider { flex: 1; -webkit-appearance: none; height: 6px; border-radius: 4px; background: rgba(255,255,255,0.10); }
-  .action-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--gold, #C9A857); cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
-  .action-slider::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--gold, #C9A857); cursor: pointer; border: none; }
+  .action-slider-row { display: flex; gap: 10px; align-items: center; }
+  .action-slider {
+    flex: 1; -webkit-appearance: none; height: 8px; border-radius: 6px;
+    background:
+      linear-gradient(90deg, rgba(212,160,23,0.45), rgba(212,160,23,0.18) 60%, rgba(255,255,255,0.10));
+    outline: none;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.55);
+  }
+  .action-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 22px; height: 22px; border-radius: 50%;
+    background:
+      radial-gradient(circle at 35% 28%, var(--augusta-gold-hi,#F0C75E) 0%, var(--augusta-gold,#D4A017) 55%, var(--augusta-gold-deep,#8E6E0E) 100%);
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.55);
+  }
+  .action-slider::-moz-range-thumb {
+    width: 22px; height: 22px; border-radius: 50%;
+    background:
+      radial-gradient(circle at 35% 28%, var(--augusta-gold-hi,#F0C75E) 0%, var(--augusta-gold,#D4A017) 55%, var(--augusta-gold-deep,#8E6E0E) 100%);
+    cursor: pointer; border: 2px solid #fff;
+  }
   .action-amount {
     width: 100px; padding: 6px 8px;
     background: rgba(255,255,255,0.06); color: var(--gold, #C9A857);
@@ -1998,7 +2114,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.02-v69.27-incremental-render";
+const APP_VERSION = "2026.05.02-v69.29-action-panel-pot-log-polish";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -10734,6 +10850,89 @@ function standUpFromTable(tableId, seatIdx) {
   if (av === 'bumblebee') Views.bumblebee(); else Views.tables();
 }
 
+// === v69.29 log-line classifier — color-codes action log entries ==========
+// Inspects a log line and returns a CSS class name based on action keyword.
+// Used by both the full-render log path and updateCashCardInPlace's
+// append-only log path, ensuring consistent styling.
+function classifyCashLogLine(line) {
+  if (!line || typeof line !== 'string') return '';
+  const lower = line.toLowerCase();
+  if (lower.indexOf('wins') !== -1 || lower.indexOf('shows ') !== -1 || lower.indexOf('takes') !== -1) return 'log-win';
+  if (lower.indexOf('raises') !== -1 || lower.indexOf('raise to') !== -1) return 'log-raise';
+  if (lower.indexOf('bets') !== -1) return 'log-bet';
+  if (lower.indexOf('folds') !== -1) return 'log-fold';
+  if (lower.indexOf('calls') !== -1) return 'log-call';
+  if (lower.indexOf('checks') !== -1) return 'log-check';
+  return '';
+}
+
+// === v69.29 pot count-up animation ========================================
+// Animates a pot value from oldVal -> newVal over duration ms via rAF.
+// Pure visual flair; no engine impact. Caller passes the .pot-value text
+// element. If the value is unchanged or smaller (rare; pot collection),
+// snaps without animation.
+function animatePotValue(potValEl, newVal, duration) {
+  if (!potValEl) return;
+  duration = duration || 220;
+  // Parse current value (strip commas + currency glyph)
+  const currentText = potValEl.textContent || '0';
+  const oldVal = parseInt(currentText.replace(/[^0-9-]/g, ''), 10) || 0;
+  if (oldVal === newVal) return;
+  if (newVal < oldVal) {
+    // Pot collection / shrink — snap immediately, no count-up.
+    potValEl.textContent = Math.round(newVal).toLocaleString() + ' ◈';
+    return;
+  }
+  const start = performance.now();
+  function step(now) {
+    const t = Math.min(1, (now - start) / duration);
+    // ease-out cubic
+    const eased = 1 - Math.pow(1 - t, 3);
+    const v = Math.round(oldVal + (newVal - oldVal) * eased);
+    potValEl.textContent = v.toLocaleString() + ' ◈';
+    if (t < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+// === v69.28 chip-stack visualization for bets ==============================
+// Renders a small stack of poker-chip discs scaled to the bet amount, with a
+// labeled value pill below. Replaces the prior text-only "200" seat pill.
+// The chip-stack element is positioned absolutely by the caller; this
+// function only constructs the DOM tree.
+function renderBetChipStack(amount) {
+  const wrap = el('div', { class: 'bet-chips' });
+  const stack = el('div', { class: 'chip-stack' });
+  // Determine the highest-tier chip to show on top, based on bet amount.
+  // Tier scale (matches the .chip-disc.tier-N CSS color tiers):
+  //   tier-1: 1-4    (white)
+  //   tier-2: 5-24   (red)
+  //   tier-3: 25-99  (green)
+  //   tier-4: 100-499 (black)
+  //   tier-5: 500-999 (purple)
+  //   tier-6: 1000+  (gold)
+  let tier = 1;
+  if (amount >= 1000) tier = 6;
+  else if (amount >= 500) tier = 5;
+  else if (amount >= 100) tier = 4;
+  else if (amount >= 25) tier = 3;
+  else if (amount >= 5) tier = 2;
+  // Stack height: 1-5 discs based on amount magnitude (more chips = bigger
+  // bet, capped at 5 for visual cleanliness).
+  const stackHeight = Math.min(5, Math.max(1, Math.floor(Math.log10(Math.max(1, amount))) + 1));
+  for (let i = 0; i < stackHeight; i++) {
+    const disc = el('div', { class: 'chip-disc tier-' + tier });
+    disc.style.bottom = (i * 4) + 'px';
+    stack.appendChild(disc);
+  }
+  // Adjust chip-stack height to fit the visible stack
+  stack.style.height = (18 + (stackHeight - 1) * 4) + 'px';
+  wrap.appendChild(stack);
+  // Amount label below the chip stack
+  wrap.appendChild(el('div', { class: 'bet-amount', text: amount.toLocaleString() }));
+  return wrap;
+}
+
 // === Cash table view incremental-update infrastructure (v69.27) ============
 //
 // Background: prior to v69.27 every player action triggered a full rebuild of
@@ -10783,19 +10982,26 @@ function cashCardSignatureFor(t) {
   const handId = (t.handState && t.handState.handId != null)
     ? String(t.handState.handId)
     : (t.handState && t.handState._holeShownAt != null ? String(t.handState._holeShownAt) : '0');
-  return seatMask + '|' + variant + '|' + blinds + '|' + handId;
+  // v69.28 — include "phase=complete" vs "phase=live" in the signature.
+  // The deal button in the table head section transitions from "Hand in
+  // progress" (live) → "Next hand →" (complete) → (next hand starts and
+  // it disables again). Without this in the signature, the incremental
+  // update path doesn't refresh the head section and the user gets stuck
+  // unable to start the next hand. Two-state coarse-grained inclusion
+  // preserves the optimization for street-by-street action ticks.
+  const phaseClass = (t.handState && t.handState.phase === 'complete') ? 'done' : 'live';
+  return seatMask + '|' + variant + '|' + blinds + '|' + handId + '|' + phaseClass;
 }
 
 function updateCashCardInPlace(t, cardNode) {
   if (!cardNode || !t) return false;
   try {
     const handState = t.handState;
-    // 1. Pot value
+    // 1. Pot value — animated count-up (v69.29)
     const potValEl = cardNode.querySelector('[data-pot] .pot-value');
     if (potValEl) {
-      const potVal = (handState && handState.pot) || 0;
-      const newText = Math.round(potVal).toLocaleString() + ' ◈';
-      if (potValEl.textContent !== newText) potValEl.textContent = newText;
+      const potVal = Math.round((handState && handState.pot) || 0);
+      animatePotValue(potValEl, potVal, 220);
     }
     const potDisplay = cardNode.querySelector('[data-pot]');
     if (potDisplay) {
@@ -10813,24 +11019,33 @@ function updateCashCardInPlace(t, cardNode) {
         const newStack = Math.round(seat.stack).toLocaleString();
         if (stackEl.textContent !== newStack) stackEl.textContent = newStack;
       }
-      // Bet pill — show/hide/update
-      let betEl = seatEl.querySelector('.seat-bet');
+      // v69.28 — bet pill removed from seat plate; bet is now a separate
+      // .bet-chips element rendered IN the felt between this seat and the
+      // pot. Find the felt parent (the seat's grandparent: seatEl is in
+      // .felt-table) and update or remove the corresponding bet-chips.
+      const feltParent = seatEl.parentNode;
+      let chipsEl = feltParent ? feltParent.querySelector('.bet-chips[data-bet-for="' + i + '"]') : null;
       const hasBet = handState && handState.bets && handState.bets[i];
-      if (hasBet) {
-        const betText = handState.bets[i].toLocaleString();
-        if (!betEl) {
-          betEl = el('div', { class: 'seat-bet', text: betText });
-          // Insert after the stack element if possible
-          if (stackEl && stackEl.nextSibling) {
-            seatEl.insertBefore(betEl, stackEl.nextSibling);
-          } else {
-            seatEl.appendChild(betEl);
-          }
-        } else if (betEl.textContent !== betText) {
-          betEl.textContent = betText;
+      if (hasBet && feltParent) {
+        // Recompute the chip position for this seat (in case ellipse changed
+        // or hero rotation moved this seat's display position).
+        const displayIdx = parseInt(seatEl.getAttribute('data-display-idx') || '0', 10);
+        const angle = (displayIdx / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
+        const x = 50 + Math.cos(angle) * 48;
+        const y = 50 + Math.sin(angle) * 44;
+        const chipX = (x + 50) / 2;
+        const chipY = (y + 58) / 2;
+        const newChipsEl = renderBetChipStack(handState.bets[i]);
+        newChipsEl.style.left = chipX + '%';
+        newChipsEl.style.top = chipY + '%';
+        newChipsEl.setAttribute('data-bet-for', String(i));
+        if (chipsEl) {
+          feltParent.replaceChild(newChipsEl, chipsEl);
+        } else {
+          feltParent.appendChild(newChipsEl);
         }
-      } else if (betEl) {
-        betEl.remove();
+      } else if (chipsEl) {
+        chipsEl.remove();
       }
       // Acting / folded class
       const isActing = !!(handState && handState.actingSeat === i && handState.phase !== 'complete');
@@ -10871,12 +11086,12 @@ function updateCashCardInPlace(t, cardNode) {
         if (newLog.length === 0) {
           logEl.appendChild(el('div', { style: 'opacity:0.5;', text: 'Click "Start hand" to deal.' }));
         } else {
-          newLog.forEach(line => logEl.appendChild(el('div', { text: line })));
+          newLog.forEach(line => logEl.appendChild(el('div', { class: classifyCashLogLine(line), text: line })));
         }
       } else {
-        // Append-only: just add the new lines
+        // Append-only: just add the new lines (with v69.29 color-coding class)
         for (let i = existingLen; i < newLog.length; i++) {
-          logEl.appendChild(el('div', { text: newLog[i] }));
+          logEl.appendChild(el('div', { class: classifyCashLogLine(newLog[i]), text: newLog[i] }));
         }
       }
       logEl._yjLastLogLen = newLog.length;
@@ -11050,14 +11265,27 @@ function renderCashTableView(tableId) {
     }));
   });
   felt.appendChild(board);
-  // Seats around the felt.
+  // v69.28 — Seats AT THE RIM with hero rotated to bottom-center.
+  //
+  // Seat positioning ellipse: radius (48, 44). Seats sit at the felt rim,
+  // their avatar circles extending OUTWARD beyond the plate top via
+  // negative margin (per .seat .seat-avatar CSS). This is the proven
+  // pattern from PokerStars/GG/ClubGG/WSOP.
+  //
+  // Hero rotation: the hero's data-index is rotated to the bottom-center
+  // display position so the hero ALWAYS appears at the bottom of the
+  // visual table regardless of their actual seat number. Other players
+  // rotate around them. This is the universal commercial-poker
+  // convention.
+  const bottomDisplayIdx = Math.floor(t.maxSeats / 2);
+  const heroOffset = (youSeatIdx >= 0)
+    ? ((bottomDisplayIdx - youSeatIdx + t.maxSeats) % t.maxSeats)
+    : 0;
   for (let i = 0; i < t.maxSeats; i++) {
-    const angle = (i / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
-    // v69.15: tightened from 44/38 → 40/32 so seats fit comfortably inside the
-    // elliptical felt (border-radius 50%/30%). Previously bottom-right + bottom-
-    // left seats extended past the rounded edge and got visually cropped.
-    const x = 50 + Math.cos(angle) * 40;
-    const y = 50 + Math.sin(angle) * 32;
+    const displayIdx = (i + heroOffset) % t.maxSeats;
+    const angle = (displayIdx / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
+    const x = 50 + Math.cos(angle) * 48;
+    const y = 50 + Math.sin(angle) * 44;
     const s = t.seats[i];
     const seatEl = el('div', {
       class: 'seat' + (s ? '' : ' empty-seat'),
@@ -11067,20 +11295,34 @@ function renderCashTableView(tableId) {
         ? 'Seat ' + (i + 1) + ': ' + s.name + ', stack ' + Math.round(s.stack) + (handState && handState.actingSeat === i ? ', acting' : '') + (handState && handState.folded && handState.folded[i] ? ', folded' : '')
         : 'Open seat ' + (i + 1) + ' (click to sit)',
       'data-seat-idx': String(i),
+      'data-display-idx': String(displayIdx),
     });
     if (s) {
+      // v69.28 — slim seat plate: avatar (circle with initials) + name + stack.
+      // HUD/tags/notes/stroke pill all live in a popover triggered by the
+      // avatar click. This keeps the seat footprint small (~80x62) so it
+      // doesn't overlap the playing area.
+      const initials = (s.name || '?').replace(/[^A-Za-z0-9]/g, '').slice(-2).toUpperCase() || '??';
+      const avatarEl = el('div', {
+        class: 'seat-avatar' + (i === t.button ? ' is-button' : ''),
+        text: initials,
+        title: 'Click for player details',
+      });
+      avatarEl.onclick = (ev) => {
+        ev.stopPropagation();
+        if (s.playerId !== 0 && typeof openTagMenu === 'function') openTagMenu(s.playerId);
+      };
+      seatEl.appendChild(avatarEl);
       seatEl.appendChild(el('div', { class: 'seat-name', text: s.name + (i === t.button ? ' ⚪' : '') }));
       seatEl.appendChild(el('div', { class: 'seat-stack', text: Math.round(s.stack).toLocaleString() }));
-      if (handState && handState.bets && handState.bets[i]) {
-        seatEl.appendChild(el('div', { class: 'seat-bet', text: handState.bets[i].toLocaleString() }));
-      }
       if (handState && handState.actingSeat === i && handState.phase !== 'complete') seatEl.classList.add('acting');
       if (handState && handState.folded && handState.folded[i]) seatEl.classList.add('folded');
-      // Stroke pill (HS variants only).
+      // Stroke pill (HS variants only) — kept on plate as a tiny indicator.
+      // Score belongs near the player; not hidden in a popover.
       if (t.variant !== 'pure') {
         const sl = s.strokeLedger;
         const cls = sl > 0.5 ? 'pos' : sl < -0.5 ? 'neg' : 'flat';
-        const pill = el('div', { class: 'stroke-pill ' + cls, style: 'margin-top:3px;', text: (sl > 0 ? '+' : '') + sl.toFixed(1) + 'σ' });
+        const pill = el('div', { class: 'stroke-pill ' + cls, style: 'margin-top:3px; font-size:9px;', text: (sl > 0 ? '+' : '') + sl.toFixed(1) + 'σ' });
         seatEl.appendChild(pill);
       }
       // HUD pills (opponents only, not yourself).
@@ -11162,6 +11404,21 @@ function renderCashTableView(tableId) {
     // CSS pseudo-element ('OPEN'). The prior 'empty' literal text was
     // floating in the felt area unattached to a recognizable plate.
     felt.appendChild(seatEl);
+
+    // v69.28 — bet chip stack rendered IN the felt, halfway between this
+    // seat and the pot center. Replaces the prior text-only "200" pill
+    // shown on the seat plate. The chip stack is sized + colored by bet
+    // amount per renderBetChipStack().
+    if (s && handState && handState.bets && handState.bets[i]) {
+      // Pot center is at (50%, 58%); seat center at (x, y) computed above.
+      const chipX = (x + 50) / 2;
+      const chipY = (y + 58) / 2;
+      const chipsEl = renderBetChipStack(handState.bets[i]);
+      chipsEl.style.left = chipX + '%';
+      chipsEl.style.top = chipY + '%';
+      chipsEl.setAttribute('data-bet-for', String(i));
+      felt.appendChild(chipsEl);
+    }
   }
   feltWrap.appendChild(felt);
   card.appendChild(feltWrap);
@@ -11203,7 +11460,7 @@ function renderCashTableView(tableId) {
     'data-cash-log': '1',
   });
   const logLines = (handState && handState.log) || [];
-  logLines.forEach(l => logWrap.appendChild(el('div', { text: l })));
+  logLines.forEach(l => logWrap.appendChild(el('div', { class: classifyCashLogLine(l), text: l })));
   if (logLines.length === 0) logWrap.appendChild(el('div', { style: 'opacity:0.5;', text: 'Click "Start hand" to deal.' }));
   card.appendChild(logWrap);
 
