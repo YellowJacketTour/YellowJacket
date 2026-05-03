@@ -2204,7 +2204,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.03-v69.38-cfr-plus-multistreet-abstraction";
+const APP_VERSION = "2026.05.03-v69.39-cfr-stack-fix-rename-iconic-normalize";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -11565,11 +11565,16 @@ function cfrPlusTerminalPayoff(node, heroHand, villainHand, fullBoard, divisor) 
 
 function cfrPlusLegalActions(node) {
   const acts = [];
+  // v69.39 — cap raises per street to prevent infinite raise loops that
+  // blow the JS call stack. PioSolver-style: 3 raises per street max,
+  // then call/fold only.
+  const raisesThisStreet = node.raisesThisStreet || 0;
+  const RAISE_CAP = 3;
   if (node.facingBet > 0) {
     acts.push('fold');
     acts.push('call');
-    if (node.canRaise) acts.push('bet');
-    if (node.canAllin) acts.push('allin');
+    if (node.canRaise && raisesThisStreet < RAISE_CAP) acts.push('bet');
+    if (node.canAllin && raisesThisStreet < RAISE_CAP) acts.push('allin');
   } else {
     acts.push('check');
     if (node.canBet) acts.push('bet');
@@ -11614,6 +11619,7 @@ function cfrPlusApplyAction(node, actor, action) {
     next.facingBet = betSize;
     next.lastActor = actor;
     next.toAct = (actor === 'hero') ? 'villain' : 'hero';
+    next.raisesThisStreet = (node.raisesThisStreet || 0) + 1;  // v69.39
     return next;
   }
   if (action === 'allin') {
@@ -11627,6 +11633,7 @@ function cfrPlusApplyAction(node, actor, action) {
     next.canBet = false;
     next.canRaise = false;
     next.canAllin = false;
+    next.raisesThisStreet = (node.raisesThisStreet || 0) + 1;  // v69.39
     return next;
   }
   return next;
@@ -11675,6 +11682,7 @@ function cfrPlusRecurse(node, heroHand, villainHand, board, divisor,
       contributedHero: node.contributedHero,
       contributedVillain: node.contributedVillain,
       canBet: true, canRaise: true, canAllin: node.canAllin,
+      raisesThisStreet: 0,  // v69.39 — reset raise counter on new street
     };
     return cfrPlusRecurse(nextNode, heroHand, villainHand, newBoard, divisor,
                           regrets, strategySum, reachHero, reachVillain, abstractMode);
@@ -11750,6 +11758,7 @@ function runCFRPlus(heroHand, board, range, pot, divisor, iterations, abstractMo
     toAct: 'hero',
     contributedHero: 0, contributedVillain: 0,
     canBet: true, canRaise: true, canAllin: true,
+    raisesThisStreet: 0,  // v69.39
   };
   const dead = new Set(heroHand.concat(board).map(c => c.rank + c.suit));
   const sampleableRange = range.filter(r =>
@@ -15501,14 +15510,59 @@ function replayIconicHand(hand) {
       });
     }
   }
+  // v69.39 — YJ normalization. The prior code divided the raw WSOP chip
+  // pot (e.g. 1,100,000 chips) by YJ divisors (1/4/9/36), producing
+  // meaningless astronomical numbers (122,222 strokes). WSOP chips are
+  // not YJ honey. The correct mapping projects the WSOP hand onto the
+  // YJ Main Event tournament structure:
+  //   • Cap honey pot at the YJ Main Event finals stroke cap (18 honey)
+  //   • Divide by 72-hole final divisor (36) → max ±0.5 strokes per hand
+  //   • The hand's AGGRESSION ratio (pot/initial-pot) maps to a tier
+  //     within the YJ stroke-cap progressive unlock (25/50/75/100%)
+  // This is what the YJ rules actually do — bound contribution per hand
+  // so no single hand can dominate a 72-hole event score.
+  const initialPot = (h.blinds && h.blinds.sb || 0) + (h.blinds && h.blinds.bb || 0)
+    + (h.players.length * (h.blinds && h.blinds.ante || 0));
+  const aggressionRatio = initialPot > 0 ? Math.min(1, pot / (initialPot * 50)) : 0.5;
+  const YJ_MAIN_FINALS_CAP = 18;
+  const YJ_FINALS_DIVISOR = 36;
+  const YJ_MAJOR_DIVISOR = 9;
+  const YJ_REGULAR_DIVISOR = 4;
+  // Honey contribution under each tournament tier:
+  const yjHoneyAtMain = aggressionRatio * YJ_MAIN_FINALS_CAP;
+  const yjHoneyAtMajor = aggressionRatio * 9;  // major cap = 9 honey
+  const yjHoneyAtRegular = aggressionRatio * 6;  // regular cap = 6 honey
   result.yjOutcome = {
     winner: yjWinner,
     loser: yjLoser,
     handClasses, scores: yjScores,
-    honeyPot: pot,  // for display: the entire chip pot as the YJ honey pot
-    divisorContributions: {
-      d1: pot / 1, d4: pot / 4, d9: pot / 9, d36: pot / 36,
-    },
+    rawWSOPPot: pot,
+    initialPot: initialPot,
+    aggressionRatio: aggressionRatio,  // 0..1 — how aggressively the hand was played
+    // Normalized YJ contributions: per-hand stroke effect under each format
+    yjContributions: [
+      {
+        format: 'Main Event Finals (72-hole)',
+        honeyCap: YJ_MAIN_FINALS_CAP,
+        honeyAtCap: yjHoneyAtMain,
+        divisor: YJ_FINALS_DIVISOR,
+        strokeContribution: yjHoneyAtMain / YJ_FINALS_DIVISOR,
+      },
+      {
+        format: 'Major Event (18-hole)',
+        honeyCap: 9,
+        honeyAtCap: yjHoneyAtMajor,
+        divisor: YJ_MAJOR_DIVISOR,
+        strokeContribution: yjHoneyAtMajor / YJ_MAJOR_DIVISOR,
+      },
+      {
+        format: 'Regular Event (9-hole)',
+        honeyCap: 6,
+        honeyAtCap: yjHoneyAtRegular,
+        divisor: YJ_REGULAR_DIVISOR,
+        strokeContribution: yjHoneyAtRegular / YJ_REGULAR_DIVISOR,
+      },
+    ],
   };
   return result;
 }
@@ -15708,21 +15762,26 @@ Views.iconic = function() {
         yjCol.appendChild(el('div', { style: 'font-size:12px; padding:4px 0;',
           text: p.name + ': ' + (sc >= 0 ? '+' : '') + sc + ' stroke' + (cls ? ' (' + cls + ')' : '') }));
       });
-      yjCol.appendChild(el('h4', { style: 'margin:14px 0 6px 0; font-size:12px; opacity:0.85;', text: 'Honey pot transferred → divided by round-length divisor' }));
+      // v69.39 — normalized YJ tournament-tier contributions (replaces the
+      // prior raw-chips/divisor display which was meaningless because WSOP
+      // chips have no scale relationship to YJ honey).
+      yjCol.appendChild(el('h4', { style: 'margin:14px 0 6px 0; font-size:12px; opacity:0.85;', text: 'Hand normalized to YJ tournament tier' }));
+      yjCol.appendChild(el('div', { style: 'font-size:11px; opacity:0.65; margin-bottom:8px;', text: 'WSOP chip pots don\'t map directly to YJ honey. Instead we normalize: the hand\'s aggression (pot growth × ' + (y.aggressionRatio * 100).toFixed(0) + '% of max) determines what fraction of the YJ stroke cap was contested. The result shows how much this hand would shift a winner\'s scorecard at each YJ tournament tier.' }));
       const dTbl = el('table', { style: 'width:100%; font-size:11.5px; border-collapse:collapse;' });
       const dHeader = el('tr', null);
-      ['Round', 'Divisor', 'Stroke contribution'].forEach(h => dHeader.appendChild(el('th', { style: 'text-align:left; padding:4px 6px; opacity:0.7; font-weight:600;', text: h })));
+      ['YJ Tournament Tier', 'Stroke Cap', 'Honey at cap', 'Divisor', 'Stroke shift'].forEach(h => dHeader.appendChild(el('th', { style: 'text-align:left; padding:4px 6px; opacity:0.7; font-weight:600;', text: h })));
       dTbl.appendChild(dHeader);
-      [['1 hole', 1], ['9 holes', 4], ['18 holes', 9], ['72 holes', 36]].forEach(([label, d]) => {
+      y.yjContributions.forEach(c => {
         const row = el('tr', null);
-        row.appendChild(el('td', { style: 'padding:3px 6px;', text: label }));
-        row.appendChild(el('td', { style: 'padding:3px 6px;', text: String(d) }));
-        const contrib = Math.floor(y.honeyPot / d);
-        row.appendChild(el('td', { style: 'padding:3px 6px; color:var(--augusta-gold-hi,#F0C75E); font-weight:700; font-variant-numeric:tabular-nums;', text: '−' + contrib.toLocaleString() }));
+        row.appendChild(el('td', { style: 'padding:4px 6px;', text: c.format }));
+        row.appendChild(el('td', { style: 'padding:4px 6px; font-variant-numeric:tabular-nums;', text: c.honeyCap + ' honey' }));
+        row.appendChild(el('td', { style: 'padding:4px 6px; font-variant-numeric:tabular-nums;', text: c.honeyAtCap.toFixed(2) }));
+        row.appendChild(el('td', { style: 'padding:4px 6px; font-variant-numeric:tabular-nums;', text: String(c.divisor) }));
+        row.appendChild(el('td', { style: 'padding:4px 6px; color:var(--augusta-gold-hi,#F0C75E); font-weight:700; font-variant-numeric:tabular-nums;', text: '−' + c.strokeContribution.toFixed(3) }));
         dTbl.appendChild(row);
       });
       yjCol.appendChild(dTbl);
-      yjCol.appendChild(el('div', { style: 'margin-top:10px; font-size:11px; opacity:0.65;', text: 'Lower scorecard wins. Honey contribution is subtracted from the winner\'s total stroke count at round end (one division per round).' }));
+      yjCol.appendChild(el('div', { style: 'margin-top:10px; font-size:11px; opacity:0.65;', text: 'Lower scorecard wins. The bounded golf score per hand (above) plus the divisor-normalized honey shift (table) together determine the hand\'s impact on the round total. Even at finals cap a single hand shifts the scorecard by at most ±0.5 strokes — the YJ design property that prevents one big pot from dominating a 72-hole event.' }));
     } else {
       yjCol.appendChild(el('div', { style: 'opacity:0.6;', text: 'Could not compute YJ outcome (incomplete hand data).' }));
     }
@@ -15802,11 +15861,14 @@ Views.gto = function() {
 
   // Solve-mode tab strip (L2.5 EV / L3 CFR / L4 Preflop)
   const modeStrip = el('div', { style: 'display:flex; gap:6px; margin-bottom:14px;' });
+  // v69.39 — descriptive mode names. The "L1..L5" labels in IP/GTO_ROADMAP.md
+  // refer to the five-level engineering roadmap (Level 1 through Level 5);
+  // user-facing labels here are descriptive instead of jargon.
   const modes = [
-    { key: 'ev', label: 'L2.5 — EV', tip: 'Range-aware EV per action (instant)' },
-    { key: 'cfr', label: 'L3 — CFR', tip: 'Vanilla CFR single-street (~10s)' },
-    { key: 'cfrFull', label: 'L3 FULL — Multi-street CFR+', tip: 'CFR+ multi-street with card abstraction (~30-60s)' },
-    { key: 'preflop', label: 'L4 — Preflop', tip: '169-hand preflop heatmap (~5s)' },
+    { key: 'ev',       label: 'EV Analysis',       tip: 'Range-aware EV per action under YJ Honey-Stroke (instant)' },
+    { key: 'cfr',      label: 'Single-Street CFR', tip: 'Vanilla CFR — single street solve (~10s)' },
+    { key: 'cfrFull',  label: 'Full CFR+ Solver',  tip: 'Multi-street CFR+ with card abstraction (~30-60s)' },
+    { key: 'preflop',  label: 'Preflop Range',     tip: '169-hand preflop strategy heatmap (~5s)' },
   ];
   modes.forEach(m => {
     const isActive = GTOState.solveMode === m.key;
@@ -15823,10 +15885,10 @@ Views.gto = function() {
 
   // Honest scope note (mode-specific)
   const noteText = ({
-    ev: 'L2.5 — Range-aware Monte Carlo equity per action under YJ Honey-Stroke payoffs. ~1000 simulations. Lower stroke cost = better.',
-    cfr: 'L3 MVP — Vanilla CFR iterating ' + GTOState.cfrIterations + ' times against sampled villain hands. Single-street model. Use L3 FULL for multi-street + CFR+ + abstraction.',
-    cfrFull: 'L3 FULL — Multi-street CFR+ with chance-node sampling (deals next street\'s card per iteration), CFR+ regret matching+ (faster convergence than vanilla), and optional 9/12-bucket card abstraction. ' + GTOState.cfrFullIterations + ' iterations. Card abstraction: ' + (GTOState.cfrFullAbstract ? 'ON (faster, coarser)' : 'OFF (slower, more precise per-spot)') + '. NOT PioSolver/Libratus quality (those use OCHS bucketing + cluster compute), but a real working CFR+ solver under YJ Honey-Stroke payoffs.',
-    preflop: 'L4 MVP — Preflop solver for HU NLHE. 169 starting hand classes evaluated against villain range; postflop EV proxied via L2 hand-vs-range equity. Output: 13×13 heatmap of optimal preflop action per hand class.',
+    ev: 'EV Analysis — range-aware Monte Carlo equity per action under YJ Honey-Stroke payoffs. ~1000 simulations. Lower stroke cost = better. (Roadmap level 2.5)',
+    cfr: 'Single-Street CFR — vanilla Counterfactual Regret Minimization iterating ' + GTOState.cfrIterations + ' times against sampled villain hands. Single-street model. Use Full CFR+ Solver for multi-street + CFR+ + abstraction. (Roadmap level 3 MVP)',
+    cfrFull: 'Full CFR+ Solver — multi-street tree (preflop→flop→turn→river→showdown) with chance-node card sampling, CFR+ regret matching+ (faster convergence than vanilla), and optional 12-bucket preflop / 9-bucket postflop card abstraction. ' + GTOState.cfrFullIterations + ' iterations. Card abstraction: ' + (GTOState.cfrFullAbstract ? 'ON (faster, coarser)' : 'OFF (slower, more precise per-spot)') + '. Raise cap: 3 per street. Real working CFR+ solver under YJ Honey-Stroke payoffs (NOT PioSolver/Libratus quality — those use OCHS bucketing + cluster compute). (Roadmap level 3 FULL)',
+    preflop: 'Preflop Range Solver — HU NLHE preflop strategy. 169 starting hand classes evaluated against villain range; postflop EV proxied via hand-vs-range equity. Output: 13×13 heatmap of optimal preflop action per hand class. (Roadmap level 4 MVP)',
   })[GTOState.solveMode];
   const note = el('div', { class: 'card', style: 'padding:12px 14px; background:rgba(212,160,23,0.08); border-color:rgba(212,160,23,0.30); margin-bottom:14px;' });
   note.appendChild(el('div', { style: 'font-size:13px; line-height:1.5;', text: noteText }));
