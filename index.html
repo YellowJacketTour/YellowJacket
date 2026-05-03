@@ -655,6 +655,13 @@
   .pkr-card.red { color: #c62828; }
   /* v69.14 — suppress deal/squeeze animations on stable re-renders */
   .pkr-card.no-animate { animation: none !important; }
+  /* v69.32 — defense-in-depth: a card marked data-dealt="true" by the
+     renderCardsStable diff helper has its animation hard-suppressed.
+     Belt + suspenders alongside the .no-animate class so any code path
+     that might toggle classes on a card after its initial deal cannot
+     accidentally re-trigger the cardDeal/squeeze animation. */
+  .pkr-card[data-dealt="true"] { animation: none !important; }
+  .pkr-card[data-dealt="true"].squeeze { animation: none !important; }
   /* 4-color deck (toggleable via TourState.preferences.fourColorDeck). */
   .felt-table.fourcolor .pkr-card.suit-h { color: #c62828; } /* hearts red */
   .felt-table.fourcolor .pkr-card.suit-d { color: #1565C0; } /* diamonds blue */
@@ -2146,7 +2153,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.02-v69.31-hero-hole-card-animation-fix";
+const APP_VERSION = "2026.05.03-v69.32-cardkey-stable-dom";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -10882,6 +10889,92 @@ function standUpFromTable(tableId, seatIdx) {
   if (av === 'bumblebee') Views.bumblebee(); else Views.tables();
 }
 
+// === v69.32 cardKey-based stable-DOM card rendering =======================
+//
+// PROBLEM SOLVED: prior versions re-created card DOM nodes on every full
+// re-mount of the cash table. CSS animations (cardDeal, squeeze, golden
+// shimmer) re-fired on every fresh node insertion. Per-card flags
+// (_holeAnimated, _boardShownAt) suppressed the symptom but were a patch,
+// not a principled fix. If anyone removed a flag or changed a render path,
+// the replay bug returned.
+//
+// PRINCIPLE: the DOM mirrors state. Each card has a stable identity
+// (rank+suit). When rendering a card list, diff existing DOM nodes
+// against the new card list by cardKey:
+//   - Card present in both old and new → reuse existing DOM node (no
+//     animation, position preserved)
+//   - Card present in new but not old → create fresh DOM node (animates
+//     once on insertion)
+//   - Card present in old but not new → remove the node (e.g. fold)
+//
+// This is the standard pattern in commercial poker UIs (PokerStars/GG/
+// ClubGG). It eliminates the entire class of "card animation re-fires
+// on render" bugs without depending on flag bookkeeping.
+
+function cardKey(c) {
+  if (!c) return '?';
+  return (c.rank || '?') + (c.suit || '?');
+}
+
+// Render an array of cards into a container, preserving identity by
+// cardKey. Reuses existing card DOM nodes when present; only creates
+// fresh nodes for cards that weren't in the prior render.
+//
+// container: parent DOM node holding the card divs
+// newCards:  array of card objects in display order
+// opts:      {
+//              isHero        — adds .squeeze class to NEW cards (hero peek
+//                              animation); ignored for reused cards
+//              golden        — golden card object (for goldenness check)
+//              dealStaggerMs — ms between sequential card deal animations
+//                              (only applies to new cards; default 80ms)
+//            }
+function renderCardsStable(container, newCards, opts) {
+  if (!container) return;
+  opts = opts || {};
+  // Build map of existing cards by cardKey
+  const existing = new Map();
+  Array.from(container.children).forEach(child => {
+    const k = child.dataset && child.dataset.cardKey;
+    if (k) existing.set(k, child);
+  });
+  // Track which keys appear in the new list
+  const keepKeys = new Set();
+  let newIdx = 0; // index of newly-created cards in this render pass
+  newCards.forEach((c, i) => {
+    const key = cardKey(c);
+    keepKeys.add(key);
+    let cardEl = existing.get(key);
+    if (cardEl) {
+      // Reuse: just ensure it's at the correct position. appendChild
+      // moves the node if it's already in the DOM, preserving its
+      // animation state and any inline styles.
+      container.appendChild(cardEl);
+    } else {
+      // New card — create with deal animation
+      cardEl = renderCard(c, {
+        golden: opts.golden ? isGoldenCard(c, opts.golden) : false,
+        dealDelay: (opts.dealStaggerMs != null ? opts.dealStaggerMs : 80) * newIdx,
+        noAnimate: false,
+      });
+      cardEl.dataset.cardKey = key;
+      if (opts.isHero) cardEl.classList.add('squeeze');
+      container.appendChild(cardEl);
+      // Mark as dealt — the .pkr-card[data-dealt="true"] CSS rule
+      // suppresses any future animation on this node, defending
+      // against any code path that mutates classes on the card
+      // after the initial deal.
+      dealCard(cardEl);
+      newIdx++;
+    }
+  });
+  // Remove cards that were in the old DOM but not in the new list
+  // (e.g. opponent folds and their face-down placeholders should disappear).
+  existing.forEach((el, k) => {
+    if (!keepKeys.has(k)) el.remove();
+  });
+}
+
 // === v69.29 log-line classifier — color-codes action log entries ==========
 // Inspects a log line and returns a CSS class name based on action keyword.
 // Used by both the full-render log path and updateCashCardInPlace's
@@ -11035,39 +11128,19 @@ function updateCashCardInPlace(t, cardNode) {
       const potVal = Math.round((handState && handState.pot) || 0);
       animatePotValue(potValEl, potVal, 220);
     }
-    // 1b. Community board cards — incremental append (v69.30)
-    // Critical bug fix: prior to v69.30 the incremental update path never
-    // touched the board element, so flop/turn/river never appeared during
-    // a live hand. The hand state had the cards but the DOM didn't.
+    // 1b. Community board cards — v69.32 stable-DOM diff.
+    // Replaces the v69.30 append-only logic with the cardKey diff helper.
+    // Now: existing board cards are reused untouched (no animation
+    // re-fires). Newly-dealt cards (flop/turn/river) get the deal
+    // animation. Cards removed (defensive: e.g. board shrank on new
+    // hand reset) are cleaned up.
     const boardEl = cardNode.querySelector('[data-board]');
     if (boardEl) {
       const boardCards = (handState && handState.board) || [];
-      if (!handState._boardShownAt) handState._boardShownAt = [];
-      while (handState._boardShownAt.length < boardCards.length) handState._boardShownAt.push(Date.now());
-      const currentDomCount = boardEl.querySelectorAll('.pkr-card').length;
-      if (currentDomCount < boardCards.length) {
-        // Append the newly-dealt cards with deal animation timing
-        for (let bi = currentDomCount; bi < boardCards.length; bi++) {
-          const showTime = handState._boardShownAt[bi] || Date.now();
-          const sinceShown = Date.now() - showTime;
-          const animate = sinceShown < 500;
-          boardEl.appendChild(renderCard(boardCards[bi], {
-            golden: isGoldenCard(boardCards[bi], handState.goldenCard),
-            dealDelay: animate ? (bi - currentDomCount) * 80 : 0,
-            noAnimate: !animate,
-          }));
-        }
-      } else if (currentDomCount > boardCards.length) {
-        // Board shrank (new hand starting? defensive) — clear and re-render
-        clear(boardEl);
-        boardCards.forEach((c, bi) => {
-          boardEl.appendChild(renderCard(c, {
-            golden: isGoldenCard(c, handState.goldenCard),
-            dealDelay: 0,
-            noAnimate: true,
-          }));
-        });
-      }
+      renderCardsStable(boardEl, boardCards, {
+        golden: handState && handState.goldenCard,
+        dealStaggerMs: 80,
+      });
     }
     const potDisplay = cardNode.querySelector('[data-pot]');
     if (potDisplay) {
@@ -11344,28 +11417,19 @@ function renderCashTableView(tableId) {
   pot.appendChild(el('div', { class: 'pot-label', text: 'Pot' }));
   pot.appendChild(el('div', { class: 'pot-value', text: Math.round(potVal).toLocaleString() + ' ◈' }));
   felt.appendChild(pot);
-  // Board — staggered reveal (80ms/card per Grok spec).
+  // Board — v69.32 cardKey stable-DOM rendering.
+  // The container is fresh each full re-mount, so on a NEW container the
+  // diff sees no existing cards and creates+animates all current board
+  // cards. On the (rare) case where a previously-mounted board container
+  // is reused, the diff reuses existing card DOM nodes and only animates
+  // newly-dealt cards. The incremental update path also calls
+  // renderCardsStable on the cached board element — flop/turn/river deal
+  // animates only the new card; existing cards stay still.
   const board = el('div', { class: 'board-row', 'data-board': '1' });
   const boardCards = (handState && handState.board) || [];
   const golden = handState && handState.goldenCard;
-  // v69.14 fix: per-card timestamp gating so re-renders don't re-deal already-
-  // shown board cards. handState._boardShownAt is an array of length =
-  // board.length tracking when each card first rendered.
-  if (handState) {
-    if (!handState._boardShownAt) handState._boardShownAt = [];
-    while (handState._boardShownAt.length < boardCards.length) handState._boardShownAt.push(Date.now());
-  }
-  boardCards.forEach((c, i) => {
-    const showTime = handState && handState._boardShownAt ? handState._boardShownAt[i] : 0;
-    const sinceShown = Date.now() - showTime;
-    const animate = sinceShown < 500; // window slightly wider than 240ms+stagger
-    board.appendChild(renderCard(c, {
-      golden: isGoldenCard(c, golden),
-      dealDelay: animate ? i * 80 : 0,
-      noAnimate: !animate,
-    }));
-  });
   felt.appendChild(board);
+  renderCardsStable(board, boardCards, { golden: golden, dealStaggerMs: 80 });
   // v69.28 — Seats AT THE RIM with hero rotated to bottom-center.
   //
   // Seat positioning ellipse: radius (48, 44). Seats sit at the felt rim,
@@ -11582,33 +11646,20 @@ function renderCashTableView(tableId) {
   // .hero-hole-cards CSS class positions them at left:50%, bottom:4% of
   // the felt with explicit z-index 22.
   if (youSeatIdx >= 0 && handState && handState.hole && handState.hole[youSeatIdx]) {
-    // v69.31 — flag-based animation gate. The prior 600ms timing window was
-    // fragile: any full re-mount within the window re-fired the deal/squeeze
-    // animation, AND when the window had elapsed the cards still had the
-    // default .pkr-card cardDeal animation (no `noAnimate` flag was set), so
-    // EVERY full re-mount re-fired the deal animation regardless of timing.
-    // The user reported "cards i was dealt were also glitching with every
-    // log update redealing them animation" — confirmed root cause.
-    //
-    // Fix: animate ONLY when _holeAnimated is unset (first time hole cards
-    // render this hand). On any subsequent full re-mount within the same
-    // hand, _holeAnimated is true → noAnimate flag suppresses the cardDeal
-    // animation entirely. New hand creates fresh handState with no flag,
-    // so the animation fires once on the new deal.
-    const animateDeal = !handState._holeAnimated;
-    handState._holeAnimated = true;
-    if (handState._holeShownAt == null) handState._holeShownAt = Date.now();
+    // v69.32 — cardKey stable-DOM hero hole-cards.
+    // Replaces the v69.31 _holeAnimated flag approach. Now: animation is
+    // controlled purely by DOM identity. If the cards (rank+suit) match
+    // what was already in the container, they are reused untouched. If
+    // they're new (first render of this hand, or new hand), they animate
+    // once. The squeeze class is only applied to NEWLY-CREATED cards
+    // inside renderCardsStable when isHero=true.
     const yourCards = el('div', { class: 'hero-hole-cards' + (fourColor ? ' fourcolor' : '') });
-    handState.hole[youSeatIdx].forEach((c, i) => {
-      const cardEl = renderCard(c, {
-        golden: isGoldenCard(c, golden),
-        dealDelay: animateDeal ? 240 + i * 90 : 0,
-        noAnimate: !animateDeal,  // critical: suppress default cardDeal animation on re-mount
-      });
-      if (animateDeal) cardEl.classList.add('squeeze');
-      yourCards.appendChild(cardEl);
-    });
     felt.appendChild(yourCards);
+    renderCardsStable(yourCards, handState.hole[youSeatIdx], {
+      isHero: true,
+      golden: golden,
+      dealStaggerMs: 90,
+    });
   }
 
   // === Interactive action panel =============================================
