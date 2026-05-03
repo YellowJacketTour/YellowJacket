@@ -425,7 +425,63 @@
     transform: translate(-50%, -50%) scale(1.06);
     border-color: var(--augusta-gold-hi);
   }
-  .seat.folded { opacity: 0.35; filter: grayscale(0.7); }
+  .seat.folded { opacity: 0.35; filter: grayscale(0.7); position: absolute; }
+  /* v69.26 — explicit FOLD overlay on folded seats. Diagonal red banner across
+     the seat plate, replacing the prior opacity-only treatment. Best-in-class
+     poker UIs make folded state unambiguous. */
+  .seat.folded::after {
+    content: 'FOLD';
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) rotate(-15deg);
+    background: rgba(192, 57, 43, 0.85);
+    color: #fff;
+    font-size: 11px; font-weight: 800; letter-spacing: 2px;
+    padding: 2px 12px; border-radius: 3px;
+    pointer-events: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  }
+  /* v69.26 — distinct empty-seat treatment. Smaller, dashed border, dimmer.
+     Players can immediately tell which seats are open. */
+  .seat.empty-seat {
+    opacity: 0.35;
+    transform: translate(-50%, -50%) scale(0.78);
+    border-style: dashed;
+    background: rgba(11, 60, 46, 0.4);
+    box-shadow: none;
+  }
+  .seat.empty-seat::before {
+    content: 'OPEN';
+    display: block;
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: rgba(245, 241, 232, 0.6);
+    text-transform: uppercase;
+  }
+  /* v69.26 — turn-timer ring on the active seat. Conic-gradient creates a
+     countdown wheel; CSS variable --timer-pct (0..100) controls the depletion.
+     Defaults to a static highlight if --timer-pct isn't set. */
+  .seat.acting {
+    --timer-pct: 100;
+  }
+  .seat.acting::before {
+    content: '';
+    position: absolute;
+    inset: -8px;
+    border-radius: 14px;
+    background: conic-gradient(
+      from 270deg,
+      rgba(240, 199, 94, 0.85) 0deg,
+      rgba(240, 199, 94, 0.85) calc(var(--timer-pct) * 3.6deg),
+      rgba(240, 199, 94, 0.10) calc(var(--timer-pct) * 3.6deg),
+      rgba(240, 199, 94, 0.10) 360deg
+    );
+    z-index: -1;
+    pointer-events: none;
+    -webkit-mask: radial-gradient(circle, transparent 65%, black 67%);
+            mask: radial-gradient(circle, transparent 65%, black 67%);
+    transition: background 0.5s linear;
+  }
   .seat .seat-name { font-weight: 600; }
   .seat .seat-stack { font-variant-numeric: tabular-nums; color: var(--gold, #C9A857); margin-top: 2px; }
   .seat .seat-bet { display: inline-block; margin-top: 4px; padding: 1px 6px; background: rgba(201,168,87,0.25); border-radius: 8px; font-variant-numeric: tabular-nums; }
@@ -451,7 +507,37 @@
   .board-row {
     position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%);
     display: flex; gap: 6px;
+    /* v69.26 — explicit centering + min-width prevents flex-shrink from shifting
+       cards left when sibling elements are present. */
+    justify-content: center; align-items: center;
+    min-width: 260px;
+    z-index: 15;
   }
+  /* v69.26 — hero hole-cards. Mounted INSIDE .felt-table at bottom-center to
+     unify the coordinate system with seats. Larger than community cards
+     (best-in-class hero card sizing per WSOP/PokerStars/GG). */
+  .hero-hole-cards {
+    position: absolute; left: 50%; bottom: 4%;
+    transform: translate(-50%, 0);
+    display: flex; gap: 8px;
+    z-index: 22;
+    pointer-events: none;
+  }
+  .hero-hole-cards .pkr-card {
+    width: 70px; height: 98px;
+    font-size: 1.45em;
+  }
+  /* v69.26 — explicit z-index stack inside the felt:
+       background gradients/anim:  0
+       inner gold ring:            1
+       3D scene canvas:            2
+       pot display:                5
+       seats:                     10
+       board cards:               15
+       hero hole-cards:           22
+       action panel overlay:      30
+     This ordering eliminates the z-index ambiguity that caused
+     hero cards / seats / board to collide. */
   .pkr-card {
     width: 46px; height: 64px; border-radius: 5px;
     /* Layered paper: subtle warm-cream base + faint embossed-feel gradient + edge highlight */
@@ -601,7 +687,21 @@
   .cash-stat .lbl { font-size: 10px; opacity: 0.7; }
   .cash-stat .val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
   /* === HUD pills on opponent seats ======================================== */
-  .hud-row { display: flex; gap: 3px; justify-content: center; margin-top: 4px; }
+  /* v69.26 — HUD pills are now collapsed by default into a single "HUD" toggle
+     pill. Click to expand the full V/P/A · 3B/CB · WTSD/W$ row. Reduces
+     default seat content density and prevents seat overflow into pot region. */
+  .hud-row { display: none; gap: 3px; justify-content: center; margin-top: 4px; flex-wrap: wrap; max-width: 110px; }
+  .hud-row.expanded { display: flex; }
+  .hud-toggle {
+    display: inline-block; margin-top: 4px;
+    font-size: 9px; font-weight: 700; letter-spacing: 1.5px;
+    padding: 1px 6px; border-radius: 4px;
+    background: rgba(0,0,0,0.45); color: rgba(245,241,232,0.7);
+    border: 1px solid rgba(212,160,23,0.35);
+    cursor: pointer; user-select: none;
+  }
+  .hud-toggle:hover { background: rgba(212,160,23,0.18); color: #fff; }
+  .hud-toggle.on { background: rgba(212,160,23,0.40); color: #fff; }
   .hud-pill {
     display: inline-block;
     padding: 1px 5px;
@@ -1898,7 +1998,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.04.29-v69.25-cash-variant-rename";
+const APP_VERSION = "2026.05.02-v69.27-incremental-render";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -6275,6 +6375,8 @@ const BuzzKnowledge = {
     { phase: 'tournament', situation: 'Leading finals', tip: 'Protect the lead. Tighten up. Any hole that the opponent wins big forces you to defend harder the next hole.' },
     { phase: 'tournament', situation: 'Day 1 of Grand Finals', tip: 'Conservative play. Just survive the day. Days 2-3 are where skill gaps compound.' },
     { phase: 'tournament', situation: 'Day 4 of Grand Finals', tip: 'Championship day. Trust your reads. Avoid hero-bluffs - most finals are decided by who makes fewer errors, not bigger plays.' },
+    { phase: 'tournament', situation: 'Between events — staying sharp', tip: 'You\'re always on the Tour. Sit a cash table between events to keep your read calibrated. Strokes earned in YJ Stroke or Bumblebee Stroke count toward your Tour reputation; pure NLHE keeps your fundamentals sharp. The Tour isn\'t the calendar — it\'s the world.' },
+    { phase: 'tournament', situation: 'Mindset for the season', tip: 'Every hand is on the Tour. Every table you sit at, the strokes count. Players who treat cash as a separate product and tour events as the only thing that matters leave money on the table. The Tour is everywhere; play accordingly.' },
   ],
   moments: [],
 };
@@ -7553,6 +7655,12 @@ Views.rules = function() {
     'COOLER BONUS. When BOTH players hold full house or better and the gap between them is at most one category, the winner receives an additional −1 stroke. Set-over-set, full-over-full, and quads-over-quads all qualify. Simultaneous full-house-or-better from both players is well under 0.1% of showdowns, so the bonus is genuinely rare and earns lore-moment status when it fires. ' +
     'WHY THE MATRIX. A class-only function scores hands in isolation, ignoring the showdown frame. A flush losing to a full house and a flush losing to a straight would produce the same loser score under a flat bogey rule. The matrix recognises the first as a respected loss, the second as the textbook bogey, and the rare full-over-full as a cooler. Scoring rewards the rarity and quality of every distinct frame, not just the player\'s hand in a vacuum. ' +
     'INTEGERS ONLY. All matrix outputs remain integer per-hole stroke values. The scorecard never shows decimals. Range: −6 (cooler winner) to +2 (weak high-card loser under the casual variant).'
+  ));
+  core.appendChild(rule('You are always on the Tour — the central brand position',
+    'The Tour is not the championship calendar. The Tour is the world. Every hand of Yellow Jacket Tour you play — at a Major, in a Sudden Death playoff, at a 5/10 cash table at 2am, against Buzz in a hot-seat practice match — you are on the Tour. ' +
+    'WHAT THIS MEANS MECHANICALLY. Your stroke history follows you across modes. Tour events feed your career score directly via the round divisor; cash YJ Stroke and Bumblebee Stroke modes feed a parallel ledger that ties your cash play to the same Tour-scoring framework (settled at session end as +$0.50 per net stroke, reflecting the same equity-vs-stroke math as the tour engine). Pure NLHE cash is the one mode without strokes — but you play it inside the Tour ecosystem, with the Tour\'s UI, lore, and reputation mechanics all visible. ' +
+    'WHAT THIS MEANS STRATEGICALLY. Players who treat cash as a separate product from the Tour leave value on the table. Cash play between events keeps your reads calibrated, banks strokes toward your reputation, and earns Nectar that buys your next Tour entry. Conversely, players who only play tour events when titles are on the line miss the cumulative skill-development that consistent Tour-style play (across all formats) compounds. ' +
+    'WHAT THIS MEANS BRAND-WISE. There is no "outside the Tour" mode in this product. The cash tables are the Tour at the cash table. Yellow Jacket Cash and Bumblebee Cash are not separate products; they are the Tour\'s cash format. The variant identity (Yellow Jacket vs Bumblebee) lives across both tour and cash. The lexicon (Tea Box, Fairway, Lay-Up, Hazard, Approach, Green, Putt, The Cup) is the same everywhere. The Tour is the world.'
   ));
   core.appendChild(rule('Game variants — Yellow Jacket vs Bumblebee',
     'The game ships as two variants that share every rule except how a decisive-showdown loser is scored. ' +
@@ -10626,6 +10734,189 @@ function standUpFromTable(tableId, seatIdx) {
   if (av === 'bumblebee') Views.bumblebee(); else Views.tables();
 }
 
+// === Cash table view incremental-update infrastructure (v69.27) ============
+//
+// Background: prior to v69.27 every player action triggered a full rebuild of
+// the cash-table-card DOM. CSS animations restarted, layouts reflowed, the
+// 3D scene re-synced, the action log scroll position was lost. The visible
+// effect was a flash on every action — even though only a few values
+// (pot, one seat's stack/bet, one log line) actually changed.
+//
+// v69.27 fixes this by adding an incremental-update path:
+//   1. Each rendered cash-table-card carries data-cash-card and data-card-sig
+//      attributes identifying the table and the structural shape of the
+//      current state.
+//   2. cashCardSignatureFor(t) computes the structural signature. If the
+//      signature is unchanged between two renders, the card's STRUCTURE is
+//      stable and only DYNAMIC content needs updating.
+//   3. updateCashCardInPlace(t, cardNode) walks the cardNode and updates
+//      only the dynamic elements: pot value, per-seat stack/bet/state,
+//      append-only log lines, action panel content, session stats.
+//   4. renderCashView() detects when an existing card matches the new
+//      signature and, instead of full-rebuild, detaches the card before
+//      clear() and re-attaches it after, then calls
+//      updateCashCardInPlace().
+//
+// Signature components (ANY change forces a full re-mount):
+//   - Table id (different table)
+//   - Variant (pure/yj/bb)
+//   - Blinds (different stake level)
+//   - Seat fill mask (any seat sat down or stood up)
+//   - Hand id (new hand started — board/hole cards changed)
+//
+// Signature does NOT include:
+//   - Phase (preflop/flop/turn/river/showdown) — handled by re-rendering
+//     the action panel container in-place
+//   - Pot, stacks, bets, log — these are the dynamic targets of the update
+//
+// Risk mitigation: the full-render path remains the canonical source of
+// truth. Any signature mismatch falls back to it. updateCashCardInPlace
+// is purely additive — if it fails to find an expected element, the
+// update silently no-ops and the next signature change will trigger a
+// full re-mount.
+
+function cashCardSignatureFor(t) {
+  if (!t) return '';
+  const seatMask = t.seats.map(s => (s ? '1' : '0')).join('');
+  const variant = t.variant || '?';
+  const blinds = (t.smallBlind || 0) + '/' + (t.bigBlind || 0);
+  const handId = (t.handState && t.handState.handId != null)
+    ? String(t.handState.handId)
+    : (t.handState && t.handState._holeShownAt != null ? String(t.handState._holeShownAt) : '0');
+  return seatMask + '|' + variant + '|' + blinds + '|' + handId;
+}
+
+function updateCashCardInPlace(t, cardNode) {
+  if (!cardNode || !t) return false;
+  try {
+    const handState = t.handState;
+    // 1. Pot value
+    const potValEl = cardNode.querySelector('[data-pot] .pot-value');
+    if (potValEl) {
+      const potVal = (handState && handState.pot) || 0;
+      const newText = Math.round(potVal).toLocaleString() + ' ◈';
+      if (potValEl.textContent !== newText) potValEl.textContent = newText;
+    }
+    const potDisplay = cardNode.querySelector('[data-pot]');
+    if (potDisplay) {
+      potDisplay.setAttribute('aria-label', 'Pot: ' + Math.round((handState && handState.pot) || 0) + ' nectar');
+    }
+    // 2. Per-seat dynamic content
+    for (let i = 0; i < t.maxSeats; i++) {
+      const seat = t.seats[i];
+      if (!seat) continue;
+      const seatEl = cardNode.querySelector('[data-seat-idx="' + i + '"]');
+      if (!seatEl) continue;
+      // Stack
+      const stackEl = seatEl.querySelector('.seat-stack');
+      if (stackEl) {
+        const newStack = Math.round(seat.stack).toLocaleString();
+        if (stackEl.textContent !== newStack) stackEl.textContent = newStack;
+      }
+      // Bet pill — show/hide/update
+      let betEl = seatEl.querySelector('.seat-bet');
+      const hasBet = handState && handState.bets && handState.bets[i];
+      if (hasBet) {
+        const betText = handState.bets[i].toLocaleString();
+        if (!betEl) {
+          betEl = el('div', { class: 'seat-bet', text: betText });
+          // Insert after the stack element if possible
+          if (stackEl && stackEl.nextSibling) {
+            seatEl.insertBefore(betEl, stackEl.nextSibling);
+          } else {
+            seatEl.appendChild(betEl);
+          }
+        } else if (betEl.textContent !== betText) {
+          betEl.textContent = betText;
+        }
+      } else if (betEl) {
+        betEl.remove();
+      }
+      // Acting / folded class
+      const isActing = !!(handState && handState.actingSeat === i && handState.phase !== 'complete');
+      seatEl.classList.toggle('acting', isActing);
+      const isFolded = !!(handState && handState.folded && handState.folded[i]);
+      seatEl.classList.toggle('folded', isFolded);
+      // Stroke pill text (variant !== 'pure')
+      if (t.variant !== 'pure') {
+        const pillEl = seatEl.querySelector('.stroke-pill');
+        if (pillEl) {
+          const sl = seat.strokeLedger;
+          const newText = (sl > 0 ? '+' : '') + sl.toFixed(1) + 'σ';
+          if (pillEl.textContent !== newText) pillEl.textContent = newText;
+          const cls = sl > 0.5 ? 'pos' : sl < -0.5 ? 'neg' : 'flat';
+          pillEl.className = 'stroke-pill ' + cls;
+        }
+      }
+      // Aria-label refresh
+      seatEl.setAttribute('aria-label',
+        'Seat ' + (i + 1) + ': ' + seat.name +
+        ', stack ' + Math.round(seat.stack) +
+        (isActing ? ', acting' : '') +
+        (isFolded ? ', folded' : '')
+      );
+    }
+    // 3. Append-only log lines
+    const logEl = cardNode.querySelector('[data-cash-log]');
+    if (logEl) {
+      const existingLen = logEl._yjLastLogLen || 0;
+      const newLog = (handState && handState.log) || [];
+      // If the log shrank or isn't an extension of the previous log,
+      // re-render the whole thing (defensive).
+      const extends_ = newLog.length >= existingLen &&
+        (existingLen === 0 || (logEl._yjLastFirst === newLog[0]));
+      if (!extends_ || existingLen === 0) {
+        // Defensive full re-render of log
+        clear(logEl);
+        if (newLog.length === 0) {
+          logEl.appendChild(el('div', { style: 'opacity:0.5;', text: 'Click "Start hand" to deal.' }));
+        } else {
+          newLog.forEach(line => logEl.appendChild(el('div', { text: line })));
+        }
+      } else {
+        // Append-only: just add the new lines
+        for (let i = existingLen; i < newLog.length; i++) {
+          logEl.appendChild(el('div', { text: newLog[i] }));
+        }
+      }
+      logEl._yjLastLogLen = newLog.length;
+      logEl._yjLastFirst = newLog[0];
+    }
+    // 4. Action panel — re-render in place when phase changes or it's
+    //    the user's turn. The panel is a small contained widget; rebuilding
+    //    it doesn't cause the same flicker as rebuilding the felt.
+    const oldPanel = cardNode.querySelector('.action-panel-wrap');
+    const youSeatIdx = t.seats.findIndex(s => s && s.playerId === 0);
+    const shouldShowPanel = !!(handState && handState.phase === 'awaitingUser' && handState.actingSeat === youSeatIdx);
+    if (shouldShowPanel) {
+      const newPanel = renderActionPanel(t);
+      if (oldPanel) {
+        oldPanel.parentNode.replaceChild(newPanel, oldPanel);
+      } else {
+        // Insert before .cash-log if present, else append
+        const logEl2 = cardNode.querySelector('[data-cash-log]');
+        if (logEl2) {
+          logEl2.parentNode.insertBefore(newPanel, logEl2);
+        } else {
+          cardNode.appendChild(newPanel);
+        }
+      }
+    } else if (oldPanel) {
+      oldPanel.remove();
+    }
+    return true;
+  } catch (err) {
+    // If anything goes wrong during incremental update, return false so the
+    // caller falls back to a full re-mount. This is the safety net that
+    // prevents the optimization from breaking the UI in unexpected
+    // edge cases.
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('updateCashCardInPlace failed; falling back to full re-mount', err);
+    }
+    return false;
+  }
+}
+
 // === Cash table view (felt) =================================================
 function renderCashTableView(tableId) {
   const t = CashLobby.tables.find(x => x.id === tableId);
@@ -10655,7 +10946,16 @@ function renderCashTableView(tableId) {
     wrap.appendChild(strip);
   }
 
-  const card = el('div', { class: 'card cash-table-card', style: 'background: #0d2c20; color: #F5F1E8;' });
+  // v69.27 — data-cash-card attribute lets renderCashView() detect existing
+  // mounted cards and skip the full DOM rebuild. The cardSig is recomputed on
+  // each render; if it matches the current state's signature, the cached card
+  // is detached and re-attached, then incrementally updated.
+  const card = el('div', {
+    class: 'card cash-table-card',
+    style: 'background: #0d2c20; color: #F5F1E8;',
+    'data-cash-card': String(t.id),
+    'data-card-sig': cashCardSignatureFor(t),
+  });
 
   // Golden Lottery ticker — always visible above the felt for ambient FOMO.
   card.appendChild(renderGoldenTicker(t));
@@ -10717,13 +11017,19 @@ function renderCashTableView(tableId) {
     }
   }, 0);
   // Pot.
-  const pot = el('div', { class: 'pot-display' });
+  const pot = el('div', {
+    class: 'pot-display',
+    role: 'status',
+    'aria-live': 'polite',
+    'aria-label': 'Pot: ' + Math.round((handState && handState.pot) || 0) + ' nectar',
+    'data-pot': '1',
+  });
   const potVal = (handState && handState.pot) || 0;
   pot.appendChild(el('div', { class: 'pot-label', text: 'Pot' }));
   pot.appendChild(el('div', { class: 'pot-value', text: Math.round(potVal).toLocaleString() + ' ◈' }));
   felt.appendChild(pot);
   // Board — staggered reveal (80ms/card per Grok spec).
-  const board = el('div', { class: 'board-row' });
+  const board = el('div', { class: 'board-row', 'data-board': '1' });
   const boardCards = (handState && handState.board) || [];
   const golden = handState && handState.goldenCard;
   // v69.14 fix: per-card timestamp gating so re-renders don't re-deal already-
@@ -10753,7 +11059,15 @@ function renderCashTableView(tableId) {
     const x = 50 + Math.cos(angle) * 40;
     const y = 50 + Math.sin(angle) * 32;
     const s = t.seats[i];
-    const seatEl = el('div', { class: 'seat' + (s ? '' : ' empty-seat'), style: 'left: ' + x + '%; top: ' + y + '%;' });
+    const seatEl = el('div', {
+      class: 'seat' + (s ? '' : ' empty-seat'),
+      style: 'left: ' + x + '%; top: ' + y + '%;',
+      role: s ? 'group' : 'button',
+      'aria-label': s
+        ? 'Seat ' + (i + 1) + ': ' + s.name + ', stack ' + Math.round(s.stack) + (handState && handState.actingSeat === i ? ', acting' : '') + (handState && handState.folded && handState.folded[i] ? ', folded' : '')
+        : 'Open seat ' + (i + 1) + ' (click to sit)',
+      'data-seat-idx': String(i),
+    });
     if (s) {
       seatEl.appendChild(el('div', { class: 'seat-name', text: s.name + (i === t.button ? ' ⚪' : '') }));
       seatEl.appendChild(el('div', { class: 'seat-stack', text: Math.round(s.stack).toLocaleString() }));
@@ -10773,7 +11087,21 @@ function renderCashTableView(tableId) {
       if (s.playerId !== 0) {
         const hud = hudPills(s.playerId);
         if (hud) {
-          const hudWrap = el('div', { class: 'hud-row expanded', title: 'V/P/A · 3B/CB · WTSD/W$SD · ' + hud.hands + ' hands' });
+          // v69.26 — HUD pills collapsed-by-default behind a toggle. Reduces
+          // seat content density (was a major contributor to top-seat
+          // overflow into the pot region).
+          const hudToggle = el('span', {
+            class: 'hud-toggle',
+            text: 'HUD',
+            title: 'Click to show V/P/A · 3B/CB · WTSD/W$SD · ' + hud.hands + ' hands',
+          });
+          const hudWrap = el('div', { class: 'hud-row', title: 'V/P/A · 3B/CB · WTSD/W$SD · ' + hud.hands + ' hands' });
+          hudToggle.onclick = (e) => {
+            e.stopPropagation();
+            hudWrap.classList.toggle('expanded');
+            hudToggle.classList.toggle('on');
+          };
+          seatEl.appendChild(hudToggle);
           hudWrap.appendChild(el('span', { class: 'hud-pill', title: 'VPIP — voluntarily put $ in pot %', text: 'V' + Math.round(hud.vpip * 100) }));
           hudWrap.appendChild(el('span', { class: 'hud-pill', title: 'PFR — preflop raise %', text: 'P' + Math.round(hud.pfr * 100) }));
           hudWrap.appendChild(el('span', { class: 'hud-pill', title: 'AF — postflop aggression', text: 'A' + hud.af.toFixed(1) }));
@@ -10829,9 +11157,10 @@ function renderCashTableView(tableId) {
         ring.style.background = 'conic-gradient(var(--gold,#C9A857) ' + (pctLeft * 360).toFixed(0) + 'deg, rgba(0,0,0,0.4) 0)';
         seatEl.appendChild(ring);
       }
-    } else {
-      seatEl.appendChild(el('div', { style: 'opacity:0.5; font-size:10px;', text: 'empty' }));
     }
+    // v69.26 — empty-seat label is now provided by the .empty-seat::before
+    // CSS pseudo-element ('OPEN'). The prior 'empty' literal text was
+    // floating in the felt area unattached to a recognizable plate.
     felt.appendChild(seatEl);
   }
   feltWrap.appendChild(felt);
@@ -10842,17 +11171,22 @@ function renderCashTableView(tableId) {
   // window (~600ms after hole cards arrived). Subsequent re-renders during
   // the same hand (action ticks, log updates, time-bank refreshes) skip the
   // animation, so the cards stay still instead of re-squeezing on every event.
+  // v69.26 fix: hero hole-cards now mounted INSIDE .felt-table (not the
+  // outer cash-table-card), unifying the coordinate system with seats and
+  // eliminating the bottom-center collision with the hero seat. The
+  // .hero-hole-cards CSS class positions them at left:50%, bottom:4% of
+  // the felt with explicit z-index 22.
   if (youSeatIdx >= 0 && handState && handState.hole && handState.hole[youSeatIdx]) {
     if (handState._holeShownAt == null) handState._holeShownAt = Date.now();
     const sinceDeal = Date.now() - handState._holeShownAt;
     const animateDeal = sinceDeal < 600;
-    const yourCards = el('div', { class: 'hole-cards' + (fourColor ? ' fourcolor' : ''), style: 'display:flex; gap:8px; justify-content:center; margin-top: 12px;' });
+    const yourCards = el('div', { class: 'hero-hole-cards' + (fourColor ? ' fourcolor' : '') });
     handState.hole[youSeatIdx].forEach((c, i) => {
       const cardEl = renderCard(c, { golden: isGoldenCard(c, golden), dealDelay: animateDeal ? 240 + i * 90 : 0 });
       if (animateDeal) cardEl.classList.add('squeeze');
       yourCards.appendChild(cardEl);
     });
-    card.appendChild(yourCards);
+    felt.appendChild(yourCards);
   }
 
   // === Interactive action panel =============================================
@@ -10861,7 +11195,13 @@ function renderCashTableView(tableId) {
   }
 
   // === Action log ===========================================================
-  const logWrap = el('div', { class: 'cash-log' });
+  const logWrap = el('div', {
+    class: 'cash-log',
+    role: 'log',
+    'aria-live': 'polite',
+    'aria-label': 'Hand action log',
+    'data-cash-log': '1',
+  });
   const logLines = (handState && handState.log) || [];
   logLines.forEach(l => logWrap.appendChild(el('div', { text: l })));
   if (logLines.length === 0) logWrap.appendChild(el('div', { style: 'opacity:0.5;', text: 'Click "Start hand" to deal.' }));
@@ -12994,6 +13334,12 @@ Views.bankroll = function() {
 // app style. Scroll position is preserved across re-renders so action
 // clicks don't bounce you to the top.
 const _yjLastScroll = { y: 0 };
+// v69.27 — module-level cache for the focused cash-table-card. Held across
+// renderCashView() calls so that incremental updates can detach + re-attach
+// + delta-update the same DOM node (preserving CSS animations, scroll, 3D
+// scene state). Cleared when no table is focused or signature mismatch
+// triggers a re-mount.
+let _yjCashedFocusedCard = null;
 function renderCashView(gameMode) {
   bindCashKeyboard();
   const viewName = gameMode === 'bb' ? 'bumblebee' : 'tables';
@@ -13001,6 +13347,13 @@ function renderCashView(gameMode) {
   if (!view) return;
   // Save scroll before clear; restore after rebuild.
   _yjLastScroll.y = window.scrollY || document.documentElement.scrollTop || 0;
+  // v69.26 — preserve action-log scroll position across re-renders. Without
+  // this the log jumps to top on every player action, losing context.
+  const _yjOldLog = view.querySelector('.cash-log');
+  const _yjLogScroll = _yjOldLog ? _yjOldLog.scrollTop : 0;
+  const _yjLogAtBottom = _yjOldLog
+    ? (_yjOldLog.scrollTop + _yjOldLog.clientHeight >= _yjOldLog.scrollHeight - 4)
+    : true;
   clear(view);
   ensureCashLobby();
   const isBB = gameMode === 'bb';
@@ -13053,7 +13406,67 @@ function renderCashView(gameMode) {
   // the focused table — the felt becomes the primary content. WSOP-app feel.
   const showLobby = !hasSeated || CashLobby.lobbyHidden === false;
   if (hasSeated) {
-    view.appendChild(renderCashTableView(CashLobby.focusedTableId));
+    // v69.27 — incremental-update path. Detect if a previously-mounted
+    // cash-table-card for the focused table is still in the DOM with a
+    // matching signature. If yes, detach it (preserving its CSS animation
+    // state, scroll positions, etc.), append it to the new view, and
+    // call updateCashCardInPlace() to apply only the dynamic deltas.
+    // If signatures don't match (new hand, new seat, etc.), fall back
+    // to a full mount via renderCashTableView().
+    const focusedT = CashLobby.tables.find(x => x.id === CashLobby.focusedTableId);
+    if (focusedT && _yjCashedFocusedCard && _yjCashedFocusedCard.dataset.cashCard === String(focusedT.id)) {
+      const newSig = cashCardSignatureFor(focusedT);
+      const oldSig = _yjCashedFocusedCard.dataset.cardSig;
+      if (oldSig === newSig) {
+        // Signature stable — incremental update is safe.
+        const wrap = el('div', { style: 'margin-top: 18px;' });
+        // Re-render the multi-table tab strip (cheap; ~6 buttons max). Tab
+        // strip state changes whenever the active-tables list changes, so
+        // it doesn't fit the cache pattern; just rebuild it each time.
+        if (CashLobby.activeTableIds.length > 1) {
+          const strip = el('div', { class: 'cash-tab-strip' });
+          CashLobby.activeTableIds.forEach(id => {
+            const tt = CashLobby.tables.find(x => x.id === id); if (!tt) return;
+            const tab = el('button', {
+              class: 'cash-tab' + (id === CashLobby.focusedTableId ? ' active' : ''),
+              onclick: () => { CashLobby.focusedTableId = id; refreshCashView(); },
+            });
+            tab.appendChild(el('span', { text: tt.smallBlind + '/' + tt.bigBlind }));
+            tab.appendChild(el('span', { class: 'cash-tab-variant', text: tt.variant === 'pure' ? 'NLHE' : tt.variant === 'yj' ? 'YJ-Stroke' : 'BB-Stroke' }));
+            const tts = tt.handState;
+            if (tts && tts.phase === 'awaitingUser' && tts.actingSeat != null && tt.seats[tts.actingSeat] && tt.seats[tts.actingSeat].playerId === 0 && id !== CashLobby.focusedTableId) {
+              tab.appendChild(el('span', { class: 'cash-tab-dot', title: 'Your turn' }));
+            }
+            strip.appendChild(tab);
+          });
+          wrap.appendChild(strip);
+        }
+        wrap.appendChild(_yjCashedFocusedCard);
+        view.appendChild(wrap);
+        const ok = updateCashCardInPlace(focusedT, _yjCashedFocusedCard);
+        if (!ok) {
+          // Defensive: if incremental update failed, drop the cache and
+          // re-render fresh on the next refresh by setting a flag.
+          _yjCashedFocusedCard = null;
+        }
+        // Also update the data-card-sig in case any side-effect mutations
+        // changed sub-state (e.g., timeBank ticking).
+        _yjCashedFocusedCard && (_yjCashedFocusedCard.dataset.cardSig = newSig);
+      } else {
+        // Signature mismatch — full re-mount.
+        const fresh = renderCashTableView(CashLobby.focusedTableId);
+        view.appendChild(fresh);
+        _yjCashedFocusedCard = fresh.querySelector('[data-cash-card]');
+      }
+    } else {
+      // No cached card or different table — full mount.
+      const fresh = renderCashTableView(CashLobby.focusedTableId);
+      view.appendChild(fresh);
+      _yjCashedFocusedCard = fresh.querySelector('[data-cash-card]');
+    }
+  } else {
+    // Not seated — clear the cache so a future seat triggers a fresh mount.
+    _yjCashedFocusedCard = null;
   }
 
   // === LOBBY ============================================================
@@ -13112,9 +13525,9 @@ function renderCashView(gameMode) {
 
     const hint = el('div', { class: 'ui-sans', style: 'font-size:11px; opacity:0.65; margin-top:14px; line-height:1.5;' });
     if (isBB) {
-      hint.innerHTML = '<strong>Bumblebee Cash.</strong> The casual league. Showdown losers score their own hand class (-5..+2) — flush-loser still posts -1 birdie. Gentler ledger, golf-realistic scoring band. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Dual ledger: Nectar P/L (chip stack) + per-hand stroke score (integer, from hand class), settled at session end as +$0.50 per net stroke.';
+      hint.innerHTML = '<strong>Bumblebee Cash — the Tour at the cash table, gentler side.</strong> You\'re still on the Tour; you\'re just playing a cash format inside it. Showdown losers score their own hand class (-5..+2) — flush-loser still posts -1 birdie. Gentler ledger, golf-realistic scoring band. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Dual ledger: Nectar P/L (chip stack) + per-hand stroke score (integer, from hand class), settled at session end as +$0.50 per net stroke. Strokes you bank here count toward your Tour reputation.';
     } else {
-      hint.innerHTML = '<strong>Yellow Jacket Cash.</strong> <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker). <strong>YJ Stroke</strong> adds a parallel integer stroke score per hand (from hand class) with Bogey Loss (loser fixed +1) — sharper skill expression, settled at session end as +$0.50 per net stroke. Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a>.';
+      hint.innerHTML = '<strong>Yellow Jacket Cash — the Tour at the cash table.</strong> You\'re still on the Tour; cash play is just a different format within it. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker, played inside the Tour ecosystem). <strong>YJ Stroke</strong> adds a parallel integer stroke score per hand (from hand class) with Bogey Loss (loser fixed +1) — sharper skill expression, settled at session end as +$0.50 per net stroke. Strokes earned here count toward your Tour reputation. Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a>.';
     }
     lobby.appendChild(hint);
     view.appendChild(lobby);
@@ -13123,6 +13536,13 @@ function renderCashView(gameMode) {
   // Restore scroll position so action clicks don't bounce to top.
   setTimeout(() => {
     if (_yjLastScroll.y > 0) window.scrollTo({ top: _yjLastScroll.y, behavior: 'instant' });
+    // v69.26 — restore the action log's scrollTop. If the user was at the
+    // bottom of the log before the re-render, snap to the new bottom so they
+    // see the freshest action; otherwise preserve their explicit scroll spot.
+    const _yjNewLog = view.querySelector('.cash-log');
+    if (_yjNewLog) {
+      _yjNewLog.scrollTop = _yjLogAtBottom ? _yjNewLog.scrollHeight : _yjLogScroll;
+    }
   }, 0);
 
   // Time-bank tick.
