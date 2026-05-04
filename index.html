@@ -15689,10 +15689,15 @@ function spectatorBuildNarrative(ev, evType, evName) {
 function spectatorBroadcastTick() {
   const b = SpectatorState.broadcast;
   if (!b || !b.playing || SpectatorState.paused) return;
-  if (b.cursor >= b.narrative.length) { b.playing = false; return; }
+  if (b.cursor >= b.narrative.length) {
+    b.playing = false;
+    refreshSpectatorBroadcastUI();
+    return;
+  }
   const line = b.narrative[b.cursor];
   spectatorPushLog(null, line.line, line.kind);
   b.cursor++;
+  refreshSpectatorBroadcastUI();
   // Pacing: champion line gets a long beat; finals/cut moderate; others quick
   let nextDelayMs = 900;
   if (line.kind === 'champion') nextDelayMs = 4000;
@@ -16297,14 +16302,60 @@ function refreshSpectatorStats() {
 }
 
 // Engine notify hook — called from cash engine sites that mutate state.
-// Cheap when the spectator view isn't active.
+// Cheap when the spectator view isn't active. With N parallel tables all
+// ticking at the AI cadence (~600ms), we cannot afford to fully re-render
+// the heavy featured felt on every tick, so:
+//   - Featured re-render only when this is the featured table
+//   - Grid + log + stats throttled to once per ~250ms
+//   - Director check is cheap, runs every call
+let _spectatorThrottleAt = 0;
+let _spectatorThrottleQueued = null;
+let _spectatorFeaturedAt = 0;
+let _spectatorFeaturedQueued = null;
 function notifySpectatorTick(t) {
   if (!t || !t.spectatorMode) return;
   if (document.body.dataset.activeView !== 'spectator') return;
   try { spectatorHarvestTableLogs(); } catch (_) {}
   try { spectatorDirectorTick(); } catch (_) {}
+  if (t.id === SpectatorState.featuredTableId) {
+    const now = Date.now();
+    if (now - _spectatorFeaturedAt > 400) {
+      _spectatorFeaturedAt = now;
+      try { refreshSpectatorFeatured(); } catch (_) {}
+    } else if (!_spectatorFeaturedQueued) {
+      _spectatorFeaturedQueued = setTimeout(() => {
+        _spectatorFeaturedQueued = null;
+        _spectatorFeaturedAt = Date.now();
+        if (document.body.dataset.activeView !== 'spectator') return;
+        try { refreshSpectatorFeatured(); } catch (_) {}
+      }, 410);
+    }
+  }
+  const now = Date.now();
+  if (now - _spectatorThrottleAt > 250) {
+    _spectatorThrottleAt = now;
+    try { refreshSpectatorGrid(); } catch (_) {}
+    try { refreshSpectatorLog(); } catch (_) {}
+    try { refreshSpectatorStats(); } catch (_) {}
+  } else if (!_spectatorThrottleQueued) {
+    // Coalesce: ensure a trailing refresh so the last update isn't dropped
+    _spectatorThrottleQueued = setTimeout(() => {
+      _spectatorThrottleQueued = null;
+      _spectatorThrottleAt = Date.now();
+      if (document.body.dataset.activeView !== 'spectator') return;
+      try { refreshSpectatorGrid(); } catch (_) {}
+      try { refreshSpectatorLog(); } catch (_) {}
+      try { refreshSpectatorStats(); } catch (_) {}
+    }, 260);
+  }
+}
+
+// Broadcast mode has no cash-engine ticks, so its narrative loop must
+// drive its own UI refresh. Called from spectatorBroadcastTick after
+// each beat is appended to the log.
+function refreshSpectatorBroadcastUI() {
+  if (document.body.dataset.activeView !== 'spectator') return;
   try { refreshSpectatorFeatured(); } catch (_) {}
-  try { refreshSpectatorGrid(); } catch (_) {}
   try { refreshSpectatorLog(); } catch (_) {}
   try { refreshSpectatorStats(); } catch (_) {}
 }
