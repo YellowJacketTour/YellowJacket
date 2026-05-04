@@ -332,6 +332,7 @@
   [data-view="economy"],
   [data-view="history"],
   [data-view="iconic"],
+  [data-view="spectator"],
   [data-view="gto"],
   [data-view="hof"],
   [data-view="analytics"],
@@ -2140,6 +2141,7 @@
       <a href="#economy" data-route="economy"><span class="ico">📈</span> Economy</a>
       <a href="#history" data-route="history"><span class="ico">⏪</span> Hand History</a>
       <a href="#iconic" data-route="iconic"><span class="ico">🎬</span> Iconic Hands</a>
+      <a href="#spectator" data-route="spectator"><span class="ico">🔭</span> Spectator</a>
       <a href="#gto" data-route="gto"><span class="ico">🧮</span> GTO Trainer</a>
       <a href="#hof" data-route="hof"><span class="ico">🏅</span> Hall of Fame</a>
       <a href="#analytics" data-route="analytics"><span class="ico">📊</span> Analytics</a>
@@ -2173,6 +2175,7 @@
     <div class="view" data-view="economy"></div>
     <div class="view" data-view="history"></div>
     <div class="view" data-view="iconic"></div>
+    <div class="view" data-view="spectator"></div>
     <div class="view" data-view="gto"></div>
     <div class="view" data-view="hof"></div>
     <div class="view" data-view="analytics"></div>
@@ -2204,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.03-v69.42-single-street-cfr-check-loop-fix";
+const APP_VERSION = "2026.05.03-v69.43-spectator-mode";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -6647,7 +6650,7 @@ function onHashChange() {
     location.replace(location.pathname + location.search + '#simulator?mode=' + mode + extra);
     return;
   }
-  const valid = ['dashboard','simulator','events','players','bankroll','tables','bumblebee','staking','economy','history','iconic','gto','hof','analytics','compare','rules','buzz','solo','multiplayer','decisiontree','codex'];
+  const valid = ['dashboard','simulator','events','players','bankroll','tables','bumblebee','spectator','staking','economy','history','iconic','gto','hof','analytics','compare','rules','buzz','solo','multiplayer','decisiontree','codex'];
   const name = valid.indexOf(parsed.view) !== -1 ? parsed.view : 'dashboard';
   document.body.dataset.activeView = name;
   renderNavBankroll();
@@ -8817,6 +8820,7 @@ function renderCmdResults(query) {
     { cat: 'go', label: '👤 Players', action: () => { location.hash = '#players'; closeCmd(); } },
     { cat: 'go', label: '🏅 Hall of Fame', action: () => { location.hash = '#hof'; closeCmd(); } },
     { cat: 'go', label: '🎬 Iconic Hands (replay famous WSOP hands under YJ scoring)', action: () => { location.hash = '#iconic'; closeCmd(); } },
+    { cat: 'go', label: '🔭 Spectator (watch AI bots play cash tables)', action: () => { location.hash = '#spectator'; closeCmd(); } },
     { cat: 'go', label: '🧮 GTO Trainer (analyze a spot under YJ Honey-Stroke payoffs)', action: () => { location.hash = '#gto'; closeCmd(); } },
     { cat: 'go', label: '📊 Analytics', action: () => { location.hash = '#analytics'; closeCmd(); } },
     { cat: 'go', label: '🆚 Compare', action: () => { location.hash = '#compare'; closeCmd(); } },
@@ -13286,6 +13290,7 @@ function startCashHand(t) {
     }
   } catch (_) {}
   if (isCashViewActive()) refreshCashView();
+  notifySpectatorTick(t);
   scheduleCashTick(t);
   foley('card-deal');
 }
@@ -13358,7 +13363,7 @@ function advanceCashHand(t) {
   const callAmt = h.currentBet - h.bets[h.actingSeat];
   const action = decideCashAction(seat, h.hole[h.actingSeat], h.board, callAmt, h.currentBet, t.bigBlind, h.pot, t.variant, h.street);
   applyCashAction(t, h.actingSeat, action);
-  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView();
+  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView(); notifySpectatorTick(t);
   scheduleCashTick(t);
 }
 
@@ -13500,7 +13505,7 @@ function runItTwiceResolve(t, h, stillIn) {
   h.phase = 'complete';
   h.winnerIdx = r1.winnerIdx; // arbitrary primary
   h.winnerHandClass = 'RIT';
-  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView();
+  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView(); notifySpectatorTick(t);
   foley('win-fanfare');
   renderNavBankroll();
 }
@@ -13724,7 +13729,28 @@ function resolveCashHand(t) {
   h.phase = 'complete';
   h.winnerIdx = winnerIdx;
   h.winnerHandClass = winnerHandClass;
-  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView();
+  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView(); notifySpectatorTick(t);
+  // v69.43 — spectator mode: auto-deal the next hand after a brief delay
+  // so the user can watch the engine play continuously. Only fires for
+  // tables flagged spectatorMode (no human player). Configurable delay
+  // via SpectatorState.handDelayMs (default 2500).
+  if (t.spectatorMode) {
+    try {
+      const s = SpectatorState.stats;
+      s.handsPlayed++;
+      if (rakedPot > s.biggestPot) { s.biggestPot = rakedPot; s.biggestPotHand = s.handsPlayed; }
+      if (isShowdown) s.showdownsCount++; else s.foldEndCount++;
+      if (winnerIdx != null && s.seatWins[winnerIdx] != null) s.seatWins[winnerIdx]++;
+      if (typeof refreshSpectatorStats === 'function') refreshSpectatorStats();
+    } catch (_) {}
+    if (!SpectatorState.paused) {
+      setTimeout(() => {
+        if (t.spectatorMode && !SpectatorState.paused) {
+          try { startCashHand(t); } catch (e) { /* swallow */ }
+        }
+      }, SpectatorState.handDelayMs || 2500);
+    }
+  }
   foley(isShowdown ? 'win-fanfare' : 'chip-stack');
   // Refresh nav widget if user was at the table.
   if (h.seated.findIndex(s => t.seats[s] && t.seats[s].playerId === 0) !== -1) renderNavBankroll();
@@ -13759,7 +13785,7 @@ function submitUserAction(t, action) {
   }
   if (h.timer) { clearTimeout(h.timer); h.timer = null; }
   applyCashAction(t, seatIdx, action);
-  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView();
+  if (CashLobby.focusedTableId === t.id && isCashViewActive()) refreshCashView(); notifySpectatorTick(t);
   scheduleCashTick(t);
 }
 
@@ -15333,6 +15359,124 @@ Views.history = function() {
 // under YJ_USER_HANDS so they persist across sessions.
 // =============================================================================
 
+// =============================================================================
+// v69.43 — SPECTATOR MODE
+//
+// Watch AI-only cash tables play continuously. Pick a variant + stake,
+// pick the AI skill mix, the engine spawns a 6-max table seated entirely
+// with AI bots and runs hand after hand. Reuses the existing cash table
+// felt rendering (so the visuals match what real cash players see) plus
+// a stats overlay (hands played, biggest pot, win rate per seat,
+// average stroke ledger movement, etc.).
+//
+// Implementation:
+//   - Tables flagged with `spectatorMode: true` (set when spawned)
+//   - resolveCashHand has a hook that auto-deals the next hand after a
+//     short delay when spectatorMode is true and SpectatorState.paused
+//     is false
+//   - The acting-seat AI tick already runs automatically because no
+//     seat has playerId=0
+//   - SpectatorState tracks the active table id, pause flag, hand
+//     delay, and accumulated stats
+// =============================================================================
+
+const SpectatorState = {
+  activeTableId: null,
+  paused: false,
+  handDelayMs: 2500,
+  // Setup form state
+  setupVariant: 'yj',          // 'pure' | 'yj' | 'bb'
+  setupStakes: { sb: 1, bb: 2 },
+  setupSkillMix: 'mixed',      // 'beginner' | 'mixed' | 'pro' | 'elite'
+  setupSeats: 6,
+  // Persistent stats per active spectator table
+  stats: {
+    handsPlayed: 0,
+    biggestPot: 0,
+    biggestPotHand: null,
+    showdownsCount: 0,
+    foldEndCount: 0,
+    seatWins: [0, 0, 0, 0, 0, 0, 0, 0, 0],  // index by displayed seat
+  },
+};
+
+function spawnSpectatorTable() {
+  // Tear down any existing spectator table first (cancel its timer + remove)
+  if (SpectatorState.activeTableId != null) {
+    const old = CashLobby.tables.find(x => x.id === SpectatorState.activeTableId);
+    if (old) {
+      old.spectatorMode = false;
+      if (old.handState && old.handState.tickTimer) clearTimeout(old.handState.tickTimer);
+    }
+    CashLobby.tables = CashLobby.tables.filter(x => x.id !== SpectatorState.activeTableId);
+  }
+  // Create a fresh AI-only table via the existing cash-lobby infrastructure
+  const variant = SpectatorState.setupVariant;
+  const stakes = SpectatorState.setupStakes;
+  const newId = (CashLobby.tables.length > 0 ? Math.max.apply(null, CashLobby.tables.map(t => t.id)) + 1 : 1);
+  const t = {
+    id: newId,
+    smallBlind: stakes.sb,
+    bigBlind: stakes.bb,
+    variant: variant,
+    maxSeats: SpectatorState.setupSeats,
+    seats: new Array(SpectatorState.setupSeats).fill(null),
+    button: 0,
+    handCount: 0,
+    handState: null,
+    spectatorMode: true,                  // critical flag — auto-deals next hand
+    spectatorCreatedAt: Date.now(),
+  };
+  // Seed the seats with AI bots at varying skill per the chosen mix
+  const skillMix = SpectatorState.setupSkillMix;
+  for (let i = 0; i < t.maxSeats; i++) {
+    let skill;
+    if (skillMix === 'beginner') skill = 0.18 + Math.random() * 0.20;
+    else if (skillMix === 'pro') skill = 0.65 + Math.random() * 0.20;
+    else if (skillMix === 'elite') skill = 0.82 + Math.random() * 0.15;
+    else { // mixed
+      skill = 0.20 + Math.random() * 0.70;
+    }
+    const playerId = -((newId * 100) + i + 1);  // negative IDs to avoid colliding with TourState.pool
+    t.seats[i] = {
+      playerId: playerId,
+      name: 'Bot #' + Math.abs(playerId),
+      skill: skill,
+      stack: 200 * stakes.bb,            // standard 100bb buy-in × 2 = 200bb
+      sessionBuyIn: 200 * stakes.bb,
+      handsPlayed: 0,
+      strokeLedger: 0,
+      profile: makeProfileForSkill(skill, variant === 'pure' ? 'pure' : 'yellowjacket'),
+    };
+  }
+  CashLobby.tables.push(t);
+  // NOTE: do NOT push to activeTableIds — that list drives the multi-tab strip
+  // on #tables and would leak the spectator's AI-only table into the user's
+  // real cash session. Spectator renders the table directly via its own felt.
+  SpectatorState.activeTableId = t.id;
+  SpectatorState.stats = {
+    handsPlayed: 0, biggestPot: 0, biggestPotHand: null,
+    showdownsCount: 0, foldEndCount: 0,
+    seatWins: new Array(t.maxSeats).fill(0),
+  };
+  // Kick off first hand
+  try { startCashHand(t); } catch (e) { /* swallow */ }
+  return t;
+}
+
+function stopSpectatorTable() {
+  if (SpectatorState.activeTableId == null) return;
+  const t = CashLobby.tables.find(x => x.id === SpectatorState.activeTableId);
+  if (t) {
+    t.spectatorMode = false;
+    if (t.handState && t.handState.tickTimer) clearTimeout(t.handState.tickTimer);
+    // Remove the table entirely so it doesn't pollute the cash lobby
+    CashLobby.tables = CashLobby.tables.filter(x => x.id !== t.id);
+  }
+  SpectatorState.activeTableId = null;
+  SpectatorState.paused = false;
+}
+
 const ICONIC_HANDS_BUILTIN = [
   {
     id: 'moneymaker_2003_bluff',
@@ -15667,6 +15811,221 @@ function yjScoreFromClassName(cn) {
   if (cn.indexOf('pair') !== -1) return 1;
   return 2; // high card
 }
+
+// === Spectator view =======================================================
+// Lets the user observe AI-vs-AI cash tables. Setup column on the left
+// configures variant/stakes/skill mix/seats; the felt fills the right
+// column; a stats overlay sits below the felt.
+
+function refreshSpectatorStats() {
+  const host = document.querySelector('[data-spectator-stats]');
+  if (!host) return;
+  const s = SpectatorState.stats;
+  const t = SpectatorState.activeTableId != null
+    ? CashLobby.tables.find(x => x.id === SpectatorState.activeTableId) : null;
+  clear(host);
+  const row = (label, val) => {
+    const r = el('div', { style: 'display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px dashed rgba(212,160,23,0.18); font-size:12px;' });
+    r.appendChild(el('span', { text: label, style: 'opacity:0.75;' }));
+    r.appendChild(el('span', { text: val, style: 'font-weight:700; color:#F0C75E; font-variant-numeric:tabular-nums;' }));
+    return r;
+  };
+  host.appendChild(row('Hands played', s.handsPlayed.toLocaleString()));
+  host.appendChild(row('Showdowns', s.showdownsCount.toLocaleString()));
+  host.appendChild(row('Folded out', s.foldEndCount.toLocaleString()));
+  host.appendChild(row('Biggest pot', '◈ ' + Math.round(s.biggestPot).toLocaleString() + (s.biggestPotHand ? ' (#' + s.biggestPotHand + ')' : '')));
+  if (t && t.seats) {
+    host.appendChild(el('div', { style: 'margin-top:10px; font-size:11px; opacity:0.6; text-transform:uppercase; letter-spacing:1px;', text: 'Wins per seat' }));
+    t.seats.forEach((seat, i) => {
+      if (!seat) return;
+      const wins = s.seatWins[i] || 0;
+      const pct = s.handsPlayed > 0 ? ((wins / s.handsPlayed) * 100).toFixed(1) : '0.0';
+      const r = el('div', { style: 'display:flex; justify-content:space-between; padding:3px 0; font-size:11px;' });
+      r.appendChild(el('span', { text: 'Seat ' + (i + 1) + ' · ' + seat.name + ' (skill ' + seat.skill.toFixed(2) + ')', style: 'opacity:0.75;' }));
+      r.appendChild(el('span', { text: wins + ' (' + pct + '%)', style: 'font-weight:700; color:#F0C75E; font-variant-numeric:tabular-nums;' }));
+      host.appendChild(r);
+    });
+  }
+}
+
+function refreshSpectatorFelt() {
+  const host = document.querySelector('[data-spectator-felt]');
+  if (!host) return;
+  clear(host);
+  if (SpectatorState.activeTableId == null) {
+    host.appendChild(el('div', { class: 'card', style: 'padding:40px; text-align:center; opacity:0.6;', text: 'No spectator table running. Configure on the left and click Start.' }));
+    return;
+  }
+  // Reuse the cash table render for the spectator's table by temporarily
+  // pointing the focused-table id at it (the renderer assumes focus).
+  const prevFocus = CashLobby.focusedTableId;
+  CashLobby.focusedTableId = SpectatorState.activeTableId;
+  try {
+    host.appendChild(renderCashTableView(SpectatorState.activeTableId));
+  } catch (e) {
+    host.appendChild(el('div', { class: 'card', style: 'padding:18px; color:#E08070;', text: 'Render failed: ' + e.message }));
+  }
+  CashLobby.focusedTableId = prevFocus;
+}
+
+// The cash engine only calls refreshCashView when isCashViewActive() is
+// true (i.e. the user is on #tables / #bumblebee). Spectator is its own
+// view, so engine refresh calls would skip the spectator felt entirely.
+// Instead, the engine sites that mutate spectator-table state call
+// notifySpectatorTick(t) directly (see resolveCashHand etc.).
+function notifySpectatorTick(t) {
+  if (!t || !t.spectatorMode) return;
+  if (document.body.dataset.activeView !== 'spectator') return;
+  try { refreshSpectatorFelt(); } catch (_) {}
+  try { refreshSpectatorStats(); } catch (_) {}
+}
+function startSpectatorRefreshLoop() {}
+function stopSpectatorRefreshLoop() {}
+
+Views.spectator = function() {
+  const view = $('[data-view="spectator"]'); clear(view);
+  view.appendChild(el('div', { class: 'crumb' }, el('a', { href: '#dashboard', text: 'Tour Home' }), ' · Spectator'));
+  view.appendChild(el('div', { class: 'page-header' },
+    el('div', null,
+      el('h1', { text: '🔭 Spectator Mode' }),
+      el('div', { class: 'sub', text: 'Watch AI bots play full cash hands continuously. Configure the lineup, sit back, observe.' })
+    )
+  ));
+
+  const layout = el('div', { style: 'display:grid; grid-template-columns: 300px 1fr; gap:18px; align-items:start;' });
+
+  // === Setup / control column ===========================================
+  const ctrl = el('div', null);
+
+  const setupCard = el('div', { class: 'card', style: 'padding:14px;' });
+  setupCard.appendChild(el('h2', { text: 'Table Setup', style: 'margin:0 0 12px 0; font-size:13px; letter-spacing:1px; text-transform:uppercase; opacity:0.85;' }));
+
+  // Variant
+  setupCard.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-bottom:4px;', text: 'Variant' }));
+  const variantSel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:10px;' });
+  [
+    { v: 'yj', label: 'YJ-Stroke (Yellow Jacket)' },
+    { v: 'pure', label: 'Pure NLHE (chip-EV)' },
+    { v: 'bb', label: 'BB-Stroke (Bumblebee)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if (SpectatorState.setupVariant === o.v) opt.selected = true;
+    variantSel.appendChild(opt);
+  });
+  variantSel.onchange = () => { SpectatorState.setupVariant = variantSel.value; };
+  setupCard.appendChild(variantSel);
+
+  // Stakes
+  setupCard.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-bottom:4px;', text: 'Stakes (SB/BB)' }));
+  const stakesSel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:10px;' });
+  [
+    { sb: 1, bb: 2 }, { sb: 2, bb: 5 }, { sb: 5, bb: 10 }, { sb: 25, bb: 50 }, { sb: 100, bb: 200 },
+  ].forEach(s => {
+    const opt = el('option', { value: s.sb + '/' + s.bb, text: '◈ ' + s.sb + ' / ◈ ' + s.bb });
+    if (SpectatorState.setupStakes.sb === s.sb) opt.selected = true;
+    stakesSel.appendChild(opt);
+  });
+  stakesSel.onchange = () => {
+    const [sb, bb] = stakesSel.value.split('/').map(n => parseInt(n, 10));
+    SpectatorState.setupStakes = { sb, bb };
+  };
+  setupCard.appendChild(stakesSel);
+
+  // Skill mix
+  setupCard.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-bottom:4px;', text: 'Skill mix' }));
+  const skillSel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:10px;' });
+  [
+    { v: 'beginner', label: 'Beginner table (skill 0.18-0.38)' },
+    { v: 'mixed',    label: 'Mixed table (skill 0.20-0.90)' },
+    { v: 'pro',      label: 'Pro table (skill 0.65-0.85)' },
+    { v: 'elite',    label: 'Elite table (skill 0.82-0.97)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if (SpectatorState.setupSkillMix === o.v) opt.selected = true;
+    skillSel.appendChild(opt);
+  });
+  skillSel.onchange = () => { SpectatorState.setupSkillMix = skillSel.value; };
+  setupCard.appendChild(skillSel);
+
+  // Seats
+  setupCard.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-bottom:4px;', text: 'Seats' }));
+  const seatsSel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:14px;' });
+  [2, 3, 4, 5, 6, 8, 9].forEach(n => {
+    const opt = el('option', { value: String(n), text: n + '-max' });
+    if (SpectatorState.setupSeats === n) opt.selected = true;
+    seatsSel.appendChild(opt);
+  });
+  seatsSel.onchange = () => { SpectatorState.setupSeats = parseInt(seatsSel.value, 10); };
+  setupCard.appendChild(seatsSel);
+
+  // Hand delay
+  setupCard.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-bottom:4px;', text: 'Delay between hands (ms)' }));
+  const delayInput = el('input', { type: 'number', class: 'form-control', style: 'width:100%; margin-bottom:14px;', min: '500', max: '15000', step: '250', value: String(SpectatorState.handDelayMs) });
+  delayInput.onchange = () => { SpectatorState.handDelayMs = Math.max(500, Math.min(15000, parseInt(delayInput.value, 10) || 2500)); };
+  setupCard.appendChild(delayInput);
+
+  // Action buttons
+  const btnRow = el('div', { style: 'display:flex; gap:8px; flex-wrap:wrap;' });
+  const isRunning = SpectatorState.activeTableId != null;
+  if (!isRunning) {
+    const startBtn = el('button', { class: 'btn gold', text: '▶ Start spectator table' });
+    startBtn.onclick = () => { spawnSpectatorTable(); Views.spectator(); };
+    btnRow.appendChild(startBtn);
+  } else {
+    const pauseBtn = el('button', {
+      class: 'btn ' + (SpectatorState.paused ? 'gold' : 'ghost'),
+      text: SpectatorState.paused ? '▶ Resume' : '⏸ Pause',
+    });
+    pauseBtn.onclick = () => {
+      SpectatorState.paused = !SpectatorState.paused;
+      Views.spectator();
+      // If resuming and the current hand has already completed, kick off the next one
+      if (!SpectatorState.paused) {
+        const t = CashLobby.tables.find(x => x.id === SpectatorState.activeTableId);
+        if (t && (!t.handState || t.handState.phase === 'complete')) {
+          setTimeout(() => { try { startCashHand(t); } catch (_) {} }, 250);
+        }
+      }
+    };
+    btnRow.appendChild(pauseBtn);
+    const restartBtn = el('button', { class: 'btn ghost', text: '↻ Restart' });
+    restartBtn.onclick = () => { spawnSpectatorTable(); Views.spectator(); };
+    btnRow.appendChild(restartBtn);
+    const stopBtn = el('button', { class: 'btn ghost', style: 'color:#E08070;', text: '⏹ Stop' });
+    stopBtn.onclick = () => { stopSpectatorTable(); Views.spectator(); };
+    btnRow.appendChild(stopBtn);
+  }
+  setupCard.appendChild(btnRow);
+
+  ctrl.appendChild(setupCard);
+
+  // Stats card
+  const statsCard = el('div', { class: 'card', style: 'padding:14px; margin-top:14px;' });
+  statsCard.appendChild(el('h2', { text: 'Live Stats', style: 'margin:0 0 10px 0; font-size:13px; letter-spacing:1px; text-transform:uppercase; opacity:0.85;' }));
+  const statsHost = el('div', { 'data-spectator-stats': '1' });
+  statsCard.appendChild(statsHost);
+  ctrl.appendChild(statsCard);
+
+  // Help card
+  const helpCard = el('div', { class: 'card', style: 'padding:12px; margin-top:14px; font-size:11px; opacity:0.75; line-height:1.5;' });
+  helpCard.appendChild(el('div', { text: '👁  No human seat — bots play themselves.' }));
+  helpCard.appendChild(el('div', { text: '🃏  Felt visuals match the live cash table.' }));
+  helpCard.appendChild(el('div', { text: '⏯  Pause stops auto-dealing after the current hand.' }));
+  helpCard.appendChild(el('div', { text: '↻  Restart re-rolls bot skills and clears stats.' }));
+  ctrl.appendChild(helpCard);
+
+  layout.appendChild(ctrl);
+
+  // === Felt column ======================================================
+  const feltCol = el('div', { 'data-spectator-felt': '1' });
+  layout.appendChild(feltCol);
+
+  view.appendChild(layout);
+
+  refreshSpectatorFelt();
+  refreshSpectatorStats();
+  startSpectatorRefreshLoop();
+};
 
 // === The Iconic Hands view ================================================
 let IconicState = { selected: null, replay: null };
