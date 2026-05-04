@@ -16169,11 +16169,20 @@ function refreshSpectatorFeatured() {
     head.appendChild(bar);
     head.appendChild(el('div', { style: 'margin-top:6px; font-size:11px; opacity:0.6;', text: 'Playback ' + pct + '% · beat ' + b.cursor + ' / ' + b.narrative.length + (b.playing ? ' · ▶ Playing' : (b.cursor >= b.narrative.length ? ' · ✓ Complete' : ' · ⏸ Paused')) }));
     host.appendChild(head);
-    // Detailed event report — visible at all times so user can scrub/inspect
-    // even mid-playback. Highlights when playback is complete.
+    // Detailed event report — hidden during playback to avoid spoiling the
+    // result. Revealed only when the narrative has finished playing.
     const isComplete = b.cursor >= b.narrative.length;
+    if (!isComplete) {
+      // Mid-playback: show a small "playback in progress" placeholder under
+      // the header, no spoilers.
+      const placeholder = el('div', { class: 'card', style: 'margin-top:12px; padding:18px; text-align:center; opacity:0.7;' });
+      placeholder.appendChild(el('div', { style: 'font-size:13px;', text: '📡 Watch the broadcast feed →' }));
+      placeholder.appendChild(el('div', { style: 'font-size:11px; opacity:0.6; margin-top:6px;', text: 'Full event report unlocks when playback completes.' }));
+      host.appendChild(placeholder);
+      return;
+    }
     const report = el('div', { class: 'card', style: 'margin-top:12px; padding:18px;' });
-    report.appendChild(el('h3', { text: '📊 Event Report' + (isComplete ? ' — Final' : ''), style: 'margin:0 0 12px 0; font-size:14px; letter-spacing:1px; text-transform:uppercase; opacity:0.85; color:#F0C75E;' }));
+    report.appendChild(el('h3', { text: '📊 Event Report — Final', style: 'margin:0 0 12px 0; font-size:14px; letter-spacing:1px; text-transform:uppercase; opacity:0.85; color:#F0C75E;' }));
     // Champion + Runner-up panel
     const podium = el('div', { style: 'display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;' });
     const champBox = el('div', { style: 'padding:14px; background:linear-gradient(135deg,rgba(240,199,94,0.18),rgba(212,160,23,0.08)); border:1px solid rgba(240,199,94,0.45); border-radius:8px;' });
@@ -16266,6 +16275,54 @@ function refreshSpectatorFeatured() {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
     actions.appendChild(downloadBtn);
+    const csvBtn = el('button', { class: 'btn ghost', text: '⬇ Download CSV' });
+    csvBtn.onclick = () => {
+      const esc = v => {
+        const s = String(v == null ? '' : v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      };
+      const rows = [];
+      // Section: event metadata
+      rows.push(['section','event'].map(esc).join(','));
+      rows.push(['key','value'].map(esc).join(','));
+      rows.push(['name', b.name].map(esc).join(','));
+      rows.push(['type', b.eventType].map(esc).join(','));
+      rows.push(['year', b.year].map(esc).join(','));
+      rows.push(['field_size', ev.fieldSize].map(esc).join(','));
+      rows.push(['eliminations', (ev.fieldSize || 1) - 1].map(esc).join(','));
+      rows.push(['champion', b.champName].map(esc).join(','));
+      rows.push(['champion_final', ev.champScore].map(esc).join(','));
+      rows.push(['runner_up', b.ruName].map(esc).join(','));
+      rows.push(['runner_up_final', ev.ruScore].map(esc).join(','));
+      rows.push(['finals_playoffs', ev.playoffs].map(esc).join(','));
+      rows.push('');
+      // Section: finals day-by-day
+      rows.push(['section','finals_days'].map(esc).join(','));
+      rows.push(['day','champion_score','champion_cum','runner_up_score','runner_up_cum','margin'].map(esc).join(','));
+      if (ev.finalsDays && ev.finalsDays.length) {
+        let p1Cum = 0, p2Cum = 0;
+        ev.finalsDays.forEach((day, di) => {
+          p1Cum += day[0]; p2Cum += day[1];
+          rows.push([di + 1, day[0].toFixed(2), p1Cum.toFixed(2), day[1].toFixed(2), p2Cum.toFixed(2), (p1Cum - p2Cum).toFixed(2)].map(esc).join(','));
+        });
+      }
+      rows.push('');
+      // Section: narrative beats
+      rows.push(['section','narrative'].map(esc).join(','));
+      rows.push(['beat','kind','line'].map(esc).join(','));
+      b.narrative.forEach((n, i) => {
+        rows.push([i + 1, n.kind, n.line].map(esc).join(','));
+      });
+      const csv = rows.join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = b.name.replace(/\s+/g, '_') + '_' + b.year + '.csv';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+    actions.appendChild(csvBtn);
     report.appendChild(actions);
     host.appendChild(report);
     return;
@@ -16396,29 +16453,29 @@ function refreshSpectatorStats() {
     r.appendChild(el('span', { text: val, style: 'font-weight:700; color:#F0C75E; font-variant-numeric:tabular-nums;' }));
     return r;
   };
-  // Broadcast (recorded) mode shows event-derived stats, not live-cash stats
+  // Broadcast (recorded) mode shows event-derived stats, not live-cash stats.
+  // Result rows are spoilers — gate them behind playback completion.
   if (SpectatorState.mode === 'broadcast' && SpectatorState.broadcast) {
     const b = SpectatorState.broadcast;
     const ev = b.event || {};
+    const isComplete = b.cursor >= b.narrative.length;
     host.appendChild(el('div', { style: 'font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;', text: 'Event' }));
     host.appendChild(row('Type', b.eventType.toUpperCase()));
     host.appendChild(row('Field size', String(ev.fieldSize || '—')));
     host.appendChild(row('Year', String(b.year)));
-    host.appendChild(row('Eliminations', String((ev.fieldSize || 1) - 1)));
-    host.appendChild(row('Finals playoffs', String(ev.playoffs || 0)));
-    host.appendChild(el('div', { style: 'margin-top:8px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;', text: 'Result' }));
-    if (ev.champScore != null) {
-      host.appendChild(row('Champion final', (ev.champScore > 0 ? '+' : '') + ev.champScore.toFixed(2)));
-    }
-    if (ev.ruScore != null) {
-      host.appendChild(row('Runner-up final', (ev.ruScore > 0 ? '+' : '') + ev.ruScore.toFixed(2)));
-    }
-    if (ev.finalsDays && ev.finalsDays.length) {
-      host.appendChild(row('Finals days', String(ev.finalsDays.length)));
-    }
     host.appendChild(el('div', { style: 'margin-top:8px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;', text: 'Playback' }));
     host.appendChild(row('Beats played', b.cursor + ' / ' + b.narrative.length));
-    host.appendChild(row('Status', b.playing ? '▶ Playing' : (b.cursor >= b.narrative.length ? '✓ Complete' : '⏸ Paused')));
+    host.appendChild(row('Status', b.playing ? '▶ Playing' : (isComplete ? '✓ Complete' : '⏸ Paused')));
+    if (isComplete) {
+      host.appendChild(el('div', { style: 'margin-top:8px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;', text: 'Result' }));
+      host.appendChild(row('Eliminations', String((ev.fieldSize || 1) - 1)));
+      host.appendChild(row('Finals playoffs', String(ev.playoffs || 0)));
+      if (ev.champScore != null) host.appendChild(row('Champion final', (ev.champScore > 0 ? '+' : '') + ev.champScore.toFixed(2)));
+      if (ev.ruScore != null) host.appendChild(row('Runner-up final', (ev.ruScore > 0 ? '+' : '') + ev.ruScore.toFixed(2)));
+      if (ev.finalsDays && ev.finalsDays.length) host.appendChild(row('Finals days', String(ev.finalsDays.length)));
+    } else {
+      host.appendChild(el('div', { style: 'margin-top:10px; font-size:10px; opacity:0.5; font-style:italic;', text: 'Results unlock when playback completes.' }));
+    }
     return;
   }
   // Live modes (cash + tourney) show table-driven stats
