@@ -15640,8 +15640,14 @@ function spectatorStartBroadcast() {
     spectatorPushLog(null, '❌ Event sim failed: ' + e.message, 'meta');
     return;
   }
+  // Resolve champ/runner-up names from the player pool (event returns IDs only)
+  const pool = (typeof TourState === 'object' && Array.isArray(TourState.pool)) ? TourState.pool : [];
+  const champPlayer = pool.find(p => p.id === event.champId);
+  const ruPlayer = pool.find(p => p.id === event.ruId);
+  const champName = champPlayer ? champPlayer.name : ('Player #' + event.champId);
+  const ruName = ruPlayer ? ruPlayer.name : ('Player #' + event.ruId);
   // Build a narrative timeline from the event
-  const narrative = spectatorBuildNarrative(event, evType, evName);
+  const narrative = spectatorBuildNarrative(event, evType, evName, champName, ruName);
   SpectatorState.broadcast = {
     event: event, eventType: evType, name: evName,
     year: event.year || new Date().getFullYear(),
@@ -15649,15 +15655,20 @@ function spectatorStartBroadcast() {
     cursor: 0,
     playing: true,
     timer: null,
+    champName: champName,
+    ruName: ruName,
+    champPlayer: champPlayer,
+    ruPlayer: ruPlayer,
   };
   spectatorBroadcastTick();
 }
 
-function spectatorBuildNarrative(ev, evType, evName) {
+function spectatorBuildNarrative(ev, evType, evName, champName, ruName) {
   const lines = [];
+  champName = champName || ('Player #' + ev.champId);
+  ruName = ruName || ('Player #' + ev.ruId);
   lines.push({ ts: 0, kind: 'meta', line: '🎬 ' + evName + ' — Field of ' + ev.fieldSize });
   lines.push({ ts: 800, kind: 'meta', line: 'Round 1 begins. ' + ev.fieldSize + ' players, ' + Math.ceil(ev.fieldSize / 2) + ' tables.' });
-  // Bracket eliminations — synthesize from field size collapse
   let alive = ev.fieldSize;
   let round = 1;
   while (alive > 16) {
@@ -15670,19 +15681,17 @@ function spectatorBuildNarrative(ev, evType, evName) {
     lines.push({ ts: 0, kind: 'cut', line: '⚡ Bracket round ' + round + ' complete — ' + alive + ' advance' });
     round++;
   }
-  lines.push({ ts: 0, kind: 'meta', line: '⭐ HEADS-UP FINAL — 72-hole grand final begins' });
-  // Finals — finalsDays is array of [p1Score, p2Score]
+  lines.push({ ts: 0, kind: 'meta', line: '⭐ HEADS-UP FINAL — ' + champName + ' vs ' + ruName });
   if (ev.finalsDays && ev.finalsDays.length) {
-    const pNames = (ev.champ && ev.champ.name) ? [ev.champ.name, ev.ru ? ev.ru.name : 'Runner-Up'] : ['Player A', 'Player B'];
     let p1Cum = 0, p2Cum = 0;
     ev.finalsDays.forEach((day, di) => {
       p1Cum += day[0]; p2Cum += day[1];
-      lines.push({ ts: 0, kind: 'finals', line: '🏌 Day ' + (di + 1) + ': ' + pNames[0] + ' ' + (day[0] > 0 ? '+' : '') + day[0] + ' (cum ' + (p1Cum > 0 ? '+' : '') + p1Cum + ') · ' + pNames[1] + ' ' + (day[1] > 0 ? '+' : '') + day[1] + ' (cum ' + (p2Cum > 0 ? '+' : '') + p2Cum + ')' });
+      lines.push({ ts: 0, kind: 'finals', line: '🏌 Day ' + (di + 1) + ': ' + champName + ' ' + (day[0] > 0 ? '+' : '') + day[0].toFixed(2) + ' (cum ' + (p1Cum > 0 ? '+' : '') + p1Cum.toFixed(2) + ') · ' + ruName + ' ' + (day[1] > 0 ? '+' : '') + day[1].toFixed(2) + ' (cum ' + (p2Cum > 0 ? '+' : '') + p2Cum.toFixed(2) + ')' });
     });
     if (ev.playoffs > 0) lines.push({ ts: 0, kind: 'finals', line: '🔥 Sudden death — ' + ev.playoffs + ' playoff hole(s)' });
   }
-  lines.push({ ts: 0, kind: 'champion', line: '🏆 CHAMPION: ' + (ev.champId ? 'Player #' + ev.champId : 'Unknown') + ' (final ' + (ev.champScore > 0 ? '+' : '') + ev.champScore + ')' });
-  lines.push({ ts: 0, kind: 'meta', line: '📼 Broadcast complete.' });
+  lines.push({ ts: 0, kind: 'champion', line: '🏆 CHAMPION: ' + champName + ' (final ' + (ev.champScore > 0 ? '+' : '') + ev.champScore.toFixed(2) + ')' });
+  lines.push({ ts: 0, kind: 'meta', line: '📼 Broadcast complete — full report below.' });
   return lines;
 }
 
@@ -16148,16 +16157,117 @@ function refreshSpectatorFeatured() {
   // Broadcast (recorded) mode: no live tables, show recorded-mode panel
   if (SpectatorState.mode === 'broadcast' && SpectatorState.broadcast) {
     const b = SpectatorState.broadcast;
-    const card = el('div', { class: 'card', style: 'padding:24px; text-align:center;' });
-    card.appendChild(el('div', { style: 'font-size:11px; opacity:0.6; text-transform:uppercase; letter-spacing:2px;', text: '📼 RECORDED BROADCAST · ' + b.eventType.toUpperCase() }));
-    card.appendChild(el('h2', { text: b.name, style: 'margin:8px 0 6px 0; font-size:24px; color:var(--augusta-gold-hi,#F0C75E);' }));
-    card.appendChild(el('div', { style: 'font-size:13px; opacity:0.75;', text: 'Field of ' + (b.event.fieldSize || '?') + ' · ' + b.year }));
+    const ev = b.event;
+    // Header card (always visible)
+    const head = el('div', { class: 'card', style: 'padding:20px; text-align:center;' });
+    head.appendChild(el('div', { style: 'font-size:11px; opacity:0.6; text-transform:uppercase; letter-spacing:2px;', text: '📼 RECORDED BROADCAST · ' + b.eventType.toUpperCase() }));
+    head.appendChild(el('h2', { text: b.name, style: 'margin:8px 0 6px 0; font-size:24px; color:var(--augusta-gold-hi,#F0C75E);' }));
+    head.appendChild(el('div', { style: 'font-size:13px; opacity:0.75;', text: 'Field of ' + (ev.fieldSize || '?') + ' · ' + b.year }));
     const pct = b.narrative.length > 0 ? Math.round((b.cursor / b.narrative.length) * 100) : 0;
-    const bar = el('div', { style: 'margin-top:18px; height:6px; background:rgba(212,160,23,0.15); border-radius:3px; overflow:hidden;' });
+    const bar = el('div', { style: 'margin-top:14px; height:6px; background:rgba(212,160,23,0.15); border-radius:3px; overflow:hidden;' });
     bar.appendChild(el('div', { style: 'height:100%; width:' + pct + '%; background:linear-gradient(90deg,#F0C75E,#D4A017); transition:width 250ms;' }));
-    card.appendChild(bar);
-    card.appendChild(el('div', { style: 'margin-top:6px; font-size:11px; opacity:0.6;', text: 'Playback ' + pct + '% · beat ' + b.cursor + ' / ' + b.narrative.length }));
-    host.appendChild(card);
+    head.appendChild(bar);
+    head.appendChild(el('div', { style: 'margin-top:6px; font-size:11px; opacity:0.6;', text: 'Playback ' + pct + '% · beat ' + b.cursor + ' / ' + b.narrative.length + (b.playing ? ' · ▶ Playing' : (b.cursor >= b.narrative.length ? ' · ✓ Complete' : ' · ⏸ Paused')) }));
+    host.appendChild(head);
+    // Detailed event report — visible at all times so user can scrub/inspect
+    // even mid-playback. Highlights when playback is complete.
+    const isComplete = b.cursor >= b.narrative.length;
+    const report = el('div', { class: 'card', style: 'margin-top:12px; padding:18px;' });
+    report.appendChild(el('h3', { text: '📊 Event Report' + (isComplete ? ' — Final' : ''), style: 'margin:0 0 12px 0; font-size:14px; letter-spacing:1px; text-transform:uppercase; opacity:0.85; color:#F0C75E;' }));
+    // Champion + Runner-up panel
+    const podium = el('div', { style: 'display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;' });
+    const champBox = el('div', { style: 'padding:14px; background:linear-gradient(135deg,rgba(240,199,94,0.18),rgba(212,160,23,0.08)); border:1px solid rgba(240,199,94,0.45); border-radius:8px;' });
+    champBox.appendChild(el('div', { style: 'font-size:10px; text-transform:uppercase; letter-spacing:2px; opacity:0.7; margin-bottom:4px;', text: '🏆 Champion' }));
+    champBox.appendChild(el('div', { style: 'font-size:18px; font-weight:700; color:#F0C75E;', text: b.champName || '—' }));
+    if (ev.champScore != null) champBox.appendChild(el('div', { style: 'font-size:14px; margin-top:4px; font-variant-numeric:tabular-nums;', text: 'Final: ' + (ev.champScore > 0 ? '+' : '') + ev.champScore.toFixed(2) }));
+    if (b.champPlayer) champBox.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-top:4px;', text: 'Career wins: ' + (b.champPlayer.totalWins || 0) }));
+    podium.appendChild(champBox);
+    const ruBox = el('div', { style: 'padding:14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.15); border-radius:8px;' });
+    ruBox.appendChild(el('div', { style: 'font-size:10px; text-transform:uppercase; letter-spacing:2px; opacity:0.7; margin-bottom:4px;', text: '🥈 Runner-up' }));
+    ruBox.appendChild(el('div', { style: 'font-size:18px; font-weight:700;', text: b.ruName || '—' }));
+    if (ev.ruScore != null) ruBox.appendChild(el('div', { style: 'font-size:14px; margin-top:4px; font-variant-numeric:tabular-nums;', text: 'Final: ' + (ev.ruScore > 0 ? '+' : '') + ev.ruScore.toFixed(2) }));
+    if (b.ruPlayer) ruBox.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-top:4px;', text: 'Runner-ups: ' + (b.ruPlayer.runnerUps || 0) }));
+    podium.appendChild(ruBox);
+    report.appendChild(podium);
+    // Finals day-by-day table
+    if (ev.finalsDays && ev.finalsDays.length) {
+      report.appendChild(el('div', { style: 'font-size:11px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; margin-bottom:6px;', text: '🏌 Finals — Day by Day' }));
+      const tbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:12px; margin-bottom:14px;' });
+      const thead = el('thead', null);
+      const thr = el('tr', { style: 'border-bottom:1px solid rgba(212,160,23,0.30);' });
+      ['Day', b.champName || 'Champion', 'cum', b.ruName || 'Runner-up', 'cum', 'Margin'].forEach(t => thr.appendChild(el('th', { style: 'padding:6px 8px; text-align:left; font-weight:600; opacity:0.75;', text: t })));
+      thead.appendChild(thr); tbl.appendChild(thead);
+      const tbody = el('tbody', null);
+      let p1Cum = 0, p2Cum = 0;
+      ev.finalsDays.forEach((day, di) => {
+        p1Cum += day[0]; p2Cum += day[1];
+        const tr = el('tr', { style: 'border-bottom:1px dashed rgba(255,255,255,0.06);' });
+        const fmt = v => (v > 0 ? '+' : '') + v.toFixed(2);
+        const colorFor = (a, b) => a < b ? '#7ED99C' : (a > b ? '#E08070' : '#cfcfcf');
+        tr.appendChild(el('td', { style: 'padding:6px 8px;', text: 'Day ' + (di + 1) }));
+        tr.appendChild(el('td', { style: 'padding:6px 8px; font-variant-numeric:tabular-nums; color:' + colorFor(day[0], day[1]) + ';', text: fmt(day[0]) }));
+        tr.appendChild(el('td', { style: 'padding:6px 8px; font-variant-numeric:tabular-nums; opacity:0.75;', text: fmt(p1Cum) }));
+        tr.appendChild(el('td', { style: 'padding:6px 8px; font-variant-numeric:tabular-nums; color:' + colorFor(day[1], day[0]) + ';', text: fmt(day[1]) }));
+        tr.appendChild(el('td', { style: 'padding:6px 8px; font-variant-numeric:tabular-nums; opacity:0.75;', text: fmt(p2Cum) }));
+        const margin = p1Cum - p2Cum;
+        tr.appendChild(el('td', { style: 'padding:6px 8px; font-variant-numeric:tabular-nums; font-weight:700;', text: (margin > 0 ? '+' : '') + margin.toFixed(2) + ' ' + (margin < 0 ? '(C)' : margin > 0 ? '(R)' : '') }));
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      report.appendChild(tbl);
+    }
+    // Action row
+    const actions = el('div', { style: 'display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;' });
+    if (isComplete) {
+      const replay = el('button', { class: 'btn gold', text: '↻ Replay broadcast' });
+      replay.onclick = () => {
+        b.cursor = 0;
+        b.playing = true;
+        SpectatorState.log = [];
+        SpectatorState.paused = false;
+        spectatorBroadcastTick();
+      };
+      actions.appendChild(replay);
+    }
+    const exportBtn = el('button', { class: 'btn ghost', text: '📋 Copy event JSON' });
+    exportBtn.onclick = () => {
+      const payload = {
+        name: b.name, eventType: b.eventType, year: b.year,
+        fieldSize: ev.fieldSize, champName: b.champName, ruName: b.ruName,
+        champScore: ev.champScore, ruScore: ev.ruScore,
+        finalsDays: ev.finalsDays, playoffs: ev.playoffs,
+        narrative: b.narrative.map(n => n.line),
+      };
+      const text = JSON.stringify(payload, null, 2);
+      try {
+        navigator.clipboard.writeText(text);
+        if (typeof toast === 'function') toast('Event JSON copied to clipboard');
+      } catch (_) {
+        if (typeof toast === 'function') toast('Clipboard unavailable — see console');
+        try { console.log(text); } catch (_) {}
+      }
+    };
+    actions.appendChild(exportBtn);
+    const downloadBtn = el('button', { class: 'btn ghost', text: '⬇ Download JSON' });
+    downloadBtn.onclick = () => {
+      const payload = {
+        name: b.name, eventType: b.eventType, year: b.year,
+        fieldSize: ev.fieldSize, champName: b.champName, ruName: b.ruName,
+        champScore: ev.champScore, ruScore: ev.ruScore,
+        finalsDays: ev.finalsDays, playoffs: ev.playoffs,
+        narrative: b.narrative.map(n => n.line),
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = b.name.replace(/\s+/g, '_') + '_' + b.year + '.json';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+    actions.appendChild(downloadBtn);
+    report.appendChild(actions);
+    host.appendChild(report);
     return;
   }
   if (SpectatorState.featuredTableId == null || SpectatorState.tableIds.length === 0) {
@@ -16286,6 +16396,32 @@ function refreshSpectatorStats() {
     r.appendChild(el('span', { text: val, style: 'font-weight:700; color:#F0C75E; font-variant-numeric:tabular-nums;' }));
     return r;
   };
+  // Broadcast (recorded) mode shows event-derived stats, not live-cash stats
+  if (SpectatorState.mode === 'broadcast' && SpectatorState.broadcast) {
+    const b = SpectatorState.broadcast;
+    const ev = b.event || {};
+    host.appendChild(el('div', { style: 'font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;', text: 'Event' }));
+    host.appendChild(row('Type', b.eventType.toUpperCase()));
+    host.appendChild(row('Field size', String(ev.fieldSize || '—')));
+    host.appendChild(row('Year', String(b.year)));
+    host.appendChild(row('Eliminations', String((ev.fieldSize || 1) - 1)));
+    host.appendChild(row('Finals playoffs', String(ev.playoffs || 0)));
+    host.appendChild(el('div', { style: 'margin-top:8px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;', text: 'Result' }));
+    if (ev.champScore != null) {
+      host.appendChild(row('Champion final', (ev.champScore > 0 ? '+' : '') + ev.champScore.toFixed(2)));
+    }
+    if (ev.ruScore != null) {
+      host.appendChild(row('Runner-up final', (ev.ruScore > 0 ? '+' : '') + ev.ruScore.toFixed(2)));
+    }
+    if (ev.finalsDays && ev.finalsDays.length) {
+      host.appendChild(row('Finals days', String(ev.finalsDays.length)));
+    }
+    host.appendChild(el('div', { style: 'margin-top:8px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;', text: 'Playback' }));
+    host.appendChild(row('Beats played', b.cursor + ' / ' + b.narrative.length));
+    host.appendChild(row('Status', b.playing ? '▶ Playing' : (b.cursor >= b.narrative.length ? '✓ Complete' : '⏸ Paused')));
+    return;
+  }
+  // Live modes (cash + tourney) show table-driven stats
   host.appendChild(row('Tables live', String(SpectatorState.tableIds.length)));
   host.appendChild(row('Hands played', s.handsPlayed.toLocaleString()));
   host.appendChild(row('Showdowns', s.showdownsCount.toLocaleString()));
