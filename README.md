@@ -8,7 +8,9 @@
 
 # Yellow Jacket Tour
 
-Single-file HTML build of the Yellow Jacket Tour — a hybrid of heads-up Texas Hold'em and tournament golf, scored on a single law called **Honey-Stroke**. Plays in any modern browser. No install, no server, no accounts. The whole product is one `index.html`.
+Single-file HTML build of the Yellow Jacket Tour — a hybrid of heads-up Texas Hold'em and tournament golf, scored on a single law called **Honey-Stroke** (also marketed as **Sweet Stroke**). Plays in any modern browser. No install, no server, no accounts. The whole product is one `index.html`.
+
+> **You're always on the Tour.** Every hand, every table, every stroke counts. Whether you're in a Major final, a Sudden Death playoff, or a $5/$10 cash table at 2am — the Tour is the world. Your strokes follow you. Your reputation follows you. Cash games aren't a separate product; they're the Tour at the cash table.
 
 ## What it is
 
@@ -34,11 +36,11 @@ The sidebar has 19 tabs covering four product areas:
 - **Single Player** — heads-up vs a Yellow Jacket AI. Pick a skill tier (Beginner / Casual / Pro / Elite), match length, and stroke cap.
 - **Multiplayer · Hot-Seat** — two humans, one device. Pass-the-laptop with a cover overlay so each player only sees their own cards.
 - **Multiplayer · Share-Link** — chess-by-mail. Make your move, copy the encoded URL, send it. Each state carries a checksum so tampering is detectable.
-- **Yellow Jacket Cash** — 6-max drop-in cash tables with three sub-variants:
-  - **Pure NLHE** — standard cash poker, Nectar P/L only
-  - **YJ Stroke** — adds an integer stroke ledger per hand (Bogey Loss), settles to Nectar at cashout at +$0.50 per net stroke
+- **Yellow Jacket Cash** — the Tour at the cash table. 6-max drop-in cash tables with three sub-variants:
+  - **Pure NLHE** — standard cash poker inside the Tour ecosystem, Nectar P/L only
+  - **YJ Stroke** — adds an integer stroke ledger per hand (Bogey Loss), settles to Nectar at cashout at +$0.50 per net stroke. Strokes earned here count toward your Tour reputation.
   - Multi-table support (up to 6 tables open simultaneously), keyboard shortcuts, time bank, pre-actions, opponent HUD, four-color deck, run-it-twice, all-in confirm
-- **Bumblebee Cash** — same engine in pastel-kawaii skin, Honored Loss scoring (loser scores own hand class). Auto-toggles a particle/foley aesthetic when seated.
+- **Bumblebee Cash** — the Tour at the cash table, gentler side. Same engine in pastel-kawaii skin, Honored Loss scoring (loser scores own hand class). Auto-toggles a particle/foley aesthetic when seated. Strokes count toward your Tour reputation here too.
 
 ### Simulate
 - **Simulator** — run 1 to 100 seasons over a pool of up to 100,000 players. Two modes:
@@ -84,11 +86,10 @@ Cash tables do NOT use honey. Chip stacks at cash are Nectar 1:1. The "YJ Stroke
 
 ## State of the build
 
-- **v69.25** — current head (`2026.04.29-v69.25-cash-variant-rename`)
 - Self-contained: one HTML file. Two optional CDN dependencies — Three.js (loaded synchronously for the 3D atmospheric felt) and Rapier WASM (loaded on demand for physics-based chip stacking). Both gracefully degrade if blocked; the 2D felt and tween chips take over.
-- Save state is browser-local via the unified `yellowJacketSave` key; smart-refresh banner handles version drift across deploys
-- CSV export with full config snapshot ships with every simulator run for reproducible audits
-- Calibrated against the audit suite: skill expression confirmed (Spearman ≈ 0.49 in v69.24+), tier ROI separation positive, late-reg domination resolved, multi-way variant inversion fixed
+- Save state is browser-local via the unified `yellowJacketSave` key; a smart-refresh banner handles version drift across deploys.
+- CSV export with full config snapshot ships with every simulator run for reproducible audits.
+- Calibrated against an in-build audit suite: skill expression, tier ROI separation, late-registration handling, and multi-way variant behavior all verified.
 
 ## How to use
 
@@ -115,8 +116,14 @@ Replace `index.html` in the repo. Pages redeploys within ~60 seconds. The smart-
 ## Companion docs
 
 - [`RULES.md`](./RULES.md) — every game mode's rules in plain language with ASCII diagrams. Read this if you want to know exactly what each mode does.
+- [`LICENSE.md`](./LICENSE.md) — the full proprietary license. Read this before doing anything beyond looking.
+- [`IP/`](./IP/) — the IP-protection scaffold: master inventory, brand lexicon, copyright/trademark filing briefs, NDA template, and ongoing-protection checklist.
 - The build's in-app **Rulebook**, **Codex**, **Decision Tree**, and **Buzz's Corner** tabs duplicate and extend this content live, with the current config snapshot.
 
 ## License & credits
 
-The bumblebee mascot, the lore, the Honey-Stroke scoring law, and the audit-driven calibration are original to this build. Three.js (MIT) is used for the optional 3D atmospheric scene; Rapier (Apache 2.0) for the optional physics chip stacking. Both are loaded from CDN.
+**Source-available, not open-source.** Yellow Jacket Tour is the proprietary intellectual property of Blank Canvas, Inc. (a Wyoming corporation). The source code, design documents, eight-beat hand structure (Tea Box → The Fairway → The Lay-Up → The Hazard → The Approach → The Green → The Putt → The Cup), Honey-Stroke / Sweet Stroke scoring law, dual-variant (Yellow Jacket / Bumblebee) loss-rule system, Buzz mascot, and all related brand assets are all rights reserved. You may read this repository for personal study, security review, or evaluation. You may not copy it, redistribute it, deploy it, derive from it, or use the brand or rule system commercially without an executed license from Blank Canvas, Inc. Full terms in [`LICENSE.md`](./LICENSE.md).
+
+The bumblebee mascot, the lore, the Honey-Stroke scoring law, and the audit-driven calibration are original to this build. Three.js (MIT) is used for the optional 3D atmospheric scene; Rapier (Apache 2.0) for the optional physics chip stacking. Both are loaded from CDN at runtime; neither is redistributed.
+
+For commercial license inquiries, contact Blank Canvas, Inc. via the corresponding entity address on file with the Wyoming Secretary of State.

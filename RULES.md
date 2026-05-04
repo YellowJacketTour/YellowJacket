@@ -9,7 +9,15 @@
 
 # Yellow Jacket Tour — Complete Rules Manual
 
-This document covers **every game mode** in the build, in plain language with ASCII diagrams. Read top-to-bottom for the full picture, or jump to the mode you care about.
+Yellow Jacket Tour is a hybrid of heads-up Texas Hold'em and tournament golf, scored on a single proprietary law called **Honey-Stroke** (also marketed as **Sweet Stroke** — same system, two consumer-facing brand names, both protected). Every hand of poker becomes one hole on a golf scorecard. The pot you win sweetens your golf score; the pot you lose costs you strokes. Lower wins, just like real golf.
+
+**You're always on the Tour.** That's the central brand position. The Tour isn't just the championship circuit — it's the world you inhabit as a Yellow Jacket player. Tour events are where titles are won, but every cash hand you play, every table you sit at, every stroke you bank — those count too. Your strokes follow you across the Tour. Your reputation follows you across the Tour. There is no "outside the Tour" mode in this product; the cash tables are the Tour at the cash table.
+
+The product runs in three modes inside that one Tour ecosystem: **tour events** (the WSOP/PGA-style championship circuit, the headline product, the home of Honey-Stroke), and two **cash-table** modes (Pure NLHE for poker purists who want the standard online poker experience inside the Tour, and YJ/Bumblebee Stroke for cash players who want a parallel stroke ledger that ties cash play to the same Tour-scoring framework).
+
+This document is the canonical, plain-language manual. Every primary brand term, every rule, every worked example you need to play and to understand the system. ASCII diagrams included. Read top-to-bottom for the full picture, or jump to the mode you care about.
+
+> All eight beats of a Yellow Jacket hand — **Tea Box, The Fairway, The Lay-Up, The Hazard, The Approach, The Green, The Putt, The Cup** — are proprietary brand terms of Blank Canvas, Inc. Casual variants (the Drive, the Iron, the Pin, the Drop, etc.) are documented in `IP/LEXICON.md` and accrue separate common-law rights through use. See `LICENSE.md` for full IP terms.
 
 ---
 
@@ -554,6 +562,16 @@ These adjustments only fire in tour events, never at cash.
    │  Final standings → ITM payouts                   │
    │                                                  │
    └──────────────────────────────────────────────────┘
+
+   Canonical parameter arrays:
+     Survival cushion (per round, in strokes): [12, 8, 5, 3]
+     Cut schedule (per round, fraction eliminated): [null, 0.50, 0.50, null]
+
+   The cushion tightens each round. Round 1 has the loosest survival
+   threshold (12 strokes off the leader); Round 4 has the tightest (3).
+   Cuts happen after Rounds 2 and 3 only (the 36-hole and 54-hole milestones);
+   Rounds 1 and 4 have no field cut (R1 is too early to thin the field
+   meaningfully; R4 is the final round and is decided on score, not cut).
 
    Eliminated players keep their cumulative score
    frozen and skip the remaining rounds. Their
