@@ -2204,7 +2204,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.03-v69.39-cfr-stack-fix-rename-iconic-normalize";
+const APP_VERSION = "2026.05.03-v69.40-async-cancellable-cfr";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -11191,11 +11191,15 @@ function cfrTerminalPayoff(node, heroHand, villainHand, board, divisor) {
 // Get legal actions for a CFR game-tree node
 function cfrLegalActions(node) {
   const acts = [];
+  // v69.40 — same raise cap as FULL CFR+. Without this the single-street
+  // CFR also blew the JS call stack on raise-heavy trees.
+  const raisesThisStreet = node.raisesThisStreet || 0;
+  const RAISE_CAP = 3;
   if (node.facingBet > 0) {
     acts.push('fold');
     acts.push('call');
-    if (node.canRaise) acts.push('bet');
-    if (node.canAllin) acts.push('allin');
+    if (node.canRaise && raisesThisStreet < RAISE_CAP) acts.push('bet');
+    if (node.canAllin && raisesThisStreet < RAISE_CAP) acts.push('allin');
   } else {
     acts.push('check');
     if (node.canBet) acts.push('bet');
@@ -11247,6 +11251,7 @@ function cfrApplyAction(node, actor, action) {
     next.facingBet = betSize;
     next.lastActor = actor;
     next.toAct = (actor === 'hero') ? 'villain' : 'hero';
+    next.raisesThisStreet = (node.raisesThisStreet || 0) + 1;  // v69.40
     return next;
   }
   if (action === 'allin') {
@@ -11263,6 +11268,7 @@ function cfrApplyAction(node, actor, action) {
     next.canBet = false;
     next.canRaise = false;
     next.canAllin = false;
+    next.raisesThisStreet = (node.raisesThisStreet || 0) + 1;  // v69.40
     return next;
   }
   return next;
@@ -11329,34 +11335,47 @@ function cfrRecurse(node, actor, heroHand, villainHand, board, divisor,
   return (currentActor === 'villain') ? -nodeUtility : nodeUtility;
 }
 
-// Run CFR for a postflop spot. Iterates N times, sampling a different
-// villain hand from the range each iteration.
-// Returns: average strategy frequencies for each legal action at the root.
-function runCFR(heroHand, board, range, pot, divisor, iterations) {
+// Run CFR for a postflop spot. v69.40 — async + chunked + cancellable.
+// Yields control to the browser every CHUNK iterations so the UI stays
+// responsive and the cancel button works. Calls progressCb(done, total)
+// per chunk so the UI can update. Checks cancelToken.cancelled between
+// chunks to abort early.
+async function runCFR(heroHand, board, range, pot, divisor, iterations, progressCb, cancelToken) {
   iterations = iterations || 3000;
+  const CHUNK = 100;
   const regrets = {};
   const strategySum = {};
-  // Initial root node
   const rootTemplate = {
     type: 'decision',
     pot: pot, facingBet: 0, lastActor: null,
     toAct: 'hero',
     contributedHero: 0, contributedVillain: 0,
     canBet: true, canRaise: true, canAllin: true,
+    raisesThisStreet: 0,
   };
-  // Range may be huge; sample uniformly
   const sampleableRange = range.filter(r => {
     const dead = new Set(heroHand.concat(board).map(c => c.rank + c.suit));
     return !dead.has(r.cards[0].rank + r.cards[0].suit) &&
            !dead.has(r.cards[1].rank + r.cards[1].suit);
   });
   if (sampleableRange.length === 0) return null;
-  for (let i = 0; i < iterations; i++) {
-    const villainHand = sampleableRange[Math.floor(Math.random() * sampleableRange.length)].cards;
-    cfrRecurse(rootTemplate, 'hero', heroHand, villainHand, board, divisor,
-               regrets, strategySum, 1.0, 1.0);
+  let completed = 0;
+  for (let chunkStart = 0; chunkStart < iterations; chunkStart += CHUNK) {
+    if (cancelToken && cancelToken.cancelled) break;
+    const chunkEnd = Math.min(chunkStart + CHUNK, iterations);
+    for (let i = chunkStart; i < chunkEnd; i++) {
+      const villainHand = sampleableRange[Math.floor(Math.random() * sampleableRange.length)].cards;
+      cfrRecurse(rootTemplate, 'hero', heroHand, villainHand, board, divisor,
+                 regrets, strategySum, 1.0, 1.0);
+    }
+    completed = chunkEnd;
+    if (progressCb) progressCb(completed, iterations);
+    // Yield to the browser between chunks
+    await new Promise(r => setTimeout(r, 0));
   }
-  // Extract average strategy at root for hero
+  if (cancelToken && cancelToken.cancelled) {
+    return { strategy: null, iterations: completed, infoSets: Object.keys(regrets).length, cancelled: true };
+  }
   const rootKey = 'hero|hero|0|null|' + heroHand.map(c => c.rank + c.suit).join('');
   const sums = strategySum[rootKey] || [];
   const total = sums.reduce((a, b) => a + b, 0);
@@ -11367,7 +11386,7 @@ function runCFR(heroHand, board, range, pot, divisor, iterations) {
   } else {
     legalActs.forEach(act => { avgStrategy[act] = 1 / legalActs.length; });
   }
-  return { strategy: avgStrategy, iterations: iterations, infoSets: Object.keys(regrets).length };
+  return { strategy: avgStrategy, iterations: completed, infoSets: Object.keys(regrets).length };
 }
 
 // === v69.37 — L4 MVP: preflop-only solver for HU NLHE =====================
@@ -11742,11 +11761,14 @@ function cfrPlusRecurse(node, heroHand, villainHand, board, divisor,
   return currentActor === 'villain' ? -nodeUtility : nodeUtility;
 }
 
-// Drives multi-street CFR+ from current spot. Iterates N times sampling
-// villain hands. Returns root strategy + diagnostics.
-function runCFRPlus(heroHand, board, range, pot, divisor, iterations, abstractMode) {
+// Drives multi-street CFR+ from current spot. v69.40 — async + chunked +
+// cancellable. Yields between chunks so the UI stays responsive and
+// cancel works. Multi-street tree is much heavier than single-street so
+// chunk size is smaller (50 vs 100).
+async function runCFRPlus(heroHand, board, range, pot, divisor, iterations, abstractMode, progressCb, cancelToken) {
   iterations = iterations || 5000;
   abstractMode = !!abstractMode;
+  const CHUNK = 50;
   const regrets = {};
   const strategySum = {};
   const startStreet = board.length === 0 ? 'preflop' : board.length === 3 ? 'flop' : board.length === 4 ? 'turn' : 'river';
@@ -11758,7 +11780,7 @@ function runCFRPlus(heroHand, board, range, pot, divisor, iterations, abstractMo
     toAct: 'hero',
     contributedHero: 0, contributedVillain: 0,
     canBet: true, canRaise: true, canAllin: true,
-    raisesThisStreet: 0,  // v69.39
+    raisesThisStreet: 0,
   };
   const dead = new Set(heroHand.concat(board).map(c => c.rank + c.suit));
   const sampleableRange = range.filter(r =>
@@ -11766,13 +11788,26 @@ function runCFRPlus(heroHand, board, range, pot, divisor, iterations, abstractMo
     !dead.has(r.cards[1].rank + r.cards[1].suit));
   if (sampleableRange.length === 0) return null;
   const startTime = Date.now();
-  for (let i = 0; i < iterations; i++) {
-    const villainHand = sampleableRange[Math.floor(Math.random() * sampleableRange.length)].cards;
-    cfrPlusRecurse(rootTemplate, heroHand, villainHand, board, divisor,
-                   regrets, strategySum, 1.0, 1.0, abstractMode);
+  let completed = 0;
+  for (let chunkStart = 0; chunkStart < iterations; chunkStart += CHUNK) {
+    if (cancelToken && cancelToken.cancelled) break;
+    const chunkEnd = Math.min(chunkStart + CHUNK, iterations);
+    for (let i = chunkStart; i < chunkEnd; i++) {
+      const villainHand = sampleableRange[Math.floor(Math.random() * sampleableRange.length)].cards;
+      cfrPlusRecurse(rootTemplate, heroHand, villainHand, board, divisor,
+                     regrets, strategySum, 1.0, 1.0, abstractMode);
+    }
+    completed = chunkEnd;
+    if (progressCb) progressCb(completed, iterations);
+    await new Promise(r => setTimeout(r, 0));
   }
   const elapsedMs = Date.now() - startTime;
-  // Extract root strategy
+  if (cancelToken && cancelToken.cancelled) {
+    return {
+      strategy: null, iterations: completed, infoSets: Object.keys(regrets).length,
+      elapsedMs, abstractMode, startStreet, cancelled: true,
+    };
+  }
   let rootHandKey;
   if (abstractMode) {
     rootHandKey = 'B' + abstractHandBucket(heroHand, board);
@@ -11791,7 +11826,7 @@ function runCFRPlus(heroHand, board, range, pot, divisor, iterations, abstractMo
   }
   return {
     strategy: avgStrategy,
-    iterations: iterations,
+    iterations: completed,
     infoSets: Object.keys(regrets).length,
     elapsedMs: elapsedMs,
     abstractMode: abstractMode,
@@ -15847,6 +15882,10 @@ const GTOState = {
   cfrResult: null,
   cfrFullResult: null,
   preflopResult: null,
+  // v69.40 — async solver state
+  solverRunning: false,
+  solverProgress: { done: 0, total: 0 },
+  solverCancelToken: null,
 };
 
 Views.gto = function() {
@@ -15976,46 +16015,104 @@ Views.gto = function() {
     cfrFull: '🚀 Run multi-street CFR+ (' + GTOState.cfrFullIterations + ' iters)',
     preflop: '🔥 Solve preflop (169 hands)',
   })[GTOState.solveMode];
-  const analyzeBtn = el('button', { class: 'btn gold', style: 'width:100%; padding:12px; font-size:14px; font-weight:700; letter-spacing:1px;', text: analyzeLabel });
-  analyzeBtn.onclick = () => {
-    analyzeBtn.disabled = true;
-    analyzeBtn.textContent = 'Computing...';
-    setTimeout(() => {
+  // v69.40 — Run/Cancel button pair. Solver runs async-chunked via
+  // setTimeout-yielding inside runCFR / runCFRPlus. While running, the
+  // button becomes a Cancel button and a progress bar appears below.
+  const isRunning = !!GTOState.solverRunning;
+  const analyzeBtn = el('button', {
+    class: isRunning ? 'btn' : 'btn gold',
+    style: 'width:100%; padding:12px; font-size:14px; font-weight:700; letter-spacing:1px;' + (isRunning ? ' background:#7a3a3a; color:#fff;' : ''),
+    text: isRunning ? '⏹ Cancel solver' : analyzeLabel,
+  });
+  if (isRunning) {
+    analyzeBtn.onclick = () => {
+      if (GTOState.solverCancelToken) GTOState.solverCancelToken.cancelled = true;
+      analyzeBtn.disabled = true;
+      analyzeBtn.textContent = 'Cancelling...';
+    };
+  } else {
+    analyzeBtn.onclick = async () => {
+      const dead = GTOState.heroCards.concat(GTOState.board);
+      // EV and Preflop modes are synchronous and fast; run them inline.
+      if (GTOState.solveMode === 'ev') {
+        analyzeBtn.disabled = true;
+        analyzeBtn.textContent = 'Computing...';
+        setTimeout(() => {
+          try {
+            const range = buildRange(GTOState.villainRangePreset, dead);
+            const result = computeYJHandEV(GTOState.heroCards, GTOState.board, range,
+              GTOState.pot, GTOState.callAmount, 1000, GTOState.divisor);
+            result.rangeSize = range.length;
+            GTOState.result = result;
+            Views.gto();
+          } catch (e) { toast('Analysis failed: ' + e.message); Views.gto(); }
+        }, 30);
+        return;
+      }
+      if (GTOState.solveMode === 'preflop') {
+        analyzeBtn.disabled = true;
+        analyzeBtn.textContent = 'Solving 169 hands...';
+        setTimeout(() => {
+          try {
+            const preRes = runPreflopSolve(GTOState.villainRangePreset, GTOState.divisor, { sb: 1, bb: 2 });
+            GTOState.preflopResult = preRes;
+            Views.gto();
+          } catch (e) { toast('Solve failed: ' + e.message); Views.gto(); }
+        }, 30);
+        return;
+      }
+      // CFR / CFR+ modes: async-chunked with progress + cancel
+      const cancelToken = { cancelled: false };
+      GTOState.solverCancelToken = cancelToken;
+      GTOState.solverRunning = true;
+      GTOState.solverProgress = { done: 0, total: GTOState.solveMode === 'cfr' ? GTOState.cfrIterations : GTOState.cfrFullIterations };
+      Views.gto();  // re-render to show cancel button + progress bar
+      const progressCb = (done, total) => {
+        GTOState.solverProgress = { done, total };
+        const bar = document.querySelector('[data-solver-progress]');
+        if (bar) bar.style.width = ((done / total) * 100).toFixed(1) + '%';
+        const txt = document.querySelector('[data-solver-progress-text]');
+        if (txt) txt.textContent = done.toLocaleString() + ' / ' + total.toLocaleString() + ' iterations (' + ((done / total) * 100).toFixed(0) + '%)';
+      };
       try {
-        const dead = GTOState.heroCards.concat(GTOState.board);
-        if (GTOState.solveMode === 'ev') {
-          const range = buildRange(GTOState.villainRangePreset, dead);
-          const result = computeYJHandEV(GTOState.heroCards, GTOState.board, range,
-            GTOState.pot, GTOState.callAmount, 1000, GTOState.divisor);
-          result.rangeSize = range.length;
-          GTOState.result = result;
-        } else if (GTOState.solveMode === 'cfr') {
-          const range = buildRange(GTOState.villainRangePreset, dead);
-          const cfrRes = runCFR(GTOState.heroCards, GTOState.board, range,
-            GTOState.pot, GTOState.divisor, GTOState.cfrIterations);
-          if (!cfrRes) { toast('No legal villain combos given dead cards. Try fewer board cards or a wider range.'); analyzeBtn.disabled = false; analyzeBtn.textContent = analyzeLabel; return; }
-          cfrRes.rangeSize = range.length;
-          GTOState.cfrResult = cfrRes;
-        } else if (GTOState.solveMode === 'cfrFull') {
-          const range = buildRange(GTOState.villainRangePreset, dead);
-          const cfrFullRes = runCFRPlus(GTOState.heroCards, GTOState.board, range,
-            GTOState.pot, GTOState.divisor, GTOState.cfrFullIterations, GTOState.cfrFullAbstract);
-          if (!cfrFullRes) { toast('No legal villain combos. Try wider range.'); analyzeBtn.disabled = false; analyzeBtn.textContent = analyzeLabel; return; }
-          cfrFullRes.rangeSize = range.length;
-          GTOState.cfrFullResult = cfrFullRes;
-        } else if (GTOState.solveMode === 'preflop') {
-          const preRes = runPreflopSolve(GTOState.villainRangePreset, GTOState.divisor, { sb: 1, bb: 2 });
-          GTOState.preflopResult = preRes;
+        const range = buildRange(GTOState.villainRangePreset, dead);
+        let res;
+        if (GTOState.solveMode === 'cfr') {
+          res = await runCFR(GTOState.heroCards, GTOState.board, range,
+            GTOState.pot, GTOState.divisor, GTOState.cfrIterations, progressCb, cancelToken);
+        } else {
+          res = await runCFRPlus(GTOState.heroCards, GTOState.board, range,
+            GTOState.pot, GTOState.divisor, GTOState.cfrFullIterations, GTOState.cfrFullAbstract, progressCb, cancelToken);
         }
+        GTOState.solverRunning = false;
+        GTOState.solverCancelToken = null;
+        if (!res) { toast('No legal villain combos. Try wider range.'); Views.gto(); return; }
+        if (res.cancelled) { toast('Solver cancelled at ' + res.iterations.toLocaleString() + ' iterations.'); Views.gto(); return; }
+        res.rangeSize = range.length;
+        if (GTOState.solveMode === 'cfr') GTOState.cfrResult = res;
+        else GTOState.cfrFullResult = res;
         Views.gto();
       } catch (e) {
-        toast('Analysis failed: ' + e.message);
-        analyzeBtn.disabled = false;
-        analyzeBtn.textContent = analyzeLabel;
+        GTOState.solverRunning = false;
+        GTOState.solverCancelToken = null;
+        toast('Solver failed: ' + e.message);
+        Views.gto();
       }
-    }, 50);
-  };
+    };
+  }
   setup.appendChild(analyzeBtn);
+  // Progress bar — visible only while solver is running
+  if (isRunning) {
+    const progWrap = el('div', { style: 'margin-top:10px;' });
+    const progTxt = el('div', { 'data-solver-progress-text': '1', style: 'font-size:11px; opacity:0.85; margin-bottom:4px; font-variant-numeric:tabular-nums;', text: GTOState.solverProgress.done.toLocaleString() + ' / ' + GTOState.solverProgress.total.toLocaleString() + ' iterations (' + ((GTOState.solverProgress.done / Math.max(1, GTOState.solverProgress.total)) * 100).toFixed(0) + '%)' });
+    progWrap.appendChild(progTxt);
+    const barTrack = el('div', { style: 'height:8px; background:rgba(0,0,0,0.40); border-radius:4px; overflow:hidden;' });
+    const barFill = el('div', { 'data-solver-progress': '1', style: 'height:100%; width:' + ((GTOState.solverProgress.done / Math.max(1, GTOState.solverProgress.total)) * 100).toFixed(1) + '%; background: linear-gradient(90deg, var(--augusta-gold-deep,#8E6E0E), var(--augusta-gold-hi,#F0C75E)); transition: width 0.15s linear;' });
+    barTrack.appendChild(barFill);
+    progWrap.appendChild(barTrack);
+    progWrap.appendChild(el('div', { style: 'margin-top:6px; font-size:11px; opacity:0.65;', text: 'Solver runs in chunks; the UI stays responsive and Cancel is always available.' }));
+    setup.appendChild(progWrap);
+  }
   // CFR iteration tuner (only relevant for cfr mode)
   if (GTOState.solveMode === 'cfr') {
     const iterRow = el('div', { style: 'margin-top:10px; font-size:11px; opacity:0.85;' });
