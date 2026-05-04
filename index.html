@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.04-v69.44.5-spectator-broadcast";
+const APP_VERSION = "2026.05.04-v69.44.6-csv-and-divisor-fixes";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5636,8 +5636,9 @@ function runFinals(p1, p2) {
     days.push({ day, p1Score: dayA, p2Score: dayB });
   }
   // YJ DYNAMIC DIVISOR (v23): finals are the canonical 72-hole event, so the
-  // divisor is honeyDivisorFor(72) = 72. Explicit per-event normalization,
-  // matching playMatch's behavior.
+  // divisor is honeyDivisorFor(72) = 36 (NOT 72 — the function steps the
+  // divisor at 72-hole tier; see honeyDivisorFor at the top of this file).
+  // Explicit per-event normalization, matching playMatch's behavior.
   const finalsDivisor = honeyDivisorFor(72);
   const computeFinalsTotals = () => {
     const netA = p1HoneyTotal - p2HoneyTotal;
@@ -16281,6 +16282,19 @@ function refreshSpectatorFeatured() {
         const s = String(v == null ? '' : v);
         return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
       };
+      // Compute totals + honey reconciliation so CSV exposes the full picture.
+      // Daily values are RAW SCORECARD only (the event simulator does not
+      // expose per-day honey). Totals + final scores let the reader infer the
+      // honey contribution: net_honey = (raw_total - final) * finalsDivisor
+      // where finalsDivisor for a 72-hole final is honeyDivisorFor(72) = 36.
+      let champRawTotal = 0, ruRawTotal = 0;
+      if (ev.finalsDays && ev.finalsDays.length) {
+        ev.finalsDays.forEach(d => { champRawTotal += d[0]; ruRawTotal += d[1]; });
+      }
+      const finalsDivisor = (typeof honeyDivisorFor === 'function') ? honeyDivisorFor(72) : 36;
+      const champHoneyAdj = champRawTotal - (ev.champScore != null ? ev.champScore : champRawTotal);
+      const ruHoneyAdj = ruRawTotal - (ev.ruScore != null ? ev.ruScore : ruRawTotal);
+      const champNetHoney = champHoneyAdj * finalsDivisor;
       const rows = [];
       // Section: event metadata
       rows.push(['section','event'].map(esc).join(','));
@@ -16295,16 +16309,28 @@ function refreshSpectatorFeatured() {
       rows.push(['runner_up', b.ruName].map(esc).join(','));
       rows.push(['runner_up_final', ev.ruScore].map(esc).join(','));
       rows.push(['finals_playoffs', ev.playoffs].map(esc).join(','));
+      rows.push(['finals_divisor', finalsDivisor].map(esc).join(','));
+      rows.push(['champion_raw_total', champRawTotal.toFixed(2)].map(esc).join(','));
+      rows.push(['runner_up_raw_total', ruRawTotal.toFixed(2)].map(esc).join(','));
+      rows.push(['champion_net_honey', champNetHoney.toFixed(2)].map(esc).join(','));
+      rows.push(['champion_honey_credit_strokes', champHoneyAdj.toFixed(2)].map(esc).join(','));
       rows.push('');
       // Section: finals day-by-day
+      // raw_margin column is champion_cum - runner_up_cum on the SCORECARD
+      // ONLY; honey is applied once at the end, not per day. So an absent
+      // honey contribution can flip the apparent leader. The TOTAL row at
+      // the bottom shows the honey-adjusted final delta for the trophy.
       rows.push(['section','finals_days'].map(esc).join(','));
-      rows.push(['day','champion_score','champion_cum','runner_up_score','runner_up_cum','margin'].map(esc).join(','));
+      rows.push(['day','champion_score','champion_cum','runner_up_score','runner_up_cum','raw_margin'].map(esc).join(','));
       if (ev.finalsDays && ev.finalsDays.length) {
         let p1Cum = 0, p2Cum = 0;
         ev.finalsDays.forEach((day, di) => {
           p1Cum += day[0]; p2Cum += day[1];
           rows.push([di + 1, day[0].toFixed(2), p1Cum.toFixed(2), day[1].toFixed(2), p2Cum.toFixed(2), (p1Cum - p2Cum).toFixed(2)].map(esc).join(','));
         });
+        // Final row: includes honey adjustment so the trophy delta is visible
+        const finalDelta = (ev.champScore != null && ev.ruScore != null) ? (ev.champScore - ev.ruScore) : (champRawTotal - ruRawTotal);
+        rows.push(['TOTAL_with_honey', ev.champScore != null ? ev.champScore.toFixed(2) : '', '', ev.ruScore != null ? ev.ruScore.toFixed(2) : '', '', finalDelta.toFixed(2)].map(esc).join(','));
       }
       rows.push('');
       // Section: narrative beats
@@ -16313,8 +16339,11 @@ function refreshSpectatorFeatured() {
       b.narrative.forEach((n, i) => {
         rows.push([i + 1, n.kind, n.line].map(esc).join(','));
       });
-      const csv = rows.join('\n');
-      const blob = new Blob([csv], { type: 'text/csv' });
+      // UTF-8 BOM (﻿) prevents Excel + many CSV readers from defaulting
+      // to Windows-1252 when interpreting the file, which previously turned
+      // every emoji in the narrative into mojibake (ð¬ instead of 🎬).
+      const csv = '﻿' + rows.join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
