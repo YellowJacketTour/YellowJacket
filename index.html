@@ -2204,7 +2204,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.03-v69.41-cfr-perf-memory-guard";
+const APP_VERSION = "2026.05.03-v69.42-single-street-cfr-check-loop-fix";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -11231,12 +11231,19 @@ function cfrApplyAction(node, actor, action) {
     return next;
   }
   if (action === 'check') {
-    if (node.lastActor === 'opp') {
-      // Both checked → end of street → showdown (since we're single-street MVP)
+    // v69.42 — bug fix: previously checked `node.lastActor === 'opp'` but
+    // 'opp' is never set anywhere. lastActor is always 'hero' / 'villain' /
+    // null, so the both-checked condition never fired and check-check-
+    // check-check recursed forever until stack overflow. Single-Street CFR
+    // wouldn't run at all. Now correctly checks if the OTHER player acted
+    // last (which means we're closing the street).
+    const otherActor = (actor === 'hero') ? 'villain' : 'hero';
+    if (node.lastActor === otherActor) {
+      // Both checked → end of street → showdown (single-street MVP)
       next.type = 'showdown';
     } else {
       next.lastActor = actor;
-      next.toAct = (actor === 'hero') ? 'villain' : 'hero';
+      next.toAct = otherActor;
     }
     return next;
   }
@@ -11640,12 +11647,15 @@ function cfrPlusApplyAction(node, actor, action) {
     return next;
   }
   if (action === 'check') {
-    if (node.lastActor === 'opp' || node.lastActor === (actor === 'hero' ? 'villain' : 'hero')) {
-      // both checked → end of street
+    // v69.42 — cleaned up dead 'opp' string check (never set anywhere).
+    // The other-actor check is the correct one: if the opposing player
+    // checked just before, we're closing the street.
+    const otherActor = (actor === 'hero') ? 'villain' : 'hero';
+    if (node.lastActor === otherActor) {
       next.type = 'street_end';
     } else {
       next.lastActor = actor;
-      next.toAct = (actor === 'hero') ? 'villain' : 'hero';
+      next.toAct = otherActor;
     }
     return next;
   }
