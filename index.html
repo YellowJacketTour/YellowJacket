@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.04-v69.44.6-csv-and-divisor-fixes";
+const APP_VERSION = "2026.05.04-v69.44.7-divisor-doc-drift";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2701,8 +2701,8 @@ function setBackNineMultiplier(n) {
 // DECISION DIVISOR (v39 Path 1): per-decision EV math uses a separate, smaller
 // divisor than end-of-round honey normalization. Decouples in-kernel fold cost
 // from the round-length stroke conversion. The original v23 math used the
-// round-length divisor (72 for aggregate events) inside decideFor, which made
-// folding cost ~72 honey-equivalent vs ~10 honey at risk for a call. Break-even
+// round-length divisor (36 for 72-hole aggregate events) inside decideFor, which made
+// folding cost ~36 honey-equivalent vs ~10 honey at risk for a call. Break-even
 // fold equity collapsed to ~13%, well below any realistic Hold'em hand, and the
 // fold rate vanished. With CurrentDecisionDivisor=9 (default), break-even fold
 // equity rises to ~18-25% across cap regimes — folds become meaningful tactical
@@ -2782,11 +2782,14 @@ function activeScoringModel() { return SCORING_STYLES['honey-stroke']; }
 // "equity given opponent reached this street voluntarily."
 const WIN_PROB = [0.05, 0.38, 0.72, 0.87, 0.92, 0.96, 0.985, 0.999, 1.0, 1.0];
 
-// Yellow Jacket honey-divisor — DYNAMIC by round length (v23):
-//   72-hole finals  → divisor 72
-//   18-hole rounds  → divisor 18
-//   9-hole matches  → divisor  9
-//   1-hole matches  → divisor  1 (full-value drizzle for quick sims)
+// Yellow Jacket honey-divisor — DYNAMIC by round length, stepped:
+//   ≥72-hole finals  → divisor 36
+//   ≥18-hole rounds  → divisor  9
+//   ≥9-hole matches  → divisor  4
+//    <9-hole matches → divisor  1 (full-value drizzle for quick sims)
+// See honeyDivisorFor() below for the canonical lookup. Earlier comment
+// versions said "72 / 18 / 9 / 1" — that was the v23 design intent but
+// the function has stepped to "36 / 9 / 4 / 1" for some time now.
 // Threaded through gameContext.honeyDivisor by playMatch / runFinals so
 // decideFor's EV math sees the correct normalization for the round being
 // played. The static `honeyNormalizationDivisor` const below is kept as a
@@ -6523,7 +6526,7 @@ function composite(p) { return p.majorWins * 10 + p.mainWins * 5 + p.regularWins
 // Buzz knowledge base
 const BuzzKnowledge = {
   faqs: [
-    { cat: 'rules', q: 'What is the scoring system?', a: 'Honey-Stroke. Two layers: (1) the scorecard — your hand category sets a bounded golf score for the hole (Royal Flush −5 down to High Card +2). (2) the honey pot — every hole begins with a mandatory 2 honey; bets/raises propose a new agreed total; the hole winner takes that agreed total as honey. Net honey is divided by the round-length divisor (72 for finals, 18 for rounds, 9 for short bracket matches, 1 for single-hole) and subtracted from the golf scorecard. Lower wins.' },
+    { cat: 'rules', q: 'What is the scoring system?', a: 'Honey-Stroke. Two layers: (1) the scorecard — your hand category sets a bounded golf score for the hole (Royal Flush −5 down to High Card +2). (2) the honey pot — every hole begins with a mandatory 2 honey; bets/raises propose a new agreed total; the hole winner takes that agreed total as honey. Net honey is divided by the round-length divisor (36 for 72-hole finals, 9 for 18-hole rounds, 4 for 9-hole bracket matches, 1 for single-hole) and subtracted from the golf scorecard. Lower wins.' },
     { cat: 'rules', q: 'What does the honey credit do?', a: 'It SUBTRACTS from your round score after normalization. Winning more honey pots than your opponent improves your golf number, but net honey is divided by the round divisor first so honey stays a light drizzle on top of the dominant golf scorecard.' },
     { cat: 'rules', q: 'How does a fold work?', a: 'When you fold to a proposal, you lose ONLY the previously agreed total in honey (the level both players had agreed to BEFORE the new proposal). You also take a +1 bogey on the scorecard. The non-folder takes 0 par AND receives that previous agreed total in honey. Same rule on every street — there is no street-based fold penalty table.' },
     { cat: 'rules', q: 'How does betting work?', a: 'Agreed-total wagering. Every hole opens at 2 honey. A "bet" or "raise" is a PROPOSAL to set a new total agreed pot size (capped by the stroke cap). A "call" is acceptance — the pot then stands at the proposed total. No summing, no doubling, no matched contributions. The pot at any moment is the LAST agreed total only.' },
@@ -7065,7 +7068,7 @@ Views.codex = function() {
     h3('Bracket Knockout (WSOP feel)'),
     p('Single-elimination bracket. Heads-up matches throughout. Match length scales with bracket depth: 9-hole matches while the field is larger than 16 players, 18-hole matches once the field is 16 or fewer, and a 72-hole heads-up final between the last two players standing. The 72-hole final is played as four 18-hole rounds, and its honey divisor is 72 (not 18); the 9- and 18-hole earlier rounds use divisors 9 and 18 respectively. Champion = last player standing. Each match has elimination pressure; one cooler ends your event.'),
     h3('Aggregate Stroke Play (PGA Masters feel)'),
-    p('Every player in the field plays 4 rounds × 18 holes = 72 total holes. Each round you are paired with a fresh opponent (rotating-partner stroke play). Per-hole zero-sum honey credits accumulate within each pairing; at the end of 72 holes, total net honey across all four rounds is divided by 72 (the round length, not 18) and subtracted from your total scorecard. The player with the lowest net total wins. Optional cuts at the 36-hole and 54-hole marks trim the field. Lower per-event variance, stronger long-run skill signal than bracket play.'),
+    p('Every player in the field plays 4 rounds × 18 holes = 72 total holes. Each round you are paired with a fresh opponent (rotating-partner stroke play). Per-hole zero-sum honey credits accumulate within each pairing; at the end of 72 holes, total net honey across all four rounds is divided by 36 (the canonical 72-hole-tier divisor — see honeyDivisorFor) and subtracted from your total scorecard. The player with the lowest net total wins. Optional cuts at the 36-hole and 54-hole marks trim the field. Lower per-event variance, stronger long-run skill signal than bracket play.'),
     h3('The Main Event'),
     p('Single championship per season. The default Main field is ' + fmtNum(cfg.mainField || 128) + ' players (Players-Championship-style invitational rather than mass-WSOP). Field composition is ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65)) * 100).toFixed(0) + '% via the satellite ladder and ' + ((cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65) * 100).toFixed(0) + '% direct entry (champion exemptions plus top season-points players); see Section 8 for the ladder mechanics. In bracket-knockout format, the Main runs as a standard bracket ending in a 72-hole heads-up final. In aggregate format, the Main runs as 72-hole aggregate stroke play across the entire field. Either way, the Main always settles on 72 holes.'),
     h3('Playoffs'),
@@ -7076,7 +7079,7 @@ Views.codex = function() {
   // ---- Strategy ----
   const strat = section('3 · Strategy for the Elite',
     h3('Pot-control wins seasons'),
-    p('The hand-strength distribution puts most showdowns at One Pair or worse — the modal showdown posts a slight bogey. Net scorecard improvement comes almost entirely from winning honey pots, not from holding strong hands. Build pots when you have an equity edge; concede them cheaply when you do not. The honey divisor (72 for full-event scoring) means you need many small pots — or a few large ones — to move the round score by a single stroke.'),
+    p('The hand-strength distribution puts most showdowns at One Pair or worse — the modal showdown posts a slight bogey. Net scorecard improvement comes almost entirely from winning honey pots, not from holding strong hands. Build pots when you have an equity edge; concede them cheaply when you do not. The honey divisor (36 for the 72-hole tier) means you need ~36 net honey to move the round score by a single stroke — many small pots, or a few large ones.'),
     h3('The fold rule rewards ALL fold pressure equally'),
     p('Every fold returns the same outcome to the bettor: 0 (par) on the scorecard plus the previously agreed pot in honey. There is NO beat-based bonus — a Putt fold is no more valuable than a Tea Box fold in scorecard terms. What changes by beat is the SIZE of the previously agreed pot: pots grow as betting progresses, so late-beat folds tend to deliver more honey simply because the agreed total has had more rounds to climb.'),
     h3('Folds do NOT reveal cards — strategic implications'),
@@ -7918,7 +7921,7 @@ Views.rules = function() {
   // section becomes the live description; until then it describes the planned
   // structure. Wording locked exactly per design spec — do not paraphrase. ===
   core.appendChild(rule('Scoring the Honey-Stroke Final',
-    'In aggregate format, every event is decided by a full 72-hole score: four complete 18-hole rounds with rotating-partner pairings each round. In bracket format, only the heads-up final between the last two surviving players is 72 holes; earlier rounds are 9-hole or 18-hole heads-up matches. Either way, when the round length is 72 holes, total net honey across all 72 holes is divided by 72 (not 18) and subtracted from the total scorecard. The player with the lowest net total is crowned champion.'
+    'In aggregate format, every event is decided by a full 72-hole score: four complete 18-hole rounds with rotating-partner pairings each round. In bracket format, only the heads-up final between the last two surviving players is 72 holes; earlier rounds are 9-hole or 18-hole heads-up matches. Either way, when the round length is 72 holes, total net honey across all 72 holes is divided by 36 (the 72-hole-tier divisor — see honeyDivisorFor) and subtracted from the total scorecard. The player with the lowest net total is crowned champion.'
   ));
   core.appendChild(rule('Legendary Under-Par Doubles',
     'It is both mathematically possible and exceptionally rare for multiple players to finish a 72-hole final under par. When this happens, the match enters Yellow Jacket lore. It is the ultimate sign of true masters pushing each other to greatness — the highest possible honor short of wearing the Yellow Jacket itself.'
@@ -22175,7 +22178,7 @@ function renderConfigPanel(panel, mode) {
   scoreSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); line-height: 1.5;',
-    text: 'Hand category sets a bounded per-hole golf score (−5..+2). Every hole opens with a mandatory 2-honey pot; bets/raises propose a new agreed total; calls accept it. The hole winner takes the agreed total in honey. Net honey is divided by the round-length divisor (72/18/9/1) before scoring. Folder loses the previous agreed total + 1 bogey; non-folder takes 0 par. Carry-over only inside 72-hole finals.'
+    text: 'Hand category sets a bounded per-hole golf score (−5..+2). Every hole opens with a mandatory 2-honey pot; bets/raises propose a new agreed total; calls accept it. The hole winner takes the agreed total in honey. Net honey is divided by the round-length divisor (36/9/4/1 for 72/18/9/<9-hole rounds) before scoring. Folder loses the previous agreed total + 1 bogey; non-folder takes 0 par. Carry-over only inside 72-hole finals.'
   }));
 
   // Quick-load audit configuration: Yellow Jacket Tour Standard at clean-research
