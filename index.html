@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.04-v69.44.7-divisor-doc-drift";
+const APP_VERSION = "2026.05.10-v69.45-spectator-sims-seed-csv";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -13068,9 +13068,9 @@ function ensureGoldenLottery() {
 }
 // Pick one random card from the remaining deck for a hand.
 function designateGoldenCard(deck) {
-  if (Math.random() >= GoldenLottery.config.handProbability) return null;
+  if (cashRng() >= GoldenLottery.config.handProbability) return null;
   if (!deck || deck.length === 0) return null;
-  const idx = (Math.random() * deck.length) | 0;
+  const idx = (cashRng() * deck.length) | 0;
   const c = deck[idx];
   return { rank: c.rank, suit: c.suit, key: c.rank + c.suit };
 }
@@ -13112,7 +13112,7 @@ function runGoldenLotteryDraw(force) {
   const entriesPool = GoldenLottery.entries.slice();
   const winners = [];
   for (let w = 0; w < winnersWanted; w++) {
-    const idx = (Math.random() * entriesPool.length) | 0;
+    const idx = (cashRng() * entriesPool.length) | 0;
     winners.push(entriesPool.splice(idx, 1)[0]);
   }
   // Split pool: 50% / 30% / 20% for 3 winners; 70/30 for 2; 100 for 1.
@@ -13281,7 +13281,10 @@ function startCashHand(t) {
     phase: 'auto',
     timer: null, tickTimer: null,
     timeBankExp: 0,
-    handId: 'H-' + Date.now().toString(36) + '-' + (t.handCount + 1),
+    // Spectator tables get a deterministic hand id (table + sequence) so a
+    // seeded session's CSV is fully re-derivable; human tables keep the
+    // timestamp-based id (uniqueness across sessions / saved hands).
+    handId: t.spectatorMode ? ('SH-T' + t.id + '-' + (t.handCount + 1)) : ('H-' + Date.now().toString(36) + '-' + (t.handCount + 1)),
     startedAt: Date.now(),
     goldenCard,
   };
@@ -13464,7 +13467,7 @@ function runItTwiceResolve(t, h, stillIn) {
   for (const r of ranks) for (const s of suits) { const k = r + s; if (!used.has(k)) available.push({ rank: r, suit: s }); }
   function runOne() {
     const deck = available.slice();
-    for (let j = deck.length - 1; j > 0; j--) { const k = (Math.random() * (j+1))|0; const tmp = deck[j]; deck[j] = deck[k]; deck[k] = tmp; }
+    for (let j = deck.length - 1; j > 0; j--) { const k = (cashRng() * (j+1))|0; const tmp = deck[j]; deck[j] = deck[k]; deck[k] = tmp; }
     const board = h.board.slice();
     while (board.length < 5) board.push(deck.pop());
     let bestIdx = stillIn[0], bestV = -1;
@@ -13752,6 +13755,8 @@ function resolveCashHand(t) {
       pt.hands++;
       if (rakedPot > pt.biggestPot) pt.biggestPot = rakedPot;
       if (winnerIdx != null) pt.lastWinnerSeat = winnerIdx;
+      // v69.45 — append this resolved hand to the (non-lossy) session log
+      try { spectatorRecordHand(t, h, { pot: rakedPot, rake: rakeAmt, showdown: isShowdown, winnerIdx: winnerIdx, winnerName: winnerName, winnerClass: winnerHandClass }); } catch (_) {}
       if (typeof spectatorHarvestTableLogs === 'function') spectatorHarvestTableLogs();
       if (typeof refreshSpectatorStats === 'function') refreshSpectatorStats();
     } catch (_) {}
@@ -13759,10 +13764,14 @@ function resolveCashHand(t) {
     if (SpectatorState.tournament && SpectatorState.mode === 'liveTourney') {
       try { spectatorTournamentCheckBust(t); } catch (_) {}
     }
-    if (!SpectatorState.paused && t.spectatorMode) {
+    // v69.45 — run-limit terminus check (liveCash). If the scope is reached,
+    // freeze every table and reveal the results panel — a logical conclusion.
+    if (typeof spectatorCheckTerminus === 'function' && spectatorCheckTerminus()) {
+      try { spectatorFinishSession(); } catch (_) {}
+    } else if (!SpectatorState.paused && t.spectatorMode && !spectatorSessionDone()) {
       setTimeout(() => {
-        if (t.spectatorMode && !SpectatorState.paused) {
-          try { startCashHand(t); } catch (e) { /* swallow */ }
+        if (t.spectatorMode && !SpectatorState.paused && !spectatorSessionDone()) {
+          spectatorDealNextHand(t);
         }
       }, SpectatorState.setup.handDelayMs || 2500);
     }
@@ -13990,6 +13999,59 @@ function dealCashHand(t) {
   foley(isShowdown ? 'win-fanfare' : 'card-deal');
 }
 
+// --- Deterministic RNG for spectator simulations (v69.45) ------------------
+// Live cash play normally draws from Math.random(). When a Spectator session
+// is started WITH a seed, the cash engine's outcome-affecting randomness —
+// deck shuffles, the Golden-Card designation, bot decisions, the lottery
+// draw, run-it-twice runouts, and the spectator table skill mix — is routed
+// through a seeded mulberry32 PRNG so a session is (practically) reproducible
+// from the seed string alone. That gives spectator runs the same "the numbers
+// are auditable and re-derivable" property the Simulator tab's deterministic
+// event engine has. Monte-Carlo *estimators* (the all-in equity popup, the
+// generic holdem equity helper) intentionally stay on Math.random — they only
+// affect a displayed estimate, not game state, and want fresh variance.
+//
+// Caveat (recorded in the CSV header): per-actor profile micro-jitter inside
+// makeProfileForSkill() still uses Math.random unless the seat is built inside
+// withCashRng(); spectatorSpawnOneCashTable() does wrap its seat-build loop,
+// so initial table state IS seeded, but anything that calls makeProfileForSkill
+// outside that wrapper is not. The exported per-hand log is the authoritative
+// record regardless; the seed makes a re-run match it closely.
+function mulberry32(a) {
+  return function() {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashStringToSeed(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return (h >>> 0);
+}
+let cashRng = Math.random;
+// Returns the numeric seed actually used (so it can be recorded), or null if cleared.
+function setCashRngSeed(seed) {
+  if (seed == null || seed === '') { cashRng = Math.random; return null; }
+  const numeric = (typeof seed === 'number' && isFinite(seed)) ? (seed >>> 0) : hashStringToSeed(String(seed));
+  cashRng = mulberry32(numeric);
+  return numeric;
+}
+function clearCashRngSeed() { cashRng = Math.random; }
+// Run `fn` with Math.random temporarily aliased to the seeded stream — used to
+// make one-shot setup code (profile jitter during table spawn) seed-deterministic
+// without rewriting shared helpers. No-op when no seed is active.
+function withCashRng(fn) {
+  if (cashRng === Math.random) return fn();
+  const orig = Math.random;
+  Math.random = cashRng;
+  try { return fn(); } finally { Math.random = orig; }
+}
+
 // Cash-engine deck: string ranks ('2'..'A') + unicode suits, used only by
 // the cash table UI and renderCard. Renamed from makeDeck to avoid colliding
 // with the tour engine's makeDeck (which uses numeric 2..14 ranks and a
@@ -14004,7 +14066,7 @@ function makeCashDeck() {
 }
 function shuffleCashDeck(d) {
   for (let i = d.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(cashRng() * (i + 1));
     const tmp = d[i]; d[i] = d[j]; d[j] = tmp;
   }
 }
@@ -14093,7 +14155,7 @@ function decideCashAction(seat, hole, board, callAmount, currentBet, bb, pot, va
     else if (high === 14 && suited) strength = 0.55;
     else if (high >= 12 && low >= 10) strength = 0.50;
     else if (suited && (high - low) <= 4) strength = 0.40;
-    else strength = 0.20 + Math.random() * 0.15;
+    else strength = 0.20 + cashRng() * 0.15;
   } else {
     const v = ev.value;
     // Map evaluator value (~0..90000) to 0..1.
@@ -14104,21 +14166,21 @@ function decideCashAction(seat, hole, board, callAmount, currentBet, bb, pot, va
     else strength = 0.95;
   }
   // Random bluff/passive noise.
-  const noise = (Math.random() - 0.5) * 0.10;
+  const noise = (cashRng() - 0.5) * 0.10;
   const adj = Math.max(0.02, Math.min(0.99, strength + noise));
   const callRatio = callAmount > 0 ? callAmount / Math.max(1, pot) : 0;
   // Decision.
   if (callAmount === 0) {
     // Check or bet.
-    if (adj > 0.65 && Math.random() < 0.6) return { kind: 'raise', amount: Math.min(seat.stack + 0, currentBet + Math.max(bb * 2, Math.round(pot * 0.6))) };
+    if (adj > 0.65 && cashRng() < 0.6) return { kind: 'raise', amount: Math.min(seat.stack + 0, currentBet + Math.max(bb * 2, Math.round(pot * 0.6))) };
     return { kind: 'check' };
   }
   // Pot odds.
   const potOdds = callAmount / (pot + callAmount);
   if (adj < potOdds - 0.05) return { kind: 'fold' };
-  if (adj > 0.78 && Math.random() < 0.5) return { kind: 'raise', amount: Math.min(seat.stack + bets_safe(seat), currentBet + Math.max(bb * 2, Math.round(pot * 0.8))) };
+  if (adj > 0.78 && cashRng() < 0.5) return { kind: 'raise', amount: Math.min(seat.stack + bets_safe(seat), currentBet + Math.max(bb * 2, Math.round(pot * 0.8))) };
   if (adj > 0.55) return { kind: 'call' };
-  if (Math.random() < 0.20) return { kind: 'call' };
+  if (cashRng() < 0.20) return { kind: 'call' };
   return { kind: 'fold' };
 }
 function bets_safe(seat) { return 0; }
@@ -15434,15 +15496,35 @@ const SpectatorState = {
     eventType: 'regular',                  // 'regular' | 'major' | 'main'
     handDelayMs: 2500,
     directorIntervalSec: 8,
+    // v69.45 — "logical conclusion" controls for liveCash. A simulation needs
+    // a defined scope; cash games don't end on their own, so a run stops at:
+    //   'hands'   — after runLimitValue total hands across all tables
+    //   'minutes' — after runLimitValue minutes of wall-clock time
+    //   'busts'   — once runLimitValue bot seats have busted (stack < BB)
+    //   'endless' — never auto-stops (ambient demo; busted tables auto-rebuy)
+    runLimitMode: 'hands',
+    runLimitValue: 500,
+    // Optional RNG seed string. Blank => a fresh random seed is generated and
+    // recorded; supplying the same string re-derives the same session.
+    seed: '',
   },
   stats: {
     handsPlayed: 0, biggestPot: 0, biggestPotHand: null, biggestPotTableId: null,
     showdownsCount: 0, foldEndCount: 0, eliminations: 0,
     perTable: {},                          // tableId -> {hands, biggestPot, ...}
   },
+  // v69.45 — per-session audit trail. `session` holds the frozen settings +
+  // seed + run-limit + (when done) computed summary; `handLog` is an
+  // append-only record of every resolved spectator hand, bounded only by a
+  // memory ceiling (NOT the lossy 1000-hand HistoryStore ring buffer), so the
+  // exported CSV is a complete record of the run.
+  session: null,                           // see spectatorInitSession()
+  handLog: [],                             // [{seq, handId, tableId, ... , holes}]
+  handLogDropped: 0,                       // count rolled off if SPECTATOR_HANDLOG_MAX exceeded
   tournament: null,                        // { eventType, fieldSize, round, matches[], surviving[], history[] }
   broadcast: null,                         // { event, eventType, name, year, narrative[], cursor, playing, timer }
 };
+const SPECTATOR_HANDLOG_MAX = 100000;      // ~100k hands; bounded-run CSVs are complete, endless runs become a ring buffer
 
 // --- Spawn a single AI-only cash-style table -------------------------------
 function spectatorSpawnOneCashTable(opts) {
@@ -15463,6 +15545,13 @@ function spectatorSpawnOneCashTable(opts) {
     button: 0,
     handCount: 0,
     handState: null,
+    // v69.44.11 — spectator tables must carry the same `stats` shape as
+    // human-occupied cash tables. resolveCashHand()/runItTwiceResolve() do
+    // `t.stats.totalPot += …` unconditionally, so a missing stats object
+    // threw a TypeError on the first hand's resolution — which left
+    // h.phase stuck at 'auto' and never scheduled the auto-deal timer,
+    // permanently wedging every spectator table ("Hand in progress" forever).
+    stats: { totalPot: 0, avgPot: 0, handsPerHour: 0 },
     spectatorMode: true,
     spectatorLabel: label,
     spectatorCreatedAt: Date.now(),
@@ -15470,25 +15559,31 @@ function spectatorSpawnOneCashTable(opts) {
   const seatNames = opts.seatNames || null;
   const seatSkills = opts.seatSkills || null;
   const seatStacks = opts.seatStacks || null;
-  for (let i = 0; i < seats; i++) {
-    let skill;
-    if (seatSkills && seatSkills[i] != null) skill = seatSkills[i];
-    else if (skillMix === 'beginner') skill = 0.18 + Math.random() * 0.20;
-    else if (skillMix === 'pro') skill = 0.65 + Math.random() * 0.20;
-    else if (skillMix === 'elite') skill = 0.82 + Math.random() * 0.15;
-    else skill = 0.20 + Math.random() * 0.70;
-    const pid = -((newId * 100) + i + 1);
-    t.seats[i] = {
-      playerId: pid,
-      name: (seatNames && seatNames[i]) || ('Bot #' + Math.abs(pid)),
-      skill: skill,
-      stack: (seatStacks && seatStacks[i]) || (200 * stakes.bb),
-      sessionBuyIn: 200 * stakes.bb,
-      handsPlayed: 0,
-      strokeLedger: 0,
-      profile: makeProfileForSkill(skill, variant === 'pure' ? 'pure' : 'yellowjacket'),
-    };
-  }
+  // Build the seats inside withCashRng so seeded sessions get deterministic
+  // skill rolls AND deterministic profile micro-jitter (makeProfileForSkill
+  // reads Math.random directly). No-op when no seed is active.
+  withCashRng(() => {
+    for (let i = 0; i < seats; i++) {
+      let skill;
+      if (seatSkills && seatSkills[i] != null) skill = seatSkills[i];
+      else if (skillMix === 'beginner') skill = 0.18 + cashRng() * 0.20;
+      else if (skillMix === 'pro') skill = 0.65 + cashRng() * 0.20;
+      else if (skillMix === 'elite') skill = 0.82 + cashRng() * 0.15;
+      else skill = 0.20 + cashRng() * 0.70;
+      const pid = -((newId * 100) + i + 1);
+      const startStack = (seatStacks && seatStacks[i]) || (200 * stakes.bb);
+      t.seats[i] = {
+        playerId: pid,
+        name: (seatNames && seatNames[i]) || ('Bot #' + Math.abs(pid)),
+        skill: skill,
+        stack: startStack,
+        sessionBuyIn: startStack,                 // P&L is measured against the actual starting stack
+        handsPlayed: 0,
+        strokeLedger: 0,
+        profile: makeProfileForSkill(skill, variant === 'pure' ? 'pure' : 'yellowjacket'),
+      };
+    }
+  });
   CashLobby.tables.push(t);
   SpectatorState.tableIds.push(t.id);
   SpectatorState.logSeen[t.id] = 0;
@@ -15501,33 +15596,42 @@ function spectatorSpawnOneCashTable(opts) {
 // --- Mode 1: spawn N parallel cash tables ----------------------------------
 function spectatorStartLiveCash() {
   spectatorTeardown();
+  spectatorInitSession('liveCash');
   const n = Math.max(1, Math.min(12, SpectatorState.setup.cashTables));
   for (let i = 0; i < n; i++) {
     spectatorSpawnOneCashTable({ label: 'Table ' + (i + 1) });
   }
-  spectatorPushLog(null, '🎬 Live Cash broadcast started — ' + n + ' tables', 'meta');
+  const sess = SpectatorState.session;
+  const limTxt = sess.runLimit.mode === 'endless' ? 'endless'
+    : sess.runLimit.mode === 'hands' ? (sess.runLimit.value.toLocaleString() + ' hands')
+    : sess.runLimit.mode === 'minutes' ? (sess.runLimit.value + ' min')
+    : ('until ' + sess.runLimit.value + ' bots bust');
+  spectatorPushLog(null, '🎬 Live Cash session started — ' + n + ' tables · ' + limTxt + ' · seed ' + (sess.seed || '(random)'), 'meta');
 }
 
 // --- Mode 2: spawn a small heads-up tournament -----------------------------
 function spectatorStartLiveTourney() {
   spectatorTeardown();
+  spectatorInitSession('liveTourney');
   const evType = SpectatorState.setup.eventType;
   const fieldCap = evType === 'main' ? 32 : (evType === 'major' ? 16 : 8);
   // Build a synthetic field — pull skills uniformly from the chosen profile pool
   const players = [];
-  for (let i = 0; i < fieldCap; i++) {
-    let skill;
-    if (evType === 'main') skill = 0.30 + Math.random() * 0.65;       // wide field
-    else if (evType === 'major') skill = 0.55 + Math.random() * 0.40; // pro skewed
-    else skill = 0.40 + Math.random() * 0.50;                         // mid-pro
-    players.push({
-      id: -1000 - i,
-      name: spectatorMakePlayerName(i),
-      skill: skill,
-      eliminatedRound: null,
-      finalPlace: null,
-    });
-  }
+  withCashRng(() => {
+    for (let i = 0; i < fieldCap; i++) {
+      let skill;
+      if (evType === 'main') skill = 0.30 + cashRng() * 0.65;       // wide field
+      else if (evType === 'major') skill = 0.55 + cashRng() * 0.40; // pro skewed
+      else skill = 0.40 + cashRng() * 0.50;                         // mid-pro
+      players.push({
+        id: -1000 - i,
+        name: spectatorMakePlayerName(i),
+        skill: skill,
+        eliminatedRound: null,
+        finalPlace: null,
+      });
+    }
+  });
   // Pair into round-1 HU matches
   const matches = [];
   for (let i = 0; i < players.length; i += 2) {
@@ -15555,6 +15659,12 @@ function spectatorSpawnRoundMatches() {
   const tour = SpectatorState.tournament;
   if (!tour) return;
   const stakes = { sb: 25, bb: 50 };
+  // v69.45 — 40bb heads-up matches. The original 200bb depth meant a single HU
+  // match could run many hundreds of hands before someone busted; an 8-player
+  // field would take thousands of hands across 3 rounds and "concludes via
+  // champion" was true only in theory. 40bb keeps the bracket lively so the
+  // tournament actually reaches its champion in a reasonable run.
+  const MATCH_STACK_BB = 40;
   tour.matches.forEach((m, i) => {
     if (m.tableId != null) return;
     const t = spectatorSpawnOneCashTable({
@@ -15565,7 +15675,7 @@ function spectatorSpawnRoundMatches() {
       label: 'R' + tour.round + ' Match ' + (i + 1),
       seatNames: [m.p1.name, m.p2.name],
       seatSkills: [m.p1.skill, m.p2.skill],
-      seatStacks: [200 * stakes.bb, 200 * stakes.bb],
+      seatStacks: [MATCH_STACK_BB * stakes.bb, MATCH_STACK_BB * stakes.bb],
     });
     m.tableId = t.id;
     m.p1.tableId = t.id; m.p1.seatIdx = 0;
@@ -15608,11 +15718,14 @@ function spectatorAdvanceTourney() {
     SpectatorState.tableIds = SpectatorState.tableIds.filter(id => id !== m.tableId);
   });
   if (winners.length === 1) {
-    // Champion!
+    // Champion! — the tournament's logical conclusion.
     const champ = winners[0];
     spectatorPushLog(null, '🏆 CHAMPION: ' + champ.name + ' wins the ' + tour.eventType.toUpperCase() + ' (skill ' + champ.skill.toFixed(2) + ')', 'champion');
     tour.matches = [];
+    tour.champion = champ;
     SpectatorState.featuredTableId = null;
+    // v69.45 — finalize the session so the results panel + CSV export unlock.
+    try { spectatorFinishSession('champion crowned'); } catch (_) {}
     return;
   }
   if (winners.length === 2) {
@@ -15744,12 +15857,404 @@ function spectatorTeardown() {
     handsPlayed: 0, biggestPot: 0, biggestPotHand: null, biggestPotTableId: null,
     showdownsCount: 0, foldEndCount: 0, eliminations: 0, perTable: {},
   };
+  SpectatorState.session = null;
+  SpectatorState.handLog = [];
+  SpectatorState.handLogDropped = 0;
+  clearCashRngSeed();
 }
 
 // Back-compat shims (resolveCashHand still calls spawnSpectatorTable in the
 // dead code path nothing else references — safe to keep as no-op aliases)
 function spawnSpectatorTable() { return spectatorSpawnOneCashTable({ label: 'Solo' }); }
 function stopSpectatorTable() { spectatorTeardown(); }
+
+// ===========================================================================
+// v69.45 — Spectator SESSION lifecycle: seed, run-limit terminus, hand log,
+// completion summary, CSV/JSON export. A spectator "session" is a single run
+// with a defined scope so it reaches a logical conclusion and produces an
+// auditable artifact — the same shape the Simulator tab gives its event runs.
+// ===========================================================================
+
+// Snapshot the current setup form into a frozen session record + arm the seed.
+function spectatorInitSession(mode) {
+  let seedStr = String(SpectatorState.setup.seed || '').trim();
+  if (!seedStr) seedStr = String(Date.now() % 1e9) + '-' + ((Math.random() * 1e6) | 0);
+  const seedNum = setCashRngSeed(seedStr);
+  const su = SpectatorState.setup;
+  SpectatorState.handLog = [];
+  SpectatorState.handLogDropped = 0;
+  SpectatorState.session = {
+    mode: mode,
+    startedAt: Date.now(),
+    endedAt: null,
+    status: 'running',                     // 'running' | 'complete' | 'stopped'
+    endReason: null,
+    seed: seedStr,
+    seedNumeric: seedNum,
+    runLimit: {
+      mode: (mode === 'liveCash') ? (su.runLimitMode || 'hands') : 'tournament',
+      value: Math.max(1, Math.floor(+su.runLimitValue || 500)),
+    },
+    settings: {
+      mode: mode,
+      variant: su.variant,
+      stakesSb: su.stakes.sb, stakesBb: su.stakes.bb,
+      skillMix: su.skillMix,
+      cashTables: su.cashTables, cashSeats: su.cashSeats,
+      eventType: su.eventType,
+      handDelayMs: su.handDelayMs, directorIntervalSec: su.directorIntervalSec,
+      directorOn: !!SpectatorState.director.on,
+      rakePct: (NectarState && NectarState.config) ? NectarState.config.rakeStructurePct : null,
+      rakeCapPerHand: (NectarState && NectarState.config) ? NectarState.config.rakeCapPerHand : null,
+      goldenHandProb: (typeof GoldenLottery !== 'undefined' && GoldenLottery.config) ? GoldenLottery.config.handProbability : null,
+      goldenRakeShare: (typeof GoldenLottery !== 'undefined' && GoldenLottery.config) ? GoldenLottery.config.rakeShare : null,
+      appVersion: (typeof APP_VERSION === 'string') ? APP_VERSION : null,
+    },
+    archiveAtStart: {
+      rake: (NectarState && NectarState.archive) ? (NectarState.archive.totalRakeCollected || 0) : 0,
+    },
+    summary: null,
+  };
+}
+
+function spectatorSessionDone() {
+  return !!(SpectatorState.session && SpectatorState.session.status !== 'running');
+}
+
+// Append one resolved hand to the session log. Called from resolveCashHand's
+// spectator block (so it covers liveCash AND liveTourney match hands).
+function spectatorRecordHand(t, h, info) {
+  const sess = SpectatorState.session;
+  if (!sess) return;
+  if (SpectatorState.handLog.length >= SPECTATOR_HANDLOG_MAX) {
+    SpectatorState.handLog.shift();
+    SpectatorState.handLogDropped++;
+  }
+  const holes = {};
+  for (const i of (h.seated || [])) {
+    if (h.hole && h.hole[i]) holes[i] = h.hole[i].map(c => c.rank + c.suit).join(' ');
+  }
+  SpectatorState.handLog.push({
+    seq: SpectatorState.stats.handsPlayed,             // global hand # (already incremented in resolveCashHand)
+    handId: h.handId,
+    tableId: t.id,
+    tableLabel: t.spectatorLabel || ('T' + t.id),
+    round: (sess.mode === 'liveTourney' && SpectatorState.tournament) ? SpectatorState.tournament.round : null,
+    variant: t.variant,
+    players: (h.seated || []).length,
+    streetReached: h.street,                            // 0=preflop 1=flop 2=turn 3=river
+    pot: Math.round((info.pot || 0) * 100) / 100,       // rake-deducted pot awarded
+    rake: Math.round((info.rake || 0) * 100) / 100,
+    showdown: !!info.showdown,
+    winnerSeat: info.winnerIdx != null ? info.winnerIdx : null,
+    winnerName: info.winnerName || null,
+    winnerClass: info.winnerClass || null,
+    board: (h.board || []).map(c => c.rank + c.suit).join(' '),
+    goldenCard: h.goldenCard ? h.goldenCard.key : null,
+    goldenHit: !!h.goldenWinTriggered,
+    holes: holes,
+    ts: Date.now(),
+  });
+}
+
+// Has the run reached its scope? (liveCash only — tourney concludes via champion.)
+function spectatorCheckTerminus() {
+  const sess = SpectatorState.session;
+  if (!sess || sess.status !== 'running') return false;
+  if (sess.mode !== 'liveCash') return false;
+  const lim = sess.runLimit || {};
+  if (lim.mode === 'hands')   return SpectatorState.stats.handsPlayed >= lim.value;
+  if (lim.mode === 'minutes') return (Date.now() - sess.startedAt) >= lim.value * 60000;
+  if (lim.mode === 'busts') {
+    let busted = 0;
+    SpectatorState.tableIds.forEach(id => {
+      const tt = CashLobby.tables.find(x => x.id === id);
+      if (tt) busted += tt.seats.filter(s => s && s.stack < tt.bigBlind).length;
+    });
+    return busted >= lim.value;
+  }
+  return false;  // 'endless'
+}
+
+// Freeze every live table, compute the summary, mark the session complete.
+function spectatorFinishSession(reason) {
+  const sess = SpectatorState.session;
+  if (!sess || sess.status !== 'running') return;
+  sess.status = 'complete';
+  sess.endedAt = Date.now();
+  sess.endReason = reason || (sess.mode === 'liveTourney' ? 'champion crowned'
+    : (sess.runLimit && sess.runLimit.mode === 'hands' ? 'hand limit reached'
+    : sess.runLimit && sess.runLimit.mode === 'minutes' ? 'time limit reached'
+    : sess.runLimit && sess.runLimit.mode === 'busts' ? 'bust limit reached'
+    : 'complete'));
+  SpectatorState.tableIds.forEach(id => {
+    const tt = CashLobby.tables.find(x => x.id === id);
+    if (!tt) return;
+    tt.spectatorMode = false;                          // stops auto-deal & engine ticks from re-arming
+    if (tt.handState) {
+      if (tt.handState.tickTimer) { clearTimeout(tt.handState.tickTimer); tt.handState.tickTimer = null; }
+      if (tt.handState.timer) { clearTimeout(tt.handState.timer); tt.handState.timer = null; }
+    }
+  });
+  sess.summary = spectatorComputeSummary();
+  spectatorPushLog(null, '🏁 Session complete (' + sess.endReason + ') — ' + SpectatorState.stats.handsPlayed.toLocaleString()
+    + ' hands · seed ' + (sess.seed || '(random)'), 'champion');
+  clearCashRngSeed();
+  if (document.body.dataset.activeView === 'spectator') { try { Views.spectator(); } catch (_) {} }
+}
+
+function spectatorComputeSummary() {
+  const s = SpectatorState.stats;
+  const sess = SpectatorState.session || {};
+  const perSeat = [];
+  SpectatorState.tableIds.forEach(id => {
+    const tt = CashLobby.tables.find(x => x.id === id);
+    if (!tt) return;
+    tt.seats.forEach((seat, idx) => {
+      if (!seat) return;
+      const buyIn = seat.sessionBuyIn || 0;
+      perSeat.push({
+        tableId: id, tableLabel: tt.spectatorLabel || ('T' + id), seat: idx,
+        playerId: seat.playerId, name: seat.name,
+        skill: (typeof seat.skill === 'number') ? seat.skill : null,
+        buyIn: buyIn, finalStack: seat.stack || 0, net: (seat.stack || 0) - buyIn,
+        handsPlayed: seat.handsPlayed || 0, strokes: seat.strokeLedger || 0,
+        busted: seat.stack < tt.bigBlind,
+      });
+    });
+  });
+  perSeat.sort((a, b) => b.net - a.net);
+  const perTable = [];
+  SpectatorState.tableIds.forEach(id => {
+    const pt = s.perTable[id] || {};
+    const tt = CashLobby.tables.find(x => x.id === id);
+    perTable.push({
+      tableId: id, label: tt ? (tt.spectatorLabel || ('T' + id)) : ('T' + id),
+      hands: pt.hands || 0, biggestPot: pt.biggestPot || 0,
+      handCount: tt ? (tt.handCount || 0) : 0,
+    });
+  });
+  const rakeAtStart = (sess.archiveAtStart && typeof sess.archiveAtStart.rake === 'number') ? sess.archiveAtStart.rake : 0;
+  const rakeCollected = ((NectarState && NectarState.archive) ? (NectarState.archive.totalRakeCollected || 0) : 0) - rakeAtStart;
+  const goldenHits = SpectatorState.handLog.filter(r => r.goldenHit).length;
+  return {
+    handsPlayed: s.handsPlayed, showdowns: s.showdownsCount, foldOuts: s.foldEndCount,
+    biggestPot: s.biggestPot, biggestPotHand: s.biggestPotHand, biggestPotTableId: s.biggestPotTableId,
+    eliminations: s.eliminations,
+    rakeCollected: rakeCollected, goldenHits: goldenHits,
+    handsLogged: SpectatorState.handLog.length, handsDropped: SpectatorState.handLogDropped,
+    perSeat: perSeat, perTable: perTable,
+    durationSec: sess.endedAt && sess.startedAt ? Math.round((sess.endedAt - sess.startedAt) / 1000) : null,
+  };
+}
+
+// Top-up busted seats so an ENDLESS run never wedges. Returns true if it touched anything.
+function spectatorRebuyTable(t) {
+  if (!t || !t.spectatorMode) return false;
+  let rebought = 0;
+  for (const seat of t.seats) {
+    if (!seat) continue;
+    if (seat.stack < t.bigBlind) {
+      const target = seat.sessionBuyIn || (200 * t.bigBlind);
+      // Top the seat back to its buy-in. This mints Nectar (it's a demo mode,
+      // not an audited economy run) — recorded in the feed for transparency.
+      try { nectarPost({ type: 'promo.bonus', from: null, to: seat.playerId, amount: target - seat.stack, reason: 'Spectator endless-mode rebuy', meta: { tableId: t.id } }); } catch (_) {}
+      seat.stack = target;
+      rebought++;
+    }
+  }
+  if (rebought > 0) spectatorPushLog(t.id, '♻ ' + rebought + ' seat(s) rebought (endless mode)', 'meta');
+  return rebought > 0;
+}
+
+// Deal the next hand at a spectator cash table, honoring session state.
+// Replaces the bare startCashHand() the auto-deal timer used to call.
+function spectatorDealNextHand(t) {
+  if (!t || !t.spectatorMode) return;
+  if (SpectatorState.paused) return;
+  if (spectatorSessionDone()) return;
+  const sess = SpectatorState.session;
+  // Endless mode: keep tables alive by rebuying when they'd otherwise stall.
+  if (sess && sess.runLimit && sess.runLimit.mode === 'endless') {
+    const funded = t.seats.filter(s => s && !s.sittingOut && s.stack >= t.bigBlind).length;
+    if (funded < 2) spectatorRebuyTable(t);
+  }
+  try { startCashHand(t); } catch (_) { /* swallow */ }
+  // Safety net: if a bounded liveCash run drains every table below dealable
+  // depth before its hand/time/bust limit, the terminus check (which only
+  // fires when a hand resolves) would never run again and the run would hang.
+  // Detect that here and conclude the session cleanly instead.
+  if (sess && sess.mode === 'liveCash' && sess.status === 'running' && sess.runLimit && sess.runLimit.mode !== 'endless') {
+    const anyDealable = SpectatorState.tableIds.some(id => {
+      const tt = CashLobby.tables.find(x => x.id === id);
+      if (!tt) return false;
+      if (tt.handState && tt.handState.phase !== 'complete') return true;     // a hand is live
+      return tt.seats.filter(s => s && !s.sittingOut && s.stack >= tt.bigBlind).length >= 2;
+    });
+    if (!anyDealable) { try { spectatorFinishSession('all tables drained'); } catch (_) {} }
+  }
+}
+
+// --- Spectator session export (CSV / JSON) ---------------------------------
+function spectatorExportFilenameBase() {
+  const sess = SpectatorState.session || {};
+  const seedPart = (sess.seed || 'noseed').toString().replace(/[^a-z0-9]+/gi, '').slice(0, 24) || 'noseed';
+  const d = new Date(sess.endedAt || Date.now());
+  const stamp = d.getFullYear() + ('0'+(d.getMonth()+1)).slice(-2) + ('0'+d.getDate()).slice(-2) + '_' + ('0'+d.getHours()).slice(-2) + ('0'+d.getMinutes()).slice(-2) + ('0'+d.getSeconds()).slice(-2);
+  return 'spectator_' + (sess.mode || 'session') + '_' + seedPart + '_' + stamp;
+}
+
+function spectatorExportCSV() {
+  try {
+    const sess = SpectatorState.session;
+    if (!sess) { toast('No spectator session to export'); return; }
+    const summary = sess.summary || spectatorComputeSummary();
+    const esc = v => {
+      const sv = String(v == null ? '' : v);
+      return /[",\r\n]/.test(sv) ? '"' + sv.replace(/"/g, '""') + '"' : sv;
+    };
+    const row = (arr) => arr.map(esc).join(',') + '\r\n';
+    const chunks = ['﻿'];  // UTF-8 BOM so Excel doesn't mojibake the suit glyphs
+    // --- Section: session metadata (self-describing config snapshot) ---
+    chunks.push(row(['section', 'spectator_session']));
+    chunks.push(row(['key', 'value']));
+    const meta = [
+      ['app_version', sess.settings.appVersion],
+      ['generated_at', new Date().toISOString()],
+      ['mode', sess.mode],
+      ['status', sess.status],
+      ['end_reason', sess.endReason],
+      ['started_at', new Date(sess.startedAt).toISOString()],
+      ['ended_at', sess.endedAt ? new Date(sess.endedAt).toISOString() : ''],
+      ['duration_sec', summary.durationSec],
+      ['seed', sess.seed],
+      ['seed_numeric', sess.seedNumeric],
+      ['rng', sess.seedNumeric != null ? 'seeded:mulberry32' : 'Math.random'],
+      ['rng_scope', 'deck shuffles, golden-card designation, bot decisions, lottery draws, run-it-twice, table skill mix + profile jitter (via withCashRng)'],
+      ['run_limit_mode', sess.runLimit.mode],
+      ['run_limit_value', sess.runLimit.value],
+      ['variant', sess.settings.variant],
+      ['stakes_sb', sess.settings.stakesSb],
+      ['stakes_bb', sess.settings.stakesBb],
+      ['skill_mix', sess.settings.skillMix],
+      ['tables', sess.mode === 'liveCash' ? sess.settings.cashTables : ''],
+      ['seats_per_table', sess.mode === 'liveCash' ? sess.settings.cashSeats : 2],
+      ['event_type', sess.mode === 'liveTourney' ? sess.settings.eventType : ''],
+      ['hand_delay_ms', sess.settings.handDelayMs],
+      ['director_interval_sec', sess.settings.directorIntervalSec],
+      ['director_on', sess.settings.directorOn],
+      ['rake_pct', sess.settings.rakePct],
+      ['rake_cap_per_hand', sess.settings.rakeCapPerHand],
+      ['golden_hand_prob', sess.settings.goldenHandProb],
+      ['golden_rake_share', sess.settings.goldenRakeShare],
+      ['hands_played', summary.handsPlayed],
+      ['showdowns', summary.showdowns],
+      ['fold_outs', summary.foldOuts],
+      ['biggest_pot', Math.round(summary.biggestPot * 100) / 100],
+      ['biggest_pot_hand', summary.biggestPotHand],
+      ['biggest_pot_table', summary.biggestPotTableId],
+      ['eliminations', summary.eliminations],
+      ['golden_card_hits', summary.goldenHits],
+      ['total_rake_collected', Math.round(summary.rakeCollected * 100) / 100],
+      ['hands_logged', summary.handsLogged],
+      ['hands_dropped_from_log', summary.handsDropped],
+      ['log_truncated', summary.handsDropped > 0],
+    ];
+    meta.forEach(kv => chunks.push(row(kv)));
+    chunks.push('\r\n');
+    // --- Section: per-table ---
+    chunks.push(row(['section', 'per_table']));
+    chunks.push(row(['table_id', 'label', 'hands', 'biggest_pot']));
+    summary.perTable.forEach(pt => chunks.push(row([pt.tableId, pt.label, pt.hands, Math.round(pt.biggestPot * 100) / 100])));
+    chunks.push('\r\n');
+    // --- Section: per-seat (bot P&L) ---
+    chunks.push(row(['section', 'per_seat']));
+    chunks.push(row(['table_id', 'table_label', 'seat', 'player_id', 'name', 'skill', 'buy_in', 'final_stack', 'net_pl', 'hands_played', 'stroke_ledger', 'busted']));
+    summary.perSeat.forEach(p => chunks.push(row([
+      p.tableId, p.tableLabel, p.seat, p.playerId, p.name,
+      p.skill != null ? p.skill.toFixed(4) : '',
+      Math.round(p.buyIn * 100) / 100, Math.round(p.finalStack * 100) / 100, Math.round(p.net * 100) / 100,
+      p.handsPlayed, Math.round(p.strokes * 100) / 100, p.busted,
+    ])));
+    chunks.push('\r\n');
+    // --- Section: tournament field (liveTourney only) ---
+    if (sess.mode === 'liveTourney' && SpectatorState.tournament) {
+      const tour = SpectatorState.tournament;
+      const maxRound = (tour.players || []).reduce((m, p) => Math.max(m, p.eliminatedRound || 0), tour.round || 1);
+      chunks.push(row(['section', 'tournament_field']));
+      chunks.push(row(['player_id', 'name', 'skill', 'eliminated_round', 'finished']));
+      (tour.players || []).forEach(p => {
+        const finished = p.eliminatedRound == null
+          ? 'CHAMPION'
+          : ('out R' + p.eliminatedRound);
+        chunks.push(row([p.id, p.name, (typeof p.skill === 'number') ? p.skill.toFixed(4) : '', p.eliminatedRound == null ? '' : p.eliminatedRound, finished]));
+      });
+      chunks.push(row(['field_size', tour.fieldSize]));
+      chunks.push(row(['rounds', maxRound]));
+      chunks.push(row(['champion', tour.champion ? tour.champion.name : '']));
+      chunks.push('\r\n');
+    }
+    // --- Section: per-hand (the authoritative record) ---
+    chunks.push(row(['section', 'hands']));
+    chunks.push(row(['hand_no', 'hand_id', 'table_id', 'table_label', 'round', 'variant', 'players', 'street_reached', 'pot', 'rake', 'showdown', 'winner_seat', 'winner_name', 'winner_class', 'board', 'golden_card', 'golden_hit', 'hole_cards']));
+    SpectatorState.handLog.forEach(r => {
+      const holeStr = Object.keys(r.holes || {}).map(k => 'S' + k + ':' + r.holes[k]).join(' ');
+      chunks.push(row([
+        r.seq, r.handId, r.tableId, r.tableLabel, r.round == null ? '' : r.round, r.variant, r.players,
+        r.streetReached, r.pot, r.rake, r.showdown,
+        r.winnerSeat == null ? '' : r.winnerSeat, r.winnerName || '', r.winnerClass || '',
+        r.board || '', r.goldenCard || '', r.goldenHit, holeStr,
+      ]));
+    });
+    chunks.push('\r\n');
+    // --- Section: broadcast feed (last 500 lines, for context) ---
+    chunks.push(row(['section', 'feed']));
+    chunks.push(row(['idx', 'ts', 'table_id', 'kind', 'line']));
+    (SpectatorState.log || []).forEach((e, i) => chunks.push(row([i, new Date(e.ts).toISOString(), e.tableId == null ? '' : e.tableId, e.kind, e.line])));
+    const blob = new Blob(chunks, { type: 'text/csv;charset=utf-8' });
+    const name = spectatorExportFilenameBase() + '.csv';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.rel = 'noopener'; a.style.display = 'none';
+    document.body.appendChild(a);
+    try { a.click(); } catch (err) { try { window.open(url, '_blank', 'noopener'); } catch (_) {} }
+    document.body.removeChild(a);
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 30000);
+    if (typeof toast === 'function') {
+      const kb = blob.size / 1024;
+      toast('Exported ' + name + ' (' + (kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : kb.toFixed(0) + ' KB') + ')');
+    }
+  } catch (err) {
+    console.error('Spectator CSV export failed:', err);
+    if (typeof toast === 'function') toast('CSV export failed: ' + (err && err.message ? err.message : err));
+  }
+}
+
+function spectatorExportJSON() {
+  try {
+    const sess = SpectatorState.session;
+    if (!sess) { toast('No spectator session to export'); return; }
+    const payload = {
+      session: { mode: sess.mode, startedAt: sess.startedAt, endedAt: sess.endedAt, status: sess.status, endReason: sess.endReason, seed: sess.seed, seedNumeric: sess.seedNumeric, runLimit: sess.runLimit, settings: sess.settings },
+      summary: sess.summary || spectatorComputeSummary(),
+      hands: SpectatorState.handLog,
+      feed: SpectatorState.log,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const name = spectatorExportFilenameBase() + '.json';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.rel = 'noopener'; a.style.display = 'none';
+    document.body.appendChild(a);
+    try { a.click(); } catch (err) { try { window.open(url, '_blank', 'noopener'); } catch (_) {} }
+    document.body.removeChild(a);
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 30000);
+    if (typeof toast === 'function') toast('Exported ' + name);
+  } catch (err) {
+    console.error('Spectator JSON export failed:', err);
+    if (typeof toast === 'function') toast('JSON export failed: ' + (err && err.message ? err.message : err));
+  }
+}
 
 // --- Universal broadcast log -----------------------------------------------
 function spectatorPushLog(tableId, line, kind) {
@@ -16154,10 +16659,127 @@ function yjScoreFromClassName(cn) {
 //   - Log: scrolling broadcast feed (refreshes on tick)
 // Each region targets a stable DOM element by data-attribute.
 
+// v69.45 — render the completed-session report (mirrors the broadcast Event
+// Report card): settings + seed, headline numbers, per-table + per-bot P&L,
+// and the export buttons that produce the auditable CSV/JSON.
+function renderSpectatorResultsInto(host) {
+  const sess = SpectatorState.session;
+  if (!sess) return;
+  const sm = sess.summary || spectatorComputeSummary();
+  const fmtN = n => (n == null ? '—' : Number(n).toLocaleString());
+  const fmtSignedN = n => (n == null ? '—' : (n > 0 ? '+' : '') + Math.round(n).toLocaleString());
+  const card = el('div', { class: 'card', style: 'padding:18px;' });
+  card.appendChild(el('div', { style: 'font-size:11px; opacity:0.6; text-transform:uppercase; letter-spacing:2px;', text: (sess.mode === 'liveTourney' ? '🏆 TOURNAMENT' : '🃏 CASH') + ' SESSION · COMPLETE' }));
+  card.appendChild(el('h2', { text: '📊 Session Report', style: 'margin:6px 0 4px 0; font-size:22px; color:var(--augusta-gold-hi,#F0C75E);' }));
+  card.appendChild(el('div', { style: 'font-size:12px; opacity:0.75; margin-bottom:14px;', text:
+    'Ended: ' + sess.endReason + ' · ' + fmtN(sm.handsPlayed) + ' hands'
+    + (sm.durationSec != null ? ' · ' + sm.durationSec + 's' : '')
+    + ' · seed ' + (sess.seed || '(random)') }));
+  // Headline tiles
+  const tiles = el('div', { style: 'display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-bottom:14px;' });
+  const tile = (label, val, accent) => {
+    const t = el('div', { style: 'padding:10px; border-radius:8px; background:' + (accent ? 'linear-gradient(135deg,rgba(240,199,94,0.18),rgba(212,160,23,0.06))' : 'rgba(255,255,255,0.04)') + '; border:1px solid ' + (accent ? 'rgba(240,199,94,0.4)' : 'rgba(255,255,255,0.1)') + ';' });
+    t.appendChild(el('div', { style: 'font-size:9px; text-transform:uppercase; letter-spacing:1px; opacity:0.65;', text: label }));
+    t.appendChild(el('div', { style: 'font-size:18px; font-weight:700; color:#F0C75E; font-variant-numeric:tabular-nums;', text: val }));
+    return t;
+  };
+  tiles.appendChild(tile('Hands', fmtN(sm.handsPlayed), true));
+  tiles.appendChild(tile('Showdowns', fmtN(sm.showdowns)));
+  tiles.appendChild(tile('Fold-outs', fmtN(sm.foldOuts)));
+  tiles.appendChild(tile('Biggest pot', '◈ ' + fmtN(Math.round(sm.biggestPot)) + (sm.biggestPotHand ? ' (#' + sm.biggestPotHand + ')' : '')));
+  if (sm.eliminations > 0) tiles.appendChild(tile('Eliminations', fmtN(sm.eliminations)));
+  tiles.appendChild(tile('Golden hits', fmtN(sm.goldenHits)));
+  tiles.appendChild(tile('Rake collected', '◈ ' + fmtN(Math.round(sm.rakeCollected))));
+  card.appendChild(tiles);
+  // Tournament champion box
+  if (sess.mode === 'liveTourney' && SpectatorState.tournament && SpectatorState.tournament.champion) {
+    const ch = SpectatorState.tournament.champion;
+    const champBox = el('div', { style: 'padding:12px; margin-bottom:14px; border-radius:8px; background:linear-gradient(135deg,rgba(240,199,94,0.2),rgba(212,160,23,0.06)); border:1px solid rgba(240,199,94,0.45);' });
+    champBox.appendChild(el('div', { style: 'font-size:10px; text-transform:uppercase; letter-spacing:2px; opacity:0.7;', text: '🏆 Champion' }));
+    champBox.appendChild(el('div', { style: 'font-size:18px; font-weight:700; color:#F0C75E;', text: ch.name + (typeof ch.skill === 'number' ? '  (skill ' + ch.skill.toFixed(2) + ')' : '') }));
+    champBox.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-top:2px;', text: SpectatorState.tournament.fieldSize + '-player field' }));
+    card.appendChild(champBox);
+  }
+  // Per-bot P&L table (top + bottom of the leaderboard)
+  if (sm.perSeat && sm.perSeat.length) {
+    card.appendChild(el('div', { style: 'font-size:11px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; margin-bottom:6px;', text: '💰 Bot P&L (vs buy-in)' }));
+    const tbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:12px; margin-bottom:14px;' });
+    const thr = el('tr', { style: 'border-bottom:1px solid rgba(212,160,23,0.30);' });
+    ['#', 'Bot', 'Table', 'Skill', 'Final', 'Net', 'Hands'].forEach(h => thr.appendChild(el('th', { style: 'padding:5px 7px; text-align:left; font-weight:600; opacity:0.75;', text: h })));
+    tbl.appendChild(el('thead', null, thr));
+    const tb = el('tbody');
+    const N = sm.perSeat.length;
+    const showIdx = [];
+    for (let i = 0; i < Math.min(8, N); i++) showIdx.push(i);
+    if (N > 16) { showIdx.push(-1); for (let i = Math.max(8, N - 8); i < N; i++) showIdx.push(i); }
+    else for (let i = 8; i < N; i++) showIdx.push(i);
+    showIdx.forEach(i => {
+      if (i === -1) { const tr = el('tr'); tr.appendChild(el('td', { colspan: '7', style: 'padding:4px 7px; opacity:0.4; text-align:center;', text: '⋯ ' + (N - 16) + ' more ⋯' })); tb.appendChild(tr); return; }
+      const p = sm.perSeat[i];
+      const tr = el('tr', { style: 'border-bottom:1px dashed rgba(255,255,255,0.06);' });
+      tr.appendChild(el('td', { style: 'padding:5px 7px; opacity:0.6;', text: String(i + 1) }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px;' + (p.busted ? ' opacity:0.55;' : ''), text: p.name + (p.busted ? ' 💀' : '') }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px; opacity:0.7;', text: p.tableLabel }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px; font-variant-numeric:tabular-nums; opacity:0.7;', text: p.skill != null ? p.skill.toFixed(2) : '—' }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px; font-variant-numeric:tabular-nums;', text: '◈' + fmtN(Math.round(p.finalStack)) }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px; font-variant-numeric:tabular-nums; font-weight:700; color:' + (p.net > 0 ? '#7ED99C' : p.net < 0 ? '#E08070' : '#cfcfcf') + ';', text: fmtSignedN(p.net) }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px; font-variant-numeric:tabular-nums; opacity:0.7;', text: fmtN(p.handsPlayed) }));
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    card.appendChild(tbl);
+  }
+  // Per-table mini-summary
+  if (sm.perTable && sm.perTable.length > 1) {
+    card.appendChild(el('div', { style: 'font-size:11px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; margin-bottom:6px;', text: '🃏 Per table' }));
+    const ptWrap = el('div', { style: 'display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:6px; margin-bottom:14px; font-size:11px;' });
+    sm.perTable.forEach(pt => {
+      const b = el('div', { style: 'padding:7px 9px; border-radius:6px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);' });
+      b.appendChild(el('div', { style: 'font-weight:700; color:#F0C75E;', text: pt.label }));
+      b.appendChild(el('div', { style: 'opacity:0.7;', text: fmtN(pt.hands) + ' hands · biggest ◈' + fmtN(Math.round(pt.biggestPot)) }));
+      ptWrap.appendChild(b);
+    });
+    card.appendChild(ptWrap);
+  }
+  if (sm.handsDropped > 0) {
+    card.appendChild(el('div', { style: 'font-size:11px; color:#E0B070; margin-bottom:10px;', text: '⚠ Hand log truncated: oldest ' + fmtN(sm.handsDropped) + ' hands rolled off the ' + SPECTATOR_HANDLOG_MAX.toLocaleString() + '-hand memory ceiling. CSV contains the most recent ' + fmtN(sm.handsLogged) + '.' }));
+  }
+  // Export + re-run actions
+  const actions = el('div', { style: 'display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;' });
+  const csvBtn = el('button', { class: 'btn gold', text: '⬇ Download CSV' });
+  csvBtn.onclick = () => spectatorExportCSV();
+  actions.appendChild(csvBtn);
+  const jsonBtn = el('button', { class: 'btn ghost', text: '⬇ Download JSON' });
+  jsonBtn.onclick = () => spectatorExportJSON();
+  actions.appendChild(jsonBtn);
+  const sameBtn = el('button', { class: 'btn ghost', text: '↻ Run again (same seed)' });
+  sameBtn.onclick = () => {
+    SpectatorState.setup.seed = sess.seed || '';
+    SpectatorState.director.intervalMs = SpectatorState.setup.directorIntervalSec * 1000;
+    if (sess.mode === 'liveTourney') spectatorStartLiveTourney(); else spectatorStartLiveCash();
+    Views.spectator();
+  };
+  actions.appendChild(sameBtn);
+  card.appendChild(actions);
+  card.appendChild(el('div', { style: 'font-size:10px; opacity:0.5; margin-top:10px; line-height:1.5;', text:
+    'The CSV is self-describing: a settings + seed header, a per-hand record of every dealt hand, per-bot P&L, and the broadcast feed — re-runnable from the seed and auditable like the Simulator tab\'s run exports.' }));
+  host.appendChild(card);
+}
+
 function refreshSpectatorFeatured() {
   const host = document.querySelector('[data-spectator-featured]');
   if (!host) return;
   clear(host);
+  // v69.45 — completed liveCash / liveTourney session: show the results report
+  // (the run's "logical conclusion") in place of the featured felt. The frozen
+  // mini-felts still render in the grid below.
+  if (SpectatorState.session && SpectatorState.session.status !== 'running'
+      && (SpectatorState.session.mode === 'liveCash' || SpectatorState.session.mode === 'liveTourney')) {
+    try { renderSpectatorResultsInto(host); } catch (e) {
+      host.appendChild(el('div', { class: 'card', style: 'padding:20px;', text: 'Results render error: ' + (e && e.message) }));
+    }
+    return;
+  }
   // Broadcast (recorded) mode: no live tables, show recorded-mode panel
   if (SpectatorState.mode === 'broadcast' && SpectatorState.broadcast) {
     const b = SpectatorState.broadcast;
@@ -16517,11 +17139,30 @@ function refreshSpectatorStats() {
   host.appendChild(row('Folds out', s.foldEndCount.toLocaleString()));
   if (s.eliminations > 0) host.appendChild(row('Eliminations', String(s.eliminations)));
   host.appendChild(row('Biggest pot', '◈ ' + Math.round(s.biggestPot).toLocaleString()));
+  // v69.45 — session/run-limit progress (the path to a logical conclusion).
+  const sess = SpectatorState.session;
+  if (sess) {
+    host.appendChild(el('div', { style: 'margin-top:6px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px; margin-bottom:2px;', text: 'Session' }));
+    host.appendChild(row('Seed', String(sess.seed || '(random)')));
+    if (sess.status !== 'running') {
+      host.appendChild(row('Status', '✓ Complete (' + sess.endReason + ')'));
+      host.appendChild(el('div', { style: 'margin-top:6px; font-size:10px; opacity:0.6; font-style:italic;', text: 'Report + CSV/JSON export in the featured panel →' }));
+    } else if (sess.mode === 'liveCash') {
+      const lim = sess.runLimit || {};
+      if (lim.mode === 'hands') host.appendChild(row('Run limit', s.handsPlayed.toLocaleString() + ' / ' + lim.value.toLocaleString() + ' hands'));
+      else if (lim.mode === 'minutes') host.appendChild(row('Run limit', Math.floor((Date.now() - sess.startedAt) / 60000) + ' / ' + lim.value + ' min'));
+      else if (lim.mode === 'busts') {
+        let busted = 0;
+        SpectatorState.tableIds.forEach(id => { const tt = CashLobby.tables.find(x => x.id === id); if (tt) busted += tt.seats.filter(seat => seat && seat.stack < tt.bigBlind).length; });
+        host.appendChild(row('Run limit', busted + ' / ' + lim.value + ' bots bust'));
+      } else host.appendChild(row('Run limit', 'endless (auto-rebuy)'));
+    }
+  }
   if (SpectatorState.tournament) {
     host.appendChild(el('div', { style: 'margin-top:6px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px;', text: 'Tournament' }));
     const tt = SpectatorState.tournament;
     host.appendChild(row('Round', String(tt.round)));
-    host.appendChild(row('Surviving', String(tt.surviving.length)));
+    host.appendChild(row('Surviving', String((tt.surviving || []).length)));
     host.appendChild(row('Field size', String(tt.fieldSize)));
   }
 }
@@ -16680,6 +17321,30 @@ Views.spectator = function() {
     });
     seatsSel.onchange = () => { SpectatorState.setup.cashSeats = parseInt(seatsSel.value, 10); };
     setupCard.appendChild(seatsSel);
+
+    // v69.45 — run-length terminus so the cash session reaches a logical end.
+    setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'Run length' }));
+    const runModeSel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:6px; font-size:12px;' });
+    [
+      { v: 'hands',   l: 'Stop after N hands' },
+      { v: 'minutes', l: 'Stop after N minutes' },
+      { v: 'busts',   l: 'Stop after N bots bust' },
+      { v: 'endless', l: 'Endless (ambient — auto-rebuys)' },
+    ].forEach(o => {
+      const opt = el('option', { value: o.v, text: o.l });
+      if ((SpectatorState.setup.runLimitMode || 'hands') === o.v) opt.selected = true;
+      runModeSel.appendChild(opt);
+    });
+    const runValIn = el('input', { type: 'number', class: 'form-control', style: 'width:100%; margin-bottom:8px; font-size:12px;', min: '1', value: String(SpectatorState.setup.runLimitValue || 500) });
+    const syncRunValState = () => {
+      runValIn.disabled = (runModeSel.value === 'endless');
+      runValIn.style.opacity = runValIn.disabled ? '0.4' : '1';
+    };
+    runModeSel.onchange = () => { SpectatorState.setup.runLimitMode = runModeSel.value; syncRunValState(); };
+    runValIn.onchange = () => { SpectatorState.setup.runLimitValue = Math.max(1, parseInt(runValIn.value, 10) || 500); };
+    syncRunValState();
+    setupCard.appendChild(runModeSel);
+    setupCard.appendChild(runValIn);
   }
 
   if (SpectatorState.mode === 'liveTourney' || SpectatorState.mode === 'broadcast') {
@@ -16718,20 +17383,43 @@ Views.spectator = function() {
     dirToggle.appendChild(dirCb);
     dirToggle.appendChild(el('span', { text: 'Auto-director (cut to most interesting table)' }));
     setupCard.appendChild(dirToggle);
+
+    // v69.45 — optional RNG seed (blank = fresh random seed, recorded in the
+    // exported CSV/JSON so any run can be re-derived).
+    setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'RNG seed (blank = random)' }));
+    const seedIn = el('input', { type: 'text', class: 'form-control', style: 'width:100%; margin-bottom:10px; font-size:12px;', placeholder: 'e.g. audit-2026-05-10', value: String(SpectatorState.setup.seed || '') });
+    seedIn.onchange = () => { SpectatorState.setup.seed = seedIn.value.trim(); };
+    seedIn.oninput = () => { SpectatorState.setup.seed = seedIn.value.trim(); };
+    setupCard.appendChild(seedIn);
   }
 
   // Action buttons
   const btnRow = el('div', { style: 'display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;' });
-  const isRunning = SpectatorState.tableIds.length > 0 || SpectatorState.broadcast != null;
-  if (!isRunning) {
+  const _sess = SpectatorState.session;
+  const sessionDone = !!(_sess && _sess.status !== 'running');
+  const hasLiveTables = SpectatorState.tableIds.length > 0;
+  const broadcastActive = SpectatorState.broadcast != null;
+  const startRun = () => {
+    SpectatorState.director.intervalMs = SpectatorState.setup.directorIntervalSec * 1000;
+    if (SpectatorState.mode === 'liveCash') spectatorStartLiveCash();
+    else if (SpectatorState.mode === 'liveTourney') spectatorStartLiveTourney();
+    else spectatorStartBroadcast();
+    Views.spectator();
+  };
+  if (sessionDone) {
+    // Completed session — the frozen tables stay on screen; offer re-run + clear.
+    const againBtn = el('button', { class: 'btn gold', style: 'flex:1; min-width:90px;', text: '▶ Run again' });
+    againBtn.onclick = () => { SpectatorState.setup.seed = ''; startRun(); };
+    btnRow.appendChild(againBtn);
+    const sameSeedBtn = el('button', { class: 'btn ghost', style: 'flex:1; min-width:90px;', text: '↻ Same seed' });
+    sameSeedBtn.onclick = () => { SpectatorState.setup.seed = _sess.seed || ''; startRun(); };
+    btnRow.appendChild(sameSeedBtn);
+    const clearBtn = el('button', { class: 'btn ghost', style: 'color:#E08070; min-width:60px;', text: '⏹ Clear' });
+    clearBtn.onclick = () => { spectatorTeardown(); Views.spectator(); };
+    btnRow.appendChild(clearBtn);
+  } else if (!hasLiveTables && !broadcastActive) {
     const startBtn = el('button', { class: 'btn gold', style: 'flex:1;', text: '▶ Start' });
-    startBtn.onclick = () => {
-      SpectatorState.director.intervalMs = SpectatorState.setup.directorIntervalSec * 1000;
-      if (SpectatorState.mode === 'liveCash') spectatorStartLiveCash();
-      else if (SpectatorState.mode === 'liveTourney') spectatorStartLiveTourney();
-      else spectatorStartBroadcast();
-      Views.spectator();
-    };
+    startBtn.onclick = startRun;
     btnRow.appendChild(startBtn);
   } else {
     const pauseBtn = el('button', {
@@ -16742,13 +17430,15 @@ Views.spectator = function() {
     pauseBtn.onclick = () => {
       SpectatorState.paused = !SpectatorState.paused;
       if (!SpectatorState.paused) {
-        // Resume: kick off any tables whose hand finished while paused
-        SpectatorState.tableIds.forEach(id => {
-          const t = CashLobby.tables.find(x => x.id === id);
-          if (t && (!t.handState || t.handState.phase === 'complete')) {
-            setTimeout(() => { try { startCashHand(t); } catch (_) {} }, 200);
-          }
-        });
+        // Resume: re-deal any cash table whose hand finished while paused
+        if (!spectatorSessionDone()) {
+          SpectatorState.tableIds.forEach(id => {
+            const t = CashLobby.tables.find(x => x.id === id);
+            if (t && t.spectatorMode && (!t.handState || t.handState.phase === 'complete')) {
+              setTimeout(() => spectatorDealNextHand(t), 200);
+            }
+          });
+        }
         // Resume broadcast playback
         if (SpectatorState.broadcast && SpectatorState.broadcast.playing) {
           setTimeout(() => spectatorBroadcastTick(), 200);
