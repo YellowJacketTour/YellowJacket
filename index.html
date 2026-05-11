@@ -26251,6 +26251,13 @@ function init() {
       satelliteTierRegular: 15,
       satelliteTierMajor: 150,
       satelliteTierMain: [500, 1500, 4000, 5000],
+      // v69.53 validated wagering triad. Force-resnap on every build bump so
+      // cached users pick up the new ship defaults without manually opening
+      // the Simulator config panel. The trio was validated at pool=1000 /
+      // seasons=100 / seed=42 against the (E=0, K=3, spec) baseline.
+      honeyCapMode: 'calibrated',
+      holeEnvelopeStrokes: 3,
+      potElasticK: 5,
     };
     Object.assign(LabState.config, productionDefaults);
     toast('Production defaults updated for new build', 3500);
