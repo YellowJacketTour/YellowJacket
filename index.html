@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.10-v69.49-honey-divisor-mode-spec-vs-calibrated";
+const APP_VERSION = "2026.05.11-v69.53-ship-envelope-default";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2952,15 +2952,15 @@ function betTierForProposal(currentAgreed, proposedTotal, streetCap) {
 // CSV/JSON is unambiguous, and shown prominently in the Live Stats / Session
 // Report / scorecard / simulator config block. Default is 'spec' (matches
 // the documented behavior; cleaner audit trail).
-let CurrentHoneyDivisorMode = 'spec';
-function setHoneyDivisorMode(mode) {
-  if (mode !== 'spec' && mode !== 'calibrated') return CurrentHoneyDivisorMode;
-  CurrentHoneyDivisorMode = mode;
+let CurrentHoneyCapMode = 'spec';
+function setHoneyCapMode(mode) {
+  if (mode !== 'spec' && mode !== 'calibrated') return CurrentHoneyCapMode;
+  CurrentHoneyCapMode = mode;
   return mode;
 }
 function honeyDivisorFor(numHoles) {
   const n = Math.max(1, +numHoles || 0);
-  if (CurrentHoneyDivisorMode === 'spec') {
+  if (CurrentHoneyCapMode === 'spec') {
     // 1 stroke per N honey, where N is the round/event hole count.
     return n;
   }
@@ -2971,8 +2971,8 @@ function honeyDivisorFor(numHoles) {
   return 1;
 }
 // Friendly label for a divisor value at the active mode.
-function honeyDivisorModeLabel() {
-  return CurrentHoneyDivisorMode === 'spec' ? 'SPEC (÷N)' : 'CALIBRATED (÷stepped)';
+function honeyCapModeLabel() {
+  return CurrentHoneyCapMode === 'spec' ? 'SPEC (÷N)' : 'CALIBRATED (÷stepped)';
 }
 // honeyNormalizationDivisor = 72 (4×18, like 4 rounds of golf / majors).
 // Golf dominates; honey is the light smoothing drizzle.
@@ -3642,14 +3642,21 @@ function estimateStrengthAware(holeCards, community, street, streetCap, skillFac
 // overbet pressure on hot/carry pots and unlocks Tea Box (preflop) play
 // because k×opener of 6 exceeds the progressive floor of 1-2 honey.
 function streetCapFor(street, totalCap, agreedTotal) {
+  // v69.52 — simplified from the v43 three-layer max(progressive, min(ceiling, elastic))
+  // formula. The "progressive" layer (totalCap × {0.25,0.50,0.75,1.0} by street) never
+  // binds in any normal regime — see the E-sweep fold-cost data, which showed pot
+  // sizes are dominated by `elastic = K × agreedTotal` and the `ceiling = 3 × totalCap`,
+  // never by progressive. Progressive was a relic of a pre-elastic-K design that
+  // scheduled bet-sizing per street; pot-elastic K handles escalation organically.
+  //   cap = min(ceiling, elastic)
+  // With two knobs (totalCap and K) instead of three, the system is auditable in one
+  // line and the meaningful knob (K) is no longer hidden behind a redundant max().
   if (!totalCap || totalCap <= 3) return totalCap || 3;
-  const frac = { preflop: 0.25, flop: 0.50, turn: 0.75, river: 1.0 };
-  const progressive = Math.max(1, Math.ceil(totalCap * (frac[street] != null ? frac[street] : 1)));
   const k = CurrentPotElasticK;
-  if (k <= 0 || !Number.isFinite(+agreedTotal)) return progressive;
-  const elastic = Math.ceil(k * (+agreedTotal));
   const ceiling = totalCap * 3;
-  return Math.max(progressive, Math.min(ceiling, elastic));
+  if (k <= 0 || !Number.isFinite(+agreedTotal)) return ceiling;
+  const elastic = Math.ceil(k * (+agreedTotal));
+  return Math.min(ceiling, elastic);
 }
 
 // decideFor: decision kernel called at every actionable moment in a hand.
@@ -15585,7 +15592,8 @@ const SpectatorState = {
     seed: '',
     // v69.49 — Honey divisor calibration. 'spec' (÷N holes, v23 design intent)
     // or 'calibrated' (deployed stepped table ÷9/÷4/÷36). Locks at run-start.
-    honeyDivisorMode: 'spec',
+    // v69.53 default flipped to 'calibrated' to match DEFAULT_SIM_CONFIG.
+    honeyCapMode: 'calibrated',
   },
   stats: {
     handsPlayed: 0, biggestPot: 0, biggestPotHand: null, biggestPotTableId: null,
@@ -15721,7 +15729,7 @@ function spectatorStartLiveCash() {
 //        honeyCumSelf    — Σ Honey credits won, across every match
 //        honeyCumOpp     — Σ Honey credits won by opponents in this player's
 //                          matches (so netHoney = self − opp)
-//     final = golfCum − (honeyCumSelf − honeyCumOpp) / tour.divisor.
+//     final = golfCum − (honeyCumSelf − honeyCumOpp) / tour.honeyCap.
 function spectatorStartLiveTourney() {
   spectatorTeardown();
   spectatorInitSession('liveTourney');
@@ -15773,7 +15781,7 @@ function spectatorStartLiveTourney() {
     totalRounds: totalRounds,
     handsPerRound: handsPerRound,
     eventTotalHoles: eventTotalHoles,
-    divisor: divisor,                                // honeyDivisorFor(eventTotalHoles), fixed for the run
+    honeyCap: divisor,                               // v69.50 — the "honey cap": ÷N normalizer that caps Honey's per-hole power as round length grows. (Distinct from strokeCap, which limits per-hole pot growth.)
     surviving: players.slice(),
     matches: [],                                     // populated by spectatorSeatTourneyRound
     history: [],
@@ -15782,7 +15790,7 @@ function spectatorStartLiveTourney() {
   };
   spectatorPushLog(null, '🏆 Live Tournament — ' + evType.toUpperCase()
     + ' · field of ' + fieldCap + ' · ' + handsPerRound + ' holes/round × ' + totalRounds + ' rounds'
-    + ' · honey divisor ' + divisor + ' (= 1 stroke per ' + divisor + ' net honey)', 'meta');
+    + ' · honey cap ÷' + divisor + ' (= 1 stroke per ' + divisor + ' net honey, applied at round end)', 'meta');
   spectatorSeatTourneyRound();
 }
 
@@ -15802,7 +15810,7 @@ function spectatorMakePlayerName(idx) {
 function spectatorPlayerFinal(player) {
   if (!player) return 0;
   const tour = SpectatorState.tournament;
-  const divisor = (tour && tour.divisor) || 9;
+  const divisor = (tour && tour.honeyCap) || 9;
   let total = 0;
   for (const r of (player.rounds || [])) total += r.roundFinal;
   // Add the live in-flight match contribution (if any). Live honey is treated
@@ -15887,7 +15895,7 @@ function spectatorSeatTourneyRound() {
   }
   spectatorPushLog(null, '⛳ ' + roundName + (isFinal ? ' — championship · ' : ' begins — ') + survivors.length
     + ' player' + (survivors.length === 1 ? '' : 's') + ' · ' + pairs.length + ' HU match' + (pairs.length === 1 ? '' : 'es')
-    + ' · ' + tour.handsPerRound + ' holes · honey ÷' + tour.divisor, isFinal ? 'champion' : 'meta');
+    + ' · ' + tour.handsPerRound + ' holes · honey cap ÷' + tour.honeyCap, isFinal ? 'champion' : 'meta');
   // Kick off every match's first tick. The handDelayMs cadence is the
   // "between-holes" pacing; faster than between-hands in cash mode is fine
   // because a hole is dramatic but atomic in the tour engine.
@@ -15919,8 +15927,8 @@ function spectatorTourneyMatchTick(match) {
     mode: 'match',
     holeNumber: holeNo,
     totalHoles: tour.handsPerRound,
-    honeyDivisor: tour.divisor,
-    decisionDivisor: tour.divisor,
+    honeyDivisor: tour.honeyCap,
+    decisionDivisor: tour.honeyCap,
     isFinals: (tour.round === tour.totalRounds),
     openerHoney: 2 * (hole0 >= 9 ? (+CurrentBackNineMultiplier || 1) : 1),
     oppHistory: { a: { estBluffRate: 0.05, handsRevealed: 0, bluffsRevealed: 0 },
@@ -16106,7 +16114,7 @@ function spectatorFinishTourneyMatch(match) {
   // round. 8-player regular = 54 event holes → ÷9; 32-player main = 90 →
   // ÷36. Stored on the round entry so the audit trail can re-derive the
   // conversion without external lookup.
-  const roundDivisor = (tour.divisor || 9);
+  const roundDivisor = (tour.honeyCap || 9);
   const commitRound = (player, opp, golf, honeySelf, honeyOpp) => {
     const honeyNet = honeySelf - honeyOpp;
     const honeyStrokes = -honeyNet / roundDivisor;          // sign so it adds directly to golf
@@ -16116,7 +16124,7 @@ function spectatorFinishTourneyMatch(match) {
       holes: eng.currentHole,
       golf: golf,
       honeySelf: honeySelf, honeyOpp: honeyOpp, honeyNet: honeyNet,
-      divisor: roundDivisor,
+      honeyCap: roundDivisor,                              // v69.50 — see tour.honeyCap; this is the per-round value applied at end-of-round
       honeyStrokes: honeyStrokes,
       roundFinal: roundFinal,
       ts: Date.now(),
@@ -16349,8 +16357,8 @@ function spectatorInitSession(mode) {
   const su = SpectatorState.setup;
   // v69.49 — lock the Honey divisor mode for the duration of this run.
   // Changing the setup dropdown mid-run will only affect the NEXT run.
-  const honeyMode = (su.honeyDivisorMode === 'calibrated') ? 'calibrated' : 'spec';
-  setHoneyDivisorMode(honeyMode);
+  const honeyMode = (su.honeyCapMode === 'calibrated') ? 'calibrated' : 'spec';
+  setHoneyCapMode(honeyMode);
   SpectatorState.handLog = [];
   SpectatorState.handLogDropped = 0;
   SpectatorState.session = {
@@ -16361,7 +16369,7 @@ function spectatorInitSession(mode) {
     endReason: null,
     seed: seedStr,
     seedNumeric: seedNum,
-    honeyDivisorMode: honeyMode,           // snapshotted so CSV/JSON are unambiguous
+    honeyCapMode: honeyMode,           // snapshotted so CSV/JSON are unambiguous
     runLimit: {
       mode: (mode === 'liveCash') ? (su.runLimitMode || 'hands') : 'tournament',
       value: Math.max(1, Math.floor(+su.runLimitValue || 500)),
@@ -16375,7 +16383,7 @@ function spectatorInitSession(mode) {
       eventType: su.eventType,
       handDelayMs: su.handDelayMs, directorIntervalSec: su.directorIntervalSec,
       directorOn: !!SpectatorState.director.on,
-      honeyDivisorMode: honeyMode,
+      honeyCapMode: honeyMode,
       rakePct: (NectarState && NectarState.config) ? NectarState.config.rakeStructurePct : null,
       rakeCapPerHand: (NectarState && NectarState.config) ? NectarState.config.rakeCapPerHand : null,
       goldenHandProb: (typeof GoldenLottery !== 'undefined' && GoldenLottery.config) ? GoldenLottery.config.handProbability : null,
@@ -16603,10 +16611,10 @@ function spectatorExportCSV() {
       ['seed_numeric', sess.seedNumeric],
       ['rng', sess.seedNumeric != null ? 'seeded:mulberry32' : 'Math.random'],
       ['rng_scope', 'deck shuffles, golden-card designation, bot decisions, lottery draws, run-it-twice, table skill mix + profile jitter (via withCashRng)'],
-      ['honey_divisor_mode', sess.honeyDivisorMode || 'spec'],
-      ['honey_divisor_mode_desc', (sess.honeyDivisorMode === 'calibrated')
-        ? 'calibrated: stepped honeyDivisorFor table (post-v23 deployed values, ÷9/÷4/÷36)'
-        : 'spec: v23 design intent, divisor = round/event hole count (÷N)'],
+      ['honey_cap_mode', sess.honeyCapMode || 'spec'],
+      ['honey_cap_mode_desc', (sess.honeyCapMode === 'calibrated')
+        ? 'calibrated: stepped cap from honeyDivisorFor table (post-v23 deployed values, ÷9/÷4/÷36)'
+        : 'spec: v23 design intent, honey cap = round/event hole count (÷N); caps Honey\'s per-hole stroke impact as round length grows'],
       ['run_limit_mode', sess.runLimit.mode],
       ['run_limit_value', sess.runLimit.value],
       ['variant', sess.settings.variant],
@@ -16657,10 +16665,10 @@ function spectatorExportCSV() {
     //     an auditor needs to re-derive final = golf − netHoney/divisor.
     if (sess.mode === 'liveTourney' && SpectatorState.tournament) {
       const tour = SpectatorState.tournament;
-      const divisor = tour.divisor || 9;
+      const divisor = tour.honeyCap || 9;
       const maxRound = (tour.players || []).reduce((m, p) => Math.max(m, p.eliminatedRound || 0), tour.round || 1);
       chunks.push(row(['section', 'tournament_field']));
-      chunks.push(row(['player_id', 'name', 'skill', 'final_place', 'golf_total', 'honey_won', 'honey_lost_to_opp', 'net_honey', 'honey_divisor', 'honey_adjusted_strokes', 'final_score', 'holes_played', 'eliminated_round', 'finished']));
+      chunks.push(row(['player_id', 'name', 'skill', 'final_place', 'golf_total', 'honey_won', 'honey_lost_to_opp', 'net_honey', 'honey_cap', 'honey_adjusted_strokes', 'final_score', 'holes_played', 'eliminated_round', 'finished']));
       const standings = (tour.players || []).slice().sort((a, b) => (a.finalPlace || 9999) - (b.finalPlace || 9999) || spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
       standings.forEach(p => {
         const finished = p.finalPlace === 1 ? 'CHAMPION'
@@ -16690,7 +16698,7 @@ function spectatorExportCSV() {
       chunks.push(row(['hands_per_round', tour.handsPerRound || 18]));
       chunks.push(row(['rounds', maxRound]));
       chunks.push(row(['event_total_holes', tour.eventTotalHoles || (maxRound * (tour.handsPerRound || 18))]));
-      chunks.push(row(['honey_divisor', divisor]));
+      chunks.push(row(['honey_cap', divisor]));
       chunks.push(row(['format', tour.format || 'golf-honey']));
       chunks.push(row(['engine', 'tour engine (playHole) — same as Broadcast Replay']));
       chunks.push(row(['champion', tour.champion ? tour.champion.name : '']));
@@ -16718,7 +16726,7 @@ function spectatorExportCSV() {
       // reports in `final_score`. Auditors can independently re-derive that
       // number from this section row-by-row.
       chunks.push(row(['section', 'tournament_round_breakdown']));
-      chunks.push(row(['player_id', 'name', 'round', 'match_id', 'opponent', 'holes', 'round_golf', 'round_honey_self', 'round_honey_opp', 'round_honey_net', 'round_divisor', 'round_honey_strokes', 'round_final']));
+      chunks.push(row(['player_id', 'name', 'round', 'match_id', 'opponent', 'holes', 'round_golf', 'round_honey_self', 'round_honey_opp', 'round_honey_net', 'round_honey_cap', 'round_honey_strokes', 'round_final']));
       standings.forEach(p => {
         (p.rounds || []).forEach(r => {
           chunks.push(row([
@@ -16727,7 +16735,7 @@ function spectatorExportCSV() {
             r.holes,
             r.golf,
             r.honeySelf, r.honeyOpp, r.honeyNet,
-            r.divisor,
+            r.honeyCap,
             Number(r.honeyStrokes).toFixed(4),
             Number(r.roundFinal).toFixed(4),
           ]));
@@ -17315,8 +17323,8 @@ function refreshSpectatorScorecardStrip() {
   let minHoles = Infinity;
   tour.matches.forEach(m => { if (m.engine) minHoles = Math.min(minHoles, m.engine.currentHole || 0); });
   if (minHoles === Infinity) minHoles = 0;
-  const modeTag = (SpectatorState.session && SpectatorState.session.honeyDivisorMode === 'calibrated') ? 'CAL' : 'SPEC';
-  head.appendChild(el('div', { style: 'font-size:11px; opacity:0.75;', text: 'Hole ' + minHoles + ' / ' + tour.handsPerRound + ' · honey ÷' + tour.divisor + ' (' + modeTag + ') · ' + tour.surviving.length + ' surviving' }));
+  const modeTag = (SpectatorState.session && SpectatorState.session.honeyCapMode === 'calibrated') ? 'CAL' : 'SPEC';
+  head.appendChild(el('div', { style: 'font-size:11px; opacity:0.75;', text: 'Hole ' + minHoles + ' / ' + tour.handsPerRound + ' · honey cap ÷' + tour.honeyCap + ' (' + modeTag + ') · ' + tour.surviving.length + ' surviving' }));
   wrap.appendChild(head);
   // Sorted by Honey-adjusted final (best first). Cut line drawn between survivors and the predicted bottom half.
   const survivors = tour.surviving.slice().sort((a, b) => spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
@@ -17367,7 +17375,7 @@ function renderTournamentScorecardFullInto(host) {
   card.appendChild(el('div', { style: 'font-size:11px; letter-spacing:3px; text-transform:uppercase; color:#F0C75E; text-align:center;', text: '⛳ ' + tour.eventType.toUpperCase() + ' · YELLOW JACKET TOUR' }));
   card.appendChild(el('div', { style: 'font-size:22px; text-align:center; margin:4px 0 10px 0; letter-spacing:2px; color:#F0C75E;', text: 'OFFICIAL SCORECARD — ROUND ' + tour.round }));
   card.appendChild(el('div', { style: 'text-align:center; font-size:11px; opacity:0.7; margin-bottom:14px; font-style:italic;', text:
-    tour.handsPerRound + ' holes per round · lowest Honey-adjusted total survives · honey divisor ' + tour.divisor
+    tour.handsPerRound + ' holes per round · lowest Honey-adjusted total survives · honey cap ÷' + tour.honeyCap
     + ' · field of ' + tour.fieldSize }));
   // Build the matrix: rows = players (ordered by Honey-adjusted final ASC), cols = holes.
   const allPlayers = tour.players.slice().sort((a, b) => {
@@ -17386,7 +17394,7 @@ function renderTournamentScorecardFullInto(host) {
     headRow1.appendChild(el('th', { style: 'padding:4px 5px; font-size:9px; font-weight:600; color:#F0C75E; opacity:0.75; border-bottom:2px solid rgba(212,160,23,0.40);', text: 'R' + roundOfHole + 'H' + holeOfRound }));
   }
   headRow1.appendChild(el('th', { style: 'padding:6px 10px; text-align:right; font-weight:600; color:#F0C75E; border-bottom:2px solid rgba(212,160,23,0.40); border-left:2px solid rgba(212,160,23,0.40); min-width:70px;', text: 'GOLF' }));
-  headRow1.appendChild(el('th', { style: 'padding:6px 10px; text-align:right; font-weight:600; color:#F0C75E; border-bottom:2px solid rgba(212,160,23,0.40); min-width:80px;', text: '−HONEY/÷' + tour.divisor }));
+  headRow1.appendChild(el('th', { style: 'padding:6px 10px; text-align:right; font-weight:600; color:#F0C75E; border-bottom:2px solid rgba(212,160,23,0.40); min-width:80px;', text: '−HONEY/CAP÷' + tour.honeyCap }));
   headRow1.appendChild(el('th', { style: 'padding:6px 10px; text-align:right; font-weight:600; color:#F0C75E; border-bottom:2px solid rgba(212,160,23,0.40); border-left:2px solid rgba(212,160,23,0.40); min-width:78px;', text: 'FINAL' }));
   headRow1.appendChild(el('th', { style: 'padding:6px 8px; text-align:right; font-weight:600; color:#F0C75E; border-bottom:2px solid rgba(212,160,23,0.40);', text: 'STATUS' }));
   thead.appendChild(headRow1);
@@ -17397,7 +17405,7 @@ function renderTournamentScorecardFullInto(host) {
     const isCut = p.eliminatedRound != null;
     const final = spectatorPlayerFinal(p);
     const netHoney = (p.honeyCumSelf || 0) - (p.honeyCumOpp || 0);
-    const honeyAdj = -netHoney / tour.divisor;
+    const honeyAdj = -netHoney / tour.honeyCap;
     const tr = el('tr', { style: 'background:' + (isChamp ? 'linear-gradient(90deg, rgba(240,199,94,0.18), rgba(212,160,23,0.05))' : (ridx % 2 ? 'rgba(255,255,255,0.02)' : 'transparent')) + ';' + (isCut && !isChamp ? ' opacity:0.55;' : '') + ' cursor:pointer;' });
     tr.onclick = () => openPlayerScorecardModal(p);
     tr.onmouseenter = () => { tr.style.outline = '1px solid rgba(212,160,23,0.35)'; };
@@ -17452,7 +17460,7 @@ function openPlayerScorecardModal(player) {
   // Grand total banner — the Honey-adjusted FINAL is the headline number,
   // with raw golf + Honey breakdown below so the YJ divisor math is visible.
   const tour = SpectatorState.tournament;
-  const divisor = (tour && tour.divisor) || 9;
+  const divisor = (tour && tour.honeyCap) || 9;
   const final = spectatorPlayerFinal(player);
   const netHoney = (player.honeyCumSelf || 0) - (player.honeyCumOpp || 0);
   const honeyAdj = -netHoney / divisor;
@@ -17522,7 +17530,7 @@ function openPlayerScorecardModal(player) {
       math.appendChild(el('span', { style: 'color:' + scorecardCellTone(committed.golf > 0 ? 1 : committed.golf < 0 ? -1 : 0) + ';', text: formatStroke(committed.golf) }));
       math.appendChild(el('span', { style: 'opacity:0.5;', text: '+' }));
       math.appendChild(el('span', { text: 'HONEY' }));
-      math.appendChild(el('span', { style: 'opacity:0.85;', text: (committed.honeyNet > 0 ? '+' : '') + committed.honeyNet + 'h ÷' + committed.divisor }));
+      math.appendChild(el('span', { style: 'opacity:0.85;', text: (committed.honeyNet > 0 ? '+' : '') + committed.honeyNet + 'h ÷' + committed.honeyCap }));
       math.appendChild(el('span', { style: 'opacity:0.5;', text: '=' }));
       math.appendChild(el('strong', { style: 'color:' + scorecardCellTone(committed.roundFinal > 0 ? 1 : committed.roundFinal < 0 ? -1 : 0) + '; font-size:14px;', text: formatFinal(committed.roundFinal) }));
     } else {
@@ -17601,7 +17609,7 @@ function renderSpectatorResultsInto(host) {
       champBox.appendChild(el('div', { style: 'font-size:10px; text-transform:uppercase; letter-spacing:2px; opacity:0.7;', text: '🏆 Champion' }));
       champBox.appendChild(el('div', { style: 'font-size:20px; font-weight:700; color:#F0C75E;', text: ch.name }));
       champBox.appendChild(el('div', { style: 'font-size:14px; margin-top:6px; font-variant-numeric:tabular-nums; color:' + scorecardCellTone(chFinal > 0 ? 1 : chFinal < 0 ? -1 : 0) + ';', text: 'FINAL: ' + formatFinal(chFinal) }));
-      champBox.appendChild(el('div', { style: 'font-size:11px; margin-top:2px; opacity:0.8; font-variant-numeric:tabular-nums;', text: 'GOLF ' + formatStroke(ch.golfCum) + ' · HONEY ' + (chNetHoney > 0 ? '+' : '') + chNetHoney + 'h ÷' + tour.divisor + ' · ' + ch.scorecard.length + ' holes over ' + tour.history.length + ' rounds' }));
+      champBox.appendChild(el('div', { style: 'font-size:11px; margin-top:2px; opacity:0.8; font-variant-numeric:tabular-nums;', text: 'GOLF ' + formatStroke(ch.golfCum) + ' · HONEY ' + (chNetHoney > 0 ? '+' : '') + chNetHoney + 'h ÷' + tour.honeyCap + ' · ' + ch.scorecard.length + ' holes over ' + tour.history.length + ' rounds' }));
       champBox.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-top:4px;', text: 'Skill ' + ch.skill.toFixed(2) + ' · ' + tour.fieldSize + '-player ' + tour.eventType + ' field' }));
       const viewBtn = el('button', { class: 'btn ghost', style: 'margin-top:8px; font-size:11px; padding:4px 10px;', text: '📋 View champion scorecard' });
       viewBtn.onclick = () => openPlayerScorecardModal(ch);
@@ -17610,7 +17618,7 @@ function renderSpectatorResultsInto(host) {
     }
     // Final standings (compact). Sort by finalPlace, fallback to Honey-adjusted final.
     const standings = tour.players.slice().sort((a, b) => (a.finalPlace || 9999) - (b.finalPlace || 9999) || spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
-    card.appendChild(el('div', { style: 'font-size:11px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; margin-bottom:6px;', text: '⛳ Final standings (Honey-adjusted, divisor ÷' + tour.divisor + ')' }));
+    card.appendChild(el('div', { style: 'font-size:11px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; margin-bottom:6px;', text: '⛳ Final standings (Honey-adjusted, honey cap ÷' + tour.honeyCap + ')' }));
     const sTbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:12px; margin-bottom:14px;' });
     const sThr = el('tr', { style: 'border-bottom:1px solid rgba(212,160,23,0.30);' });
     ['Pos', 'Player', 'Skill', 'Golf', 'Honey', 'Final', 'Cut R'].forEach(h => sThr.appendChild(el('th', { style: 'padding:5px 7px; text-align:left; font-weight:600; opacity:0.75;', text: h })));
@@ -17632,7 +17640,7 @@ function renderSpectatorResultsInto(host) {
     });
     sTbl.appendChild(sTb);
     card.appendChild(sTbl);
-    card.appendChild(el('div', { style: 'font-size:10px; opacity:0.45; margin-bottom:12px; font-style:italic;', text: '↳ click any row to inspect that player\'s hole-by-hole scorecard · the same numbers Broadcast Replay would produce for this field at divisor ÷' + tour.divisor }));
+    card.appendChild(el('div', { style: 'font-size:10px; opacity:0.45; margin-bottom:12px; font-style:italic;', text: '↳ click any row to inspect that player\'s hole-by-hole scorecard · the same numbers Broadcast Replay would produce for this field at honey cap ÷' + tour.honeyCap }));
   }
   // Per-bot P&L table (top + bottom of the leaderboard)
   if (sm.perSeat && sm.perSeat.length) {
@@ -17928,8 +17936,8 @@ function refreshSpectatorFeatured() {
     const title = el('div', { style: 'display:flex; align-items:center; gap:10px; margin-bottom:8px; padding:6px 12px; background:rgba(212,160,23,0.10); border-radius:6px;' });
     title.appendChild(el('span', { style: 'font-size:11px; text-transform:uppercase; letter-spacing:2px; opacity:0.7;', text: '📺 FEATURED' }));
     title.appendChild(el('span', { style: 'font-weight:700; color:var(--augusta-gold-hi,#F0C75E);', text: match ? match.label : ('R' + tour.round + ' Match') }));
-    const featModeTag = (SpectatorState.session && SpectatorState.session.honeyDivisorMode === 'calibrated') ? 'CAL' : 'SPEC';
-    title.appendChild(el('span', { style: 'opacity:0.6; font-size:12px;', text: '· YJ-Stroke · Honey ÷' + tour.divisor + ' (' + featModeTag + ')' }));
+    const featModeTag = (SpectatorState.session && SpectatorState.session.honeyCapMode === 'calibrated') ? 'CAL' : 'SPEC';
+    title.appendChild(el('span', { style: 'opacity:0.6; font-size:12px;', text: '· YJ-Stroke · Honey cap ÷' + tour.honeyCap + ' (' + featModeTag + ')' }));
     const spacer = el('span', { style: 'flex:1;' });
     title.appendChild(spacer);
     const toggle = el('button', { class: 'btn ' + (SpectatorState.scorecardOpen ? 'gold' : 'ghost'), style: 'font-size:11px; padding:3px 10px;', text: SpectatorState.scorecardOpen ? '⛳ Show match' : '📋 Show full scorecard' });
@@ -18010,7 +18018,7 @@ function renderSpectatorTourneyMatchInto(host, match) {
     cell.appendChild(el('div', { style: 'margin-top:8px; font-size:11px; opacity:0.7; letter-spacing:1px; text-transform:uppercase;', text: 'Tournament final' }));
     cell.appendChild(el('div', { style: 'font-size:32px; font-weight:700; font-variant-numeric:tabular-nums; color:' + sideTone(final) + '; line-height:1.05;', text: formatFinal(final) }));
     const netH = (player.honeyCumSelf || 0) - (player.honeyCumOpp || 0);
-    cell.appendChild(el('div', { style: 'font-size:10px; opacity:0.65; margin-top:3px; font-variant-numeric:tabular-nums;', text: 'GOLF ' + formatStroke(player.golfCum) + ' · HONEY ' + (netH > 0 ? '+' : '') + netH + 'h ÷' + tour.divisor }));
+    cell.appendChild(el('div', { style: 'font-size:10px; opacity:0.65; margin-top:3px; font-variant-numeric:tabular-nums;', text: 'GOLF ' + formatStroke(player.golfCum) + ' · HONEY ' + (netH > 0 ? '+' : '') + netH + 'h ÷' + tour.honeyCap }));
     cell.appendChild(el('div', { style: 'font-size:9px; opacity:0.45; margin-top:6px; font-style:italic;', text: '↳ click for full scorecard' }));
     return cell;
   };
@@ -18292,7 +18300,7 @@ function refreshSpectatorStats() {
     (tt.matches || []).forEach(m => { if (m.engine) minHoles = Math.min(minHoles, m.engine.currentHole || 0); });
     if (minHoles === Infinity) minHoles = 0;
     host.appendChild(row('Hole of round', minHoles + ' / ' + (tt.handsPerRound || 18)));
-    host.appendChild(row('Honey divisor', '÷' + (tt.divisor || 9) + ' · ' + (SpectatorState.session && SpectatorState.session.honeyDivisorMode === 'calibrated' ? 'CALIBRATED' : 'SPEC')));
+    host.appendChild(row('Honey cap', '÷' + (tt.honeyCap || 9) + ' · ' + (SpectatorState.session && SpectatorState.session.honeyCapMode === 'calibrated' ? 'CALIBRATED' : 'SPEC')));
     // Leader by Honey-adjusted final
     const sorted = (tt.surviving || []).slice().sort((a, b) => spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
     if (sorted.length) {
@@ -18532,20 +18540,20 @@ Views.spectator = function() {
     // v69.49 — Honey divisor calibration. Two coexisting modes: 'spec' (v23
     // intent, ÷N) and 'calibrated' (deployed stepped table). Default to spec.
     // Locks at run-start so changes mid-run don't corrupt the active session.
-    setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'Honey divisor calibration' }));
+    setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'Honey cap calibration' }));
     const honeySel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:4px; font-size:12px;' });
     [
       { v: 'spec',       l: 'Spec (v23): ÷ holes-in-round  (1 stroke per N honey)' },
       { v: 'calibrated', l: 'Calibrated: stepped ÷ table  (1 stroke per ~½ N honey)' },
     ].forEach(o => {
       const opt = el('option', { value: o.v, text: o.l });
-      if ((SpectatorState.setup.honeyDivisorMode || 'spec') === o.v) opt.selected = true;
+      if ((SpectatorState.setup.honeyCapMode || 'spec') === o.v) opt.selected = true;
       honeySel.appendChild(opt);
     });
-    honeySel.onchange = () => { SpectatorState.setup.honeyDivisorMode = honeySel.value; };
+    honeySel.onchange = () => { SpectatorState.setup.honeyCapMode = honeySel.value; };
     setupCard.appendChild(honeySel);
     setupCard.appendChild(el('div', { style: 'font-size:9px; opacity:0.55; margin-bottom:10px; font-style:italic; line-height:1.4;', text:
-      (SpectatorState.setup.honeyDivisorMode === 'calibrated')
+      (SpectatorState.setup.honeyCapMode === 'calibrated')
         ? 'Calibrated: 18-hole round ⇒ ÷9, 72-hole final ⇒ ÷36. Honey ~2× more impactful.'
         : 'Spec: 18-hole round ⇒ ÷18, 72-hole final ⇒ ÷72. Average honey per hole IS your stroke effect.' }));
   }
@@ -20472,10 +20480,26 @@ const DEFAULT_SIM_CONFIG = {
   // Honey-Stroke is the sole scoring law. carryOverEnabled (true) and honeyDivisor (1)
   // are permanent invariants on SCORING_STYLES['honey-stroke'] — not user-tunable.
   scoringStyle: 'honey-stroke',
-  // v69.49 — Honey divisor calibration mode. 'spec' (v23 design: divisor=N) or
+  // v69.49 — Honey cap calibration mode. 'spec' (v23 design: cap=N) or
   // 'calibrated' (deployed stepped ÷9/÷4/÷36 table). Applied at runLabSession
-  // start via setHoneyDivisorMode(); snapshotted into the run snap.
-  honeyDivisorMode: 'spec',
+  // start via setHoneyCapMode(); snapshotted into the run snap.
+  // v69.53 default flipped to 'calibrated' after the E=3 / K=5 sweep at
+  // pool=1000 / seasons=100 (seed=42) showed it produces deeper sub-par majors
+  // (mean -5.46 vs -4.85), the first sub-par Main champion (min -12.86), and
+  // a 50× lift in non-Main skillR² vs the 'spec' baseline.
+  honeyCapMode: 'calibrated',
+  // v69.51 — HOLE ENVELOPE in stroke-equivalents. When > 0, overrides every
+  // per-tier strokeCap (regular/major/main/mainFinals) with a uniform rule:
+  //     effectiveCap_per_hole = E × honeyDivisorFor(roundHoleCount)
+  // I.e., each player can wager up to E strokes' worth of Honey per hole.
+  // E=0 = legacy per-tier strokeCaps (preserves pre-v69.53 behavior).
+  // v69.53 default flipped to E=3 after the full-scale validation: with
+  // calibrated divisors that means 27h/hole on 9- and 18-hole rounds and
+  // 108h/hole on 72-hole finals — wide enough to make a fold a real cost,
+  // tight enough that no single hand wipes a bankroll. Drove the betting
+  // distribution from "98% check-through-to-showdown" to a real fold/call
+  // decision tree at meaningful pot sizes.
+  holeEnvelopeStrokes: 3,
   // σ of the truncated-Normal used to sample authored skills. Bumped in v30
   // from 0.18 → 0.24 to widen the skill distribution so per-event skill→
   // finish-position curves separate more cleanly across tiers. With σ=0.24,
@@ -20571,11 +20595,14 @@ const DEFAULT_SIM_CONFIG = {
   // until v70+ ships the multi-way engine.
   tableSize: 2,
   // POT-ELASTIC CAP MULTIPLIER (v43). When > 0, streetCap can exceed the
-  // legacy progressive floor proportionally to current pot size. Default 3
-  // calibrates: opener=2 → preflop cap = 6 (4 honey of preflop room, was 0);
-  // carry pot of 8 → cap = 24 (massive late-street pressure). Hard ceiling
-  // of 3× the global cap prevents runaway. Set to 0 for legacy behavior.
-  potElasticK: 3,
+  // legacy progressive floor proportionally to current pot size.
+  // v69.53 default raised 3→5 to pair with the E=3 envelope. The envelope
+  // sets the hard per-hole ceiling; K controls how fast a hand spirals to
+  // that ceiling. At K=5 a pot of 8 honey unlocks a 40-honey street cap
+  // before the envelope clamps it, which produced the 15× lift in
+  // big-pot showdowns and the +47% river-fold rate in the validation sweep.
+  // Set to 0 for fully legacy (progressive-only) behavior.
+  potElasticK: 5,
   // v45 Major field composition rebalanced — open share (lucky-tail entry)
   // dropped from 0.22 → 0.10. The 0.12 redistributed into skill-correlated
   // sources: ranking +0.04, season +0.04, career +0.04. This reduces
@@ -21662,10 +21689,33 @@ function clampStrokeCap(n, fallback) {
   // Main finals 18) plus full-tilt headroom (cap × 2 = 36 max). The legacy 10
   // ceiling was clamping mainFinalsStrokeCap=18 down to 10 at runtime, defeating
   // the v66 calibration entirely.
-  return Math.max(1, Math.min(36, Number.isFinite(+n) ? +n : fallback));
+  // v69.51: ceiling raised again from 36 → 144 to accommodate the per-hole
+  // envelope mode (E × honeyDivisorFor(72) can reach 72 honey under calibrated
+  // ÷36 or E=3, and 216 under spec ÷72 at E=3). 144 covers E=2/spec and gives
+  // headroom; E=3/spec finals will still clip at 144 (acceptable — that's
+  // already a giant envelope, and only Main finals hit it).
+  return Math.max(1, Math.min(144, Number.isFinite(+n) ? +n : fallback));
 }
 
 function resolveEventStrokeCaps(eventType, cfg) {
+  // v69.51 — HOLE ENVELOPE override. When cfg.holeEnvelopeStrokes (E) > 0,
+  // each per-hole cap is derived from the round's honey cap so that the
+  // envelope is exactly E strokes' worth of honey per player per hole:
+  //     effectiveCap = E × honeyDivisorFor(roundHoleCount)
+  // Round-hole-count by event type / phase:
+  //     regular / major round:   18  (E=2, calibrated → cap 18)
+  //     main early bracket:        9  (E=2, calibrated → cap 8)
+  //     main finals:              72  (E=2, calibrated → cap 72)
+  // honeyDivisorFor itself reads CurrentHoneyCapMode, so the envelope scales
+  // correctly under both spec (÷N) and calibrated (÷stepped) calibrations.
+  // E=0 falls back to the legacy per-tier strokeCap config (today's behavior).
+  const E = +(cfg && cfg.holeEnvelopeStrokes) || 0;
+  if (E > 0 && typeof honeyDivisorFor === 'function') {
+    const envFor = (n) => clampStrokeCap(Math.round(E * honeyDivisorFor(n)), 3);
+    if (eventType === 'major') return { knockout: envFor(18), finals: envFor(18) };
+    if (eventType === 'main')  return { knockout: envFor(9),  finals: envFor(72) };
+    return { knockout: envFor(18), finals: envFor(18) };       // regular
+  }
   const legacy = clampStrokeCap(cfg && cfg.strokeCap, CurrentStrokeCap || 3);
   const regularCap = clampStrokeCap(cfg && cfg.regularStrokeCap, legacy);
   const majorCap = clampStrokeCap(cfg && cfg.majorStrokeCap, legacy);
@@ -21688,10 +21738,10 @@ async function runLabSession(cfg, onProgress) {
   setPotElasticK(cfg.potElasticK);
   setBackNineMultiplier(cfg.backNineOpenerMultiplier);
   // v69.49 — lock the Honey divisor mode for this run. honeyDivisorFor() reads
-  // CurrentHoneyDivisorMode; setting it here so every gameContext built
+  // CurrentHoneyCapMode; setting it here so every gameContext built
   // downstream uses the active calibration consistently. Snapshotted into the
   // run's snap.config below.
-  setHoneyDivisorMode(cfg.honeyDivisorMode === 'calibrated' ? 'calibrated' : 'spec');
+  setHoneyCapMode(cfg.honeyCapMode === 'calibrated' ? 'calibrated' : 'spec');
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -23024,12 +23074,16 @@ function _exportRunToCSVImpl(snap) {
   // round-end honey-normalisation divisor.
   cfgRow('scoring.decisionDivisor',
     Number.isFinite(+snapCfg.decisionDivisor) ? +snapCfg.decisionDivisor : 9);
-  // v69.49 — Honey divisor MODE used for this run. 'spec' = v23 design intent
-  // (divisor = round/event hole count, ÷N). 'calibrated' = stepped table
+  // v69.49 — Honey cap MODE used for this run. 'spec' = v23 design intent
+  // (cap = round/event hole count, ÷N). 'calibrated' = stepped table
   // (÷9/÷4/÷36). Locked at run start; recorded here so any CSV is unambiguous.
-  cfgRow('scoring.honeyDivisorMode', snapCfg.honeyDivisorMode === 'calibrated' ? 'calibrated' : 'spec');
+  cfgRow('scoring.honeyCapMode', snapCfg.honeyCapMode === 'calibrated' ? 'calibrated' : 'spec');
   cfgRow('scoring.divisorTable',
-    snapCfg.honeyDivisorMode === 'calibrated' ? 'calibrated: 1=1, 9=4, 18=9, 72=36' : 'spec: divisor = hole count (N)');
+    snapCfg.honeyCapMode === 'calibrated' ? 'calibrated: 1=1, 9=4, 18=9, 72=36' : 'spec: divisor = hole count (N)');
+  // v69.51 — HOLE ENVELOPE (E). When > 0, each per-tier strokeCap is overridden
+  // by E × honeyDivisorFor(roundHoleCount). E=2 = "two strokes of risk per
+  // hole." E=0 = legacy per-tier strokeCaps (regular/major/main/mainFinals).
+  cfgRow('scoring.holeEnvelopeStrokes', Number.isFinite(+snapCfg.holeEnvelopeStrokes) ? +snapCfg.holeEnvelopeStrokes : 0);
   cfgRow('scoring.carryOverEnabled', true);
   // Back-9 opener multiplier. Mandatory pot ×N for back 9 of every 18-hole round.
   cfgRow('scoring.backNineOpenerMultiplier',
@@ -23871,22 +23925,22 @@ function renderConfigPanel(panel, mode) {
   // changing this control without comparing modes is fine — just be aware
   // any saved-run comparisons should be apples-to-apples.
   const hdmRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
-  hdmRow.appendChild(el('label', { text: 'Honey ÷', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  hdmRow.appendChild(el('label', { text: 'Honey cap', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
   const hdmSel = el('select', { style: 'width: 100%;' });
   [
     { v: 'spec',       label: '🪶 Spec (v23) — ÷ holes-in-round  (1 stroke per N honey · light drizzle)' },
     { v: 'calibrated', label: '⚖ Calibrated — stepped ÷9/÷4/÷36 (1 stroke per ~½ N honey · 2× impactful)' },
   ].forEach(o => {
     const opt = el('option', { value: o.v, text: o.label });
-    const current = LabState.config.honeyDivisorMode || 'spec';
+    const current = LabState.config.honeyCapMode || 'spec';
     if (current === o.v) opt.selected = true;
     hdmSel.appendChild(opt);
   });
   hdmSel.onchange = () => {
-    LabState.config.honeyDivisorMode = hdmSel.value;
-    setHoneyDivisorMode(hdmSel.value);                        // takes effect on the next run
+    LabState.config.honeyCapMode = hdmSel.value;
+    setHoneyCapMode(hdmSel.value);                        // takes effect on the next run
     saveLabState();
-    toast('Honey divisor: ' + (hdmSel.value === 'spec'
+    toast('Honey cap: ' + (hdmSel.value === 'spec'
       ? 'Spec (÷N — v23 design intent)'
       : 'Calibrated (stepped ÷table — post-v23 deployed)'));
   };
@@ -23895,7 +23949,37 @@ function renderConfigPanel(panel, mode) {
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'SPEC (default): the documented design intent — net honey divided by the round/event hole count, applied at round end. Average honey per hole IS your stroke effect; honey is a light smoothing drizzle on the golf scorecard. CALIBRATED: the post-v23 stepped table (÷9 for 18-hole rounds, ÷36 for 72-hole finals). Honey is ~2× more impactful — winning roughly half a round of honey earns 1 stroke off. Both modes appear in the run CSV header (honey_divisor_mode); comparing runs across modes will diverge accordingly.'
+    text: 'SPEC (default): the documented design intent — net honey divided by the round/event hole count, applied at round end. Average honey per hole IS your stroke effect; honey is a light smoothing drizzle on the golf scorecard. CALIBRATED: the post-v23 stepped table (÷9 for 18-hole rounds, ÷36 for 72-hole finals). Honey is ~2× more impactful — winning roughly half a round of honey earns 1 stroke off. Both modes appear in the run CSV header (honey_cap_mode); comparing runs across modes will diverge accordingly.'
+  }));
+
+  // === HOLE ENVELOPE (v69.51) ============================================
+  // Each player wagers up to E strokes' worth of Honey per hole — replacing the
+  // per-tier strokeCap config with a uniform stroke-denominated rule. Default
+  // E=0 preserves legacy strokeCap behavior; E=2 is the conjectured sweet spot.
+  const heRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  heRow.appendChild(el('label', { text: 'Hole envelope', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const heSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 0, label: '0  —  Legacy per-tier strokeCaps (regular 6 / major 9 / main 8 / mainFinals 18)' },
+    { v: 1, label: '1  —  1 stroke per hole  (≈ today\'s cap for majors at 18-hole rounds)' },
+    { v: 2, label: '2  —  2 strokes per hole  (conjectured sweet spot · ~3× current bet variance)' },
+    { v: 3, label: '3  —  3 strokes per hole  (aggressive · risks fluky champions)' },
+  ].forEach(o => {
+    const opt = el('option', { value: String(o.v), text: o.label });
+    if ((+LabState.config.holeEnvelopeStrokes || 0) === o.v) opt.selected = true;
+    heSel.appendChild(opt);
+  });
+  heSel.onchange = () => {
+    LabState.config.holeEnvelopeStrokes = +heSel.value;
+    saveLabState();
+    toast('Hole envelope: ' + heSel.value + (heSel.value === '0' ? ' (legacy per-tier strokeCaps)' : ' strokes per hole'));
+  };
+  heRow.appendChild(heSel);
+  evSec.appendChild(heRow);
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'When E > 0, the per-hole pot ceiling is derived uniformly as E × honeyDivisorFor(roundLength). Under calibrated honey cap: E=2 → 18 honey/player/hole at 18-hole rounds (vs current regular 6 / major 9), 72 honey/player at 72-hole Main finals (vs current 18). The wagering layer becomes expressive enough that fold cost varies meaningfully across pot sizes, and skill edges accumulate to a clearer finish-position gradient across deep fields. Loosen per-hole bets like poker without losing the per-hole golf identity — no chip stacks, no bust-out, every player plays every hole.'
   }));
 
   // === TABLE SIZE TOGGLE (v69) ============================================
@@ -24242,10 +24326,10 @@ async function runSimulator(cfg, onProgress) {
   setPotElasticK(cfg.potElasticK);
   setBackNineMultiplier(cfg.backNineOpenerMultiplier);
   // v69.49 — lock the Honey divisor mode for this run. honeyDivisorFor() reads
-  // CurrentHoneyDivisorMode; setting it here so every gameContext built
+  // CurrentHoneyCapMode; setting it here so every gameContext built
   // downstream uses the active calibration consistently. Snapshotted into the
   // run's snap.config below.
-  setHoneyDivisorMode(cfg.honeyDivisorMode === 'calibrated' ? 'calibrated' : 'spec');
+  setHoneyCapMode(cfg.honeyCapMode === 'calibrated' ? 'calibrated' : 'spec');
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
