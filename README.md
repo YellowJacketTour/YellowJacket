@@ -19,12 +19,13 @@ A poker-and-golf hybrid where every hand of Hold'em becomes a single hole on a g
 - **The scorecard** — your hand category at showdown sets a bounded golf score for the hole (Royal Flush −5 down to weak High Card +2). A frame-aware showdown matrix adds respected-loss and cooler bonuses on top of the base mapping.
 - **The honey pot** — every hole opens with a mandatory pot. Bets and raises propose a new agreed-total pot size; calls accept it. The hole winner takes the agreed total as honey credit. Tied holes roll the pot forward.
 
-At round end, total net honey is divided once by the round-length divisor (1 / 4 / 9 / 36 for 1- / 9- / 18- / 72-hole rounds) and subtracted from the total scorecard. Lower wins, just like real golf.
+At the end of each round, that round's net honey is divided by the **honey cap** and subtracted from the round's scorecard. The honey cap has two selectable modes: `calibrated` (the ship default — a stepped table: 1 / 4 / 9 / 36 for 1- / 9- / 18- / 72-hole rounds) or `spec` (the v23 design-intent mode — the divisor is just the round's hole count N, so an 18-hole round divides by 18). Lower wins, just like real golf.
 
 Two scoring **variants** ship alongside each other:
 
 - **Yellow Jacket** (competitive): decisive-showdown losers post a fixed +1 bogey. Sharper skill expression; harsher.
 - **Bumblebee** (casual): decisive-showdown losers score their own hand class. Gentler; closer to par.
+- **Main-final override** (config `mainFinalsLoserBogey` / Simulator "Main final" control): the Main Event's 72-hole *final* can run a different loss rule than the rest of the Tour — *inherit* (default), *Yellow Jacket on the final* (keep it a tough, over-par gauntlet even if the Tour is Bumblebee), or *Bumblebee on the final* (deep sub-par champion, golf-major style, while the bracket-cut rounds stay competitive). Affects only the 72-hole final.
 
 Same engine, same wagering primitives, same caps. Only the loser score differs.
 
@@ -45,7 +46,7 @@ The sidebar has 19 tabs covering four product areas:
 ### Simulate
 - **Simulator** — run 1 to 100 seasons over a pool of up to 100,000 players. Two modes:
   - *Simple* — pick seasons, click run. Appends to your tour career.
-  - *Advanced* — every slider exposed: profile distribution, event structure, stroke caps, rake tiers, sponsor purses, satellite ladder, late registration window, multi-way table size (HU / 4 / 6 / 9), CI repeats with mean ± SD aggregation.
+  - *Advanced* — every slider exposed: profile distribution, event structure, hole envelope E and pot-elastic K (the live wagering-cap controls), honey-cap mode (`calibrated` / `spec`), legacy per-tier stroke caps (used only when E = 0), sponsor purses (tour events take no rake — the full entry-fee pool, plus any sponsor purse, is the prize pool), satellite ladder, late registration window, multi-way table size (HU / 4 / 6 / 9 — forward-compat only; see Tournament formats), CI repeats with mean ± SD aggregation.
 - Background mode runs while you browse other tabs. Smart-refresh banner detects build-version changes and offers a one-click reload preserving progress.
 
 ### Career
@@ -62,7 +63,7 @@ The sidebar has 19 tabs covering four product areas:
 
 ### Reference
 - **Rulebook** — live config snapshot + complete rule cards with worked examples
-- **Decision Tree** — stage-by-stage walkthrough of one hole with CSS-rendered cards (Tea Box → Drive → Hazard → Putt → The Cup)
+- **Decision Tree** — stage-by-stage walkthrough of one hole with CSS-rendered cards, beat by beat (Tea Box → The Fairway → The Lay-Up → The Hazard → The Approach → The Green → The Putt → The Cup)
 - **Codex** — long-form master manual: scoring law, tournament formats, strategy, economics, lore
 - **Buzz's Corner** — searchable FAQ + strategy playbook + legendary moments
 
@@ -73,14 +74,16 @@ Two formats ship, switchable per simulation:
 - **Aggregate stroke play** (default, PGA Masters feel) — every player plays 4 rounds × 18 holes against rotating partners. Lowest 72-hole net total wins. Survival cushion + round-boundary cuts (50% at R2, 50% at R3) eliminate mid-tournament. Top ~15% of finish positions cash with geometric payout decay (default 0.74).
 - **Bracket knockout** (WSOP feel) — single-elimination. 9-hole rounds while field > 16, then 18-hole rounds, then a 72-hole heads-up final.
 
-Multi-way tables (6 / 9 / max) route aggregate rounds through matched-contribution wagering; R4 collapses to a heads-up final between top-2 survivors.
+A season is a fixed slate of **4 majors + 40 regular tour events + 1 Main Event = 45 events** — the real PGA Tour's count and its 4-major cadence, with the lone Main standing in for the WSOP Main Event ⊕ FedEx Cup finale. The Main carries the biggest, hardest field on the calendar.
+
+The v69 engine is heads-up (`tableSize: 2`). The multi-way table-size options (4 / 6 / 9) are present for forward-compatibility only — the multi-way matched-contribution runner is not yet implemented and selecting a size above HU has no effect in the current build. Spectator Mode's "Live Tournament" runs a separate **golf-cut heads-up bracket** (50% of the field cut each round, the round before the championship labelled "Semi-Final" and the championship "Final Table"; field caps Regular 8 / Major 16 / Main 32).
 
 ## Currencies
 
 Two distinct denominations with strictly separated roles:
 
-- **Nectar** (★) — the bankroll currency. Buys tour event entries, pays cash-table chips 1:1, lands prize payouts. Persistent across sessions. Lives in the unified ledger.
-- **Honey** — the in-event wager unit. Lives ONLY inside tour events. Per-hole pot abstraction that converts to scorecard strokes via the round divisor exactly once at round end. Never directly converts to Nectar.
+- **Nectar** (◈) — the bankroll currency. Buys tour event entries, pays cash-table chips 1:1, lands prize payouts. Persistent across sessions. Lives in the unified ledger.
+- **Honey** — the in-event wager unit. Lives ONLY inside tour events. Per-hole pot abstraction that converts to scorecard strokes via the honey cap, reconciled at each round end. Per-hole wagering is bounded by the hole envelope E (default 3 — each player may wager up to E strokes' worth of Honey per hole, i.e. `round(E × honeyCap)` honey) and per-beat by pot-elastic K (default 5 — each betting beat's cap is K times the Honey already agreed into the pot, hard-ceilinged at 3× the hole envelope). Never directly converts to Nectar.
 
 Cash tables do NOT use honey. Chip stacks at cash are Nectar 1:1. The "YJ Stroke" and "Bumblebee Stroke" cash variants borrow only the stroke half of the tour scoring law — they accumulate an integer stroke ledger from hand class that settles to Nectar at cashout at +$0.50 per net stroke.
 
@@ -89,7 +92,7 @@ Cash tables do NOT use honey. Chip stacks at cash are Nectar 1:1. The "YJ Stroke
 - Self-contained: one HTML file. Two optional CDN dependencies — Three.js (loaded synchronously for the 3D atmospheric felt) and Rapier WASM (loaded on demand for physics-based chip stacking). Both gracefully degrade if blocked; the 2D felt and tween chips take over.
 - Save state is browser-local via the unified `yellowJacketSave` key; a smart-refresh banner handles version drift across deploys.
 - CSV export with full config snapshot ships with every simulator run for reproducible audits.
-- Calibrated against an in-build audit suite: skill expression, tier ROI separation, late-registration handling, and multi-way variant behavior all verified.
+- Calibrated against an in-build audit suite: skill expression, tier ROI separation, and late-registration handling all verified for the heads-up engine that ships today (the multi-way runner is forward-compat scaffolding, not yet active).
 
 ## How to use
 

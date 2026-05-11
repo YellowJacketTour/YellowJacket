@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.11-v69.58-main-final-scoring-toggle";
+const APP_VERSION = "2026.05.11-v69.59-pool-config-coherence";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -21780,8 +21780,25 @@ function resolveEventStrokeCaps(eventType, cfg) {
   return { knockout: regularCap, finals: regularCap };
 }
 
+// v69.59 — recursively Object.freeze an object (cfg is small: ~60 keys + a few
+// short arrays). Used to make the run config a read-only, run-scoped snapshot so
+// any stray write throws (strict) or no-ops (sloppy) instead of silently leaking
+// across events. Idempotent / cycle-safe via the isFrozen guard.
+function deepFreeze(o) {
+  if (o && typeof o === 'object' && !Object.isFrozen(o)) {
+    Object.freeze(o);
+    for (const k of Object.keys(o)) deepFreeze(o[k]);
+  }
+  return o;
+}
+
 // --- Full lab session (pool + seasons) — returns computed metrics too ---
 async function runLabSession(cfg, onProgress) {
+  // v69.59 — run on a private, frozen copy of the config. Clone first so the
+  // caller's object (often LabState.config, which the Simulator panel writes to)
+  // is never frozen or touched; structuredClone preserves Infinity in e.g.
+  // survivalCushion, with a JSON-roundtrip fallback for older browsers.
+  cfg = deepFreeze(typeof structuredClone === 'function' ? structuredClone(cfg) : JSON.parse(JSON.stringify(cfg)));
   setStrokeCap(cfg.regularStrokeCap || cfg.strokeCap);
   // Sync the v31 loser-bogey toggle from cfg so playHole's showdown branch
   // picks it up. The flag only matters for decisive showdowns; ties and
@@ -24469,6 +24486,8 @@ function renderConfigPanel(panel, mode) {
 // Run the simulator: use the live TourState.pool, append to TourState.seasons,
 // AND snapshot the run into LabState.runs. Single pipeline for Simple + Advanced modes.
 async function runSimulator(cfg, onProgress) {
+  // v69.59 — same private-frozen-config discipline as runLabSession (see there).
+  cfg = deepFreeze(typeof structuredClone === 'function' ? structuredClone(cfg) : JSON.parse(JSON.stringify(cfg)));
   setStrokeCap(cfg.regularStrokeCap || cfg.strokeCap);
   setLoserBogey(!!cfg.loserBogey);
   setDecisionDivisor(cfg.decisionDivisor);
@@ -24544,6 +24563,21 @@ async function runSimulator(cfg, onProgress) {
     row.adjReadSum += +info.adjRead         || 0;
   };
   const t0 = performance.now();
+  // v69.59 — POOL/CONFIG COHERENCE. Unlike runLabSession (which always builds a
+  // fresh pool from cfg), this path runs on the persistent TourState.pool, which
+  // is otherwise never reconciled with the run config. If the career is fresh
+  // (currentSeason 0) — or the pool's size doesn't match cfg.poolSize, a clear
+  // sign the pool predates the current config — rebuild it from cfg so the run
+  // reflects the configured skill/noise distributions. A career already in
+  // progress keeps its accumulated pool (changing a profile param mid-career
+  // shouldn't scramble the field; rebuild via the "Rebuild pool" button for that).
+  const poolSizeWanted = cfg.poolSize || 1000;
+  if (TourState.currentSeason === 0 || !Array.isArray(TourState.pool)
+      || TourState.pool.length !== poolSizeWanted) {
+    TourState.pool = buildPoolFromConfig(cfg);
+    TourState.seasons = [];
+    TourState.currentSeason = 0;
+  }
   const startYear = TourState.currentSeason + 1;
   const endYear = startYear + cfg.seasons - 1;
   const newEvents = [];

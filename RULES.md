@@ -92,7 +92,7 @@ The build has **two distinct denominations** that must not be confused:
 
 ```
    ┌──────────────────────────┬──────────────────────────┐
-   │         NECTAR (★)        │          HONEY            │
+   │         NECTAR (◈)        │          HONEY            │
    ├──────────────────────────┼──────────────────────────┤
    │ Bankroll currency.        │ In-event wager unit.      │
    │ USD-equivalent.           │                           │
@@ -130,11 +130,13 @@ Tour events are the WSOP/PGA-style format: pay a buy-in, play a fixed-length tou
 
 | Tier | Default buy-in | Field | Frequency |
 |------|----------------|-------|-----------|
-| **Regular** | $100 Nectar | 512 players | 25–52 per season |
+| **Regular** | $100 Nectar | 128 players | 40 per season |
 | **Major** | $1,000 Nectar | 256 players | 4 per season |
-| **Main Event** | $10,000 Nectar | 128 players | 1 per season |
+| **Main Event** | $10,000 Nectar | 1,024 players | 1 per season |
 
-Every season also has a **satellite ladder**: top 28 finishers of each Major earn a free Main Event seat (no $10K Nectar buy-in required).
+**Season schedule.** A Yellow Jacket season is a fixed slate: **4 majors + 40 regular tour events + 1 Main Event = 45 events**. That mirrors the real PGA Tour's ~44-event calendar and its 4-major / roughly-1-in-10 cadence, which keeps a major title rare enough to mean something. The lone Main is the WSOP Main Event and the FedEx Cup finale rolled into one slot, and it carries the biggest, hardest field on the calendar (a WSOP-style championship) — the Main field is the largest of the three tiers, not the smallest. (In the Simulator's default 1,000-player pool the Main field is capped to 768; the playable Tour uses a 2,000-player pool and the full 1,024.)
+
+Every season also has a **satellite ladder**, plus a Major-qualifier credential: the top **64** finishers of each Major earn a Main Event berth (no $10K Nectar buy-in required). With four majors that's 256 credentials against the ~269 qualifier seats in the Main field — a major top-64 finish is a reliable championship path (the FedEx-Cup-points logic). About 65% of the Main field enters directly by buy-in; the rest come through these credentials and the satellite ladder.
 
 ### 3.3 Format
 
@@ -183,20 +185,31 @@ Every hole produces TWO outputs simultaneously:
    └────────────────────────────────────────────────────┘
 ```
 
-At round end, total honey is divided by the **round divisor** ONCE and subtracted from the scorecard:
+At the end of **each round** (per-round reconciliation, not once at event end), that round's net honey is divided by the **honey cap** and subtracted from the round's scorecard:
 
 ```
-   FINAL ROUND SCORE = total scorecard − (net honey ÷ divisor)
+   FINAL ROUND SCORE = round scorecard − (round net honey ÷ honey cap)
+```
 
-   Round length    Divisor
-   ───────────     ───────
+The honey cap has **two selectable modes** (chosen in the Simulator and recorded in run exports as `honey_cap_mode`):
+
+```
+   calibrated  (the ship default — stepped table)
+   ──────────────────────────────────
+   Round length    Honey cap
+   ───────────     ─────────
    1 hole              1
    9 holes             4
    18 holes            9
    72 holes           36
+
+   spec  (the v23 design-intent mode)
+   ──────────────────────────────────
+   Honey cap = the round's hole count N
+   (an 18-hole round divides net honey by 18)
 ```
 
-**Lower wins.**
+So under the default (calibrated), an 18-hole round divides that round's net honey by **9**. Under spec it divides by 18. **Lower wins.**
 
 ### 3.5 Wagering: agreed-total semantics
 
@@ -226,26 +239,49 @@ Tour wagering is **NOT** like standard poker. Read carefully:
    Only the most recent accepted proposal does.
 ```
 
-### 3.6 Stroke caps with progressive unlock across the betting beats
+### 3.6 Wagering caps: the hole envelope (E) and pot-elastic K
 
-Wagering is capped per event tier. The cap unlocks gradually across the four betting beats (Tea Box, Lay-Up, Approach, Putt). State beats (Fairway, Hazard, Green) carry no betting and inherit the cap of the betting beat that follows them.
+Wagering is bounded by two settings that work together. State beats (Fairway, Hazard, Green) carry no betting and inherit the cap of the betting beat that follows them.
+
+**The hole envelope, E.** Each player may wager up to **E strokes' worth of Honey per hole**. The per-hole pot ceiling is derived uniformly from the round's honey cap:
 
 ```
-   PROGRESSIVE BET-CAP UNLOCK
-   ─────────────────────────────────────
-   Tea Box   (preflop bet)  25% of cap
-   Lay-Up    (flop bet)     50% of cap
-   Approach  (turn bet)     75% of cap
-   Putt      (river bet)   100% of cap
+   effectiveCap = round( E × honeyCap(roundLength) )
+```
 
-   Per-tier caps (default):
+The ship default is **E = 3**. With the calibrated honey cap that is **27 honey per player per hole** on 9- and 18-hole rounds, and **108 honey** on the 72-hole Main finals.
+
+When E > 0 (the default), the envelope **replaces** the older fixed per-tier stroke caps. Those per-tier values still exist, but only as the **E = 0 legacy fallback**:
+
+```
+   LEGACY PER-TIER CAPS (used only when E = 0)
+   ─────────────────────────────────────
      Regular event:        cap =  6 honey
      Major event:          cap =  9 honey
      Main early rounds:    cap =  8 honey
      Main 72-hole final:   cap = 18 honey
 ```
 
-So in a Major (cap 9): you can bet up to 3 honey on Tea Box, up to 5 on Lay-Up, up to 7 on Approach, up to 9 on Putt.
+Under default settings (E = 3) those legacy values are NOT the live caps; the live per-hole caps are 27 / 27 / 108 as above.
+
+**Pot-elastic K.** Each betting beat's cap is K times the Honey already agreed into the pot, hard-ceilinged at 3× the per-hole envelope so a single hole's risk stays bounded:
+
+```
+   streetCap = min( 3 × envelopeCap,  ⌈K × agreedTotal⌉ )
+```
+
+with a short-circuit: if the envelope cap is ≤ 3, the cap is just the envelope cap (or 3). K (`potElasticK`) defaults to **5**. K is the pot's "acceleration"; the envelope is its "speed limit."
+
+```
+   WORKED EXAMPLE — Major round, E = 3 calibrated
+   ─────────────────────────────────────────────
+   envelopeCap = 3 × 9 = 27        ceiling = 3 × 27 = 81
+
+   Tea Box opener 2          → cap = ⌈5×2⌉  = 10
+   Lay-Up, 8 agreed          → cap = ⌈5×8⌉  = 40
+   Approach, 24 agreed       → ⌈5×24⌉ = 120, clamped to 81
+   The Putt                  → 81
+```
 
 ### 3.7 Folds
 
@@ -294,11 +330,15 @@ The build ships **two scoring variants** that share every rule above except one:
 
 **Folds and ties are the same in both variants.** Only the decisive-showdown loser score changes.
 
-### 3.10 Multi-way option (6 / 9 player tables)
+**Main-final scoring override.** The Main Event's 72-hole *final* round can run a different decisive-loser rule than the rest of the Tour (config `mainFinalsLoserBogey`, exposed as the Simulator's "Main final" control): *inherit* (default — the final follows the variant above), *Yellow Jacket on the final* (force the +1-bogey rule there only — keeps the champion total a tough, over-par gauntlet even if the rest of the Tour is Bumblebee), or *Bumblebee on the final* (force own-hand-loss there only — pulls the champion total deep under par, golf-major style, while the bracket-cut rounds leading to it stay competitive). It affects only the 72-hole aggregate final; the Main's bracket-cut rounds (down to 16) always use the global variant. Everything else — and every regular and Major event — follows the variant chosen above.
 
-The simulator supports tables of 6 or 9 (HU is the default). Multi-way uses **matched-contribution wagering** (like real poker — each player contributes to a shared pot, no agreed-total). R1–R3 are played multi-way; R4 collapses to a heads-up final between the top-2 survivors.
+### 3.10 Multi-way option (6 / 9 player tables) — designed, not yet active
 
-Multi-way variant defaults to Bumblebee (Honored Loss) since YJ Bogey Loss × 8 losers per pot pulls champion scores too far above par at 9-handed.
+> **Status:** not active in v69 — heads-up (`tableSize: 2`) is the only running mode. The 6- and 9-player table sizes appear in the Simulator's table-size dropdown for forward-compatibility, but the multi-way matched-contribution runner is not yet implemented; selecting a size above HU has no effect in the current build. This section documents the *designed* multi-way extension that is scaffolded for a v70+ release — it is the spec for when it ships, not a description of current behavior.
+
+The design: the simulator's table-size dropdown carries 6 and 9 alongside HU (the default and, today, the only mode that runs). When the multi-way runner ships, multi-way tables will use **matched-contribution wagering** (like real poker — each player contributes to a shared pot, no agreed-total) rather than the agreed-total semantics of heads-up Honey wagering. R1–R3 are to be played multi-way; R4 collapses to a heads-up final between the top-2 survivors.
+
+The multi-way variant is designed to default to Bumblebee (Honored Loss), since YJ Bogey Loss × 8 losers per pot would pull champion scores too far above par at 9-handed.
 
 ### 3.11 Payouts
 
@@ -316,10 +356,7 @@ Top ~15% of finish positions cash. The payout curve decays geometrically (defaul
    Players outside the cash line: lose buy-in.
 ```
 
-After-rake prize pool is split this way. Rake is tier-based:
-- Regular: 1.5% (multi-way scaled to 0.83% effective)
-- Major: 2.0% (multi-way 1.10%)
-- Main: 3.0% (no multi-way scaling)
+The prize pool is split this way. There is **no rake** on tour events — the full entry-fee (buy-in) pool goes entirely to the prize pool, and any configured sponsor purse is added on top. The Tour takes no house cut at any tier (Regular, Major, or Main).
 
 ---
 
@@ -482,8 +519,10 @@ Despite the brand name "Stroke," these cash variants borrow only the **scorecard
    Wager unit     │ Honey        │ Nectar   │ Nectar       │
    Wagering type  │ Agreed-total │ Matched  │ Matched      │
    Mandatory pot  │ 2 honey      │ Blinds   │ Blinds       │
-   Cap per hand   │ Tier-based   │ Stack    │ Stack        │
-   Street unlock  │ 25/50/75/100 │ None     │ None         │
+   Cap per hole   │ Hole envel.  │ Stack    │ Stack        │
+                  │  E×honeyCap  │          │              │
+   Street cap     │ K×agreed,    │ None     │ None         │
+                  │  ≤3×envel.   │          │              │
    Scorecard      │ Yes          │ No       │ Yes (cash)   │
    Honey ledger   │ Yes          │ No       │ No           │
    Stroke ledger  │ No (per-hand │ No       │ Yes          │
@@ -597,11 +636,13 @@ These adjustments only fire in tour events, never at cash.
    └──────────────────────────────────────────────────┘
 ```
 
-### 8.3 Multi-way table format (optional)
+### 8.3 Multi-way table format (designed, not yet active)
+
+> **Status:** not active in v69 — heads-up (`tableSize: 2`) is the only running mode. The diagram below is the *designed* multi-way tournament shape, scaffolded for v70+; the 6- and 9-player table sizes are present in the Simulator's table-size dropdown for forward-compatibility only and have no effect in the current build. Documented here as the spec for when the multi-way runner ships.
 
 ```
    ┌──── MULTI-WAY AGGREGATE (6 or 9 per table) ────┐
-   │                                                  │
+   │              (DESIGN — not yet active)          │
    │  R1: tables of N players, matched-contribution  │
    │  R2: tables of N players                         │
    │  R3: tables of N players                         │
@@ -611,7 +652,11 @@ These adjustments only fire in tour events, never at cash.
    └──────────────────────────────────────────────────┘
 ```
 
-### 8.4 Sudden-death playoffs
+### 8.4 Golf-cut spectator tournament (Spectator Mode)
+
+The Spectator Mode's "Live Tournament" runs a **golf-cut heads-up bracket**: after every round, **50% of the field is cut** by cumulative honey-adjusted strokes (the round's honey cap is applied at each round end, exactly as in a live event), and play continues until a champion is crowned. The championship round is labelled **"🏆 Final Table"** and the round before it **"🥇 Semi-Final."** Fields are capped per tier — Regular 8, Major 16, Main 32 — so the parallel simulation stays browser-feasible.
+
+### 8.5 Sudden-death playoffs
 
 If two or more players are tied after the scheduled holes, a short 2–4 hole aggregate playoff resolves the tie. No mandatory 1-on-1 final; playoff fires only when needed.
 
@@ -645,7 +690,7 @@ If two or more players are tied after the scheduled holes, a short 2–4 hole ag
 
 ## One-Line Summaries
 
-- **Tour Honey-Stroke** (also marketed as **Sweet Stroke**): 8-beat Hold'em hole (Tea Box → Fairway → Lay-Up → Hazard → Approach → Green → Putt → The Cup) + bounded golf score per hole + honey pot that converts to strokes via round divisor. Two variants (Yellow Jacket / Bumblebee) differ only on decisive-showdown loser score.
+- **Tour Honey-Stroke** (also marketed as **Sweet Stroke**): 8-beat Hold'em hole (Tea Box → The Fairway → The Lay-Up → The Hazard → The Approach → The Green → The Putt → The Cup) + bounded golf score per hole + honey pot that converts to strokes via the honey cap at each round end. Two variants (Yellow Jacket / Bumblebee) differ only on decisive-showdown loser score.
 - **Pure NLHE Cash**: Standard online poker, no strokes, no honey, just chip P/L.
 - **YJ Stroke / Bumblebee Stroke Cash**: Pure NLHE wagering + parallel stroke ledger from hand class at showdown, settling at cashout for ±$0.50 per net stroke.
 
