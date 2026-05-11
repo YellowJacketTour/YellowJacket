@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.11-v69.53.1-expose-pot-elastic-k";
+const APP_VERSION = "2026.05.11-v69.53.2-csv-audit-cleanup";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3632,15 +3632,12 @@ function estimateStrengthAware(holeCards, community, street, streetCap, skillFac
   const adj = base - threat * skillFactor + draw * skillFactor * 0.8;
   return Math.max(0.01, Math.min(1.0, adj));
 }
-// Progressive street cap: preflop 25%, flop 50%, turn 75%, river 100% of the global cap.
-// Small caps (≤3) use the global cap flat since there's no meaningful headroom to split.
-//
-// v43 POT-ELASTIC EXTENSION: when CurrentPotElasticK > 0 (default 3), the cap
-// can climb above the progressive floor as the pot grows. effectiveCap =
-// max(progressiveFloor, min(globalCeiling, k × agreedTotal)). globalCeiling
-// is 3× totalCap so single-hole risk stays bounded. Restores no-limit-style
-// overbet pressure on hot/carry pots and unlocks Tea Box (preflop) play
-// because k×opener of 6 exceeds the progressive floor of 1-2 honey.
+// Street cap (v69.52, two-layer): cap = min(globalCeiling, ⌈K × agreedTotal⌉),
+// where globalCeiling = 3 × totalCap so single-hole risk stays bounded, and K =
+// CurrentPotElasticK (v69.53 default 5). Small caps (≤3) return the global cap
+// flat — no headroom to scale. The legacy v43 "progressive floor" layer
+// (totalCap × {0.25,0.50,0.75,1.0} by street) was removed because it never
+// bound in any normal regime; K-driven escalation handles per-street growth.
 function streetCapFor(street, totalCap, agreedTotal) {
   // v69.52 — simplified from the v43 three-layer max(progressive, min(ceiling, elastic))
   // formula. The "progressive" layer (totalCap × {0.25,0.50,0.75,1.0} by street) never
@@ -16781,7 +16778,7 @@ function spectatorExportCSV() {
     chunks.push(row(['section', 'feed']));
     chunks.push(row(['idx', 'ts', 'table_id', 'kind', 'line']));
     (SpectatorState.log || []).forEach((e, i) => chunks.push(row([i, new Date(e.ts).toISOString(), e.tableId == null ? '' : e.tableId, e.kind, e.line])));
-    const blob = new Blob(chunks, { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob(['﻿', ...chunks], { type: 'text/csv;charset=utf-8' });
     const name = spectatorExportFilenameBase() + '.csv';
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -23104,10 +23101,10 @@ function _exportRunToCSVImpl(snap) {
   cfgRow('elimination.survivalCushion', Array.isArray(snapCfg.survivalCushion) ? snapCfg.survivalCushion.join('|') : '12|8|5|3');
   cfgRow('elimination.cutSchedule', Array.isArray(snapCfg.cutSchedule) ? snapCfg.cutSchedule.map(c => c === null ? 'none' : c).join('|') : 'none|0.50|0.50|none');
   cfgRow('elimination.tableSize', Number.isFinite(+snapCfg.tableSize) ? +snapCfg.tableSize : 2);
-  // Pot-elastic streetCap. effectiveCap = max(progressive, min(globalCap×3, k×agreedTotal)).
+  // Pot-elastic streetCap (v69.52 two-layer). cap = min(3×envelopeCap, ceil(k×agreedTotal)).
   cfgRow('streetCap.potElasticK',
-    Number.isFinite(+snapCfg.potElasticK) ? +snapCfg.potElasticK : 3);
-  cfgRow('streetCap.formula', 'max(progressive, min(3×cap, k×agreedTotal))');
+    Number.isFinite(+snapCfg.potElasticK) ? +snapCfg.potElasticK : 5);
+  cfgRow('streetCap.formula', 'min(3*cap, ceil(k*agreedTotal))  [progressive layer removed v69.52]');
   // Bet sizing — five tier vocabulary (probe / press / pot / polarize / shove).
   cfgRow('decision.betSizingTiers', 5);
   cfgRow('decision.maxIterationsPerStreet', 16);
@@ -23370,16 +23367,20 @@ function _exportRunToCSVImpl(snap) {
       e.topEarners.forEach(p => rows.push([p.name || '', fx(p.skill, 3), fx(p.earned, 2), fx(p.paid, 2), fx(p.profit, 2), fx(p.roi)]));
     }
   }
+  // Champion scores live on the 1/36 stroke grid (round-end honey divisors are
+  // 1/4/9/36; LCD = 36). Snap before dumping so accumulated float error prints
+  // as 0 instead of 2.22e-16-style dust, while exact grid values are preserved.
+  const snapScore = s => { const v = Math.round((+s || 0) * 36) / 36; return v === 0 ? 0 : v; };
   rows.push([]);
   rows.push(['--- champScores ---']);
-  (Array.isArray(m.champScores) ? m.champScores : []).forEach(s => rows.push([s]));
+  (Array.isArray(m.champScores) ? m.champScores : []).forEach(s => rows.push([snapScore(s)]));
   if (m.champScoreStatsByType) {
     ['major','regular','main'].forEach(type => {
       const s = m.champScoreStatsByType[type];
       if (!s || !s.scores || s.scores.length === 0) return;
       rows.push([]);
       rows.push(['--- champScores_' + type + ' ---']);
-      s.scores.forEach(v => rows.push([v]));
+      s.scores.forEach(v => rows.push([snapScore(v)]));
     });
   }
   if (m.majorQualifierMetrics) {
@@ -23494,7 +23495,9 @@ function _exportRunToCSVImpl(snap) {
     const r = rows[i];
     lineChunks[i] = (Array.isArray(r) ? r.join(',') : String(r)) + '\n';
   }
-  const blob = new Blob(lineChunks, { type: 'text/csv;charset=utf-8' });
+  // Lead with a UTF-8 BOM so Excel / Numbers don't sniff the file as Windows-1252
+  // and mangle the × / ⌈⌉ / emoji in cfg strings and section headers.
+  const blob = new Blob(['﻿', ...lineChunks], { type: 'text/csv;charset=utf-8' });
   // Synchronous click from inside the caller's event handler. Some browsers (Safari,
   // Firefox with stricter popup rules) silently drop downloads triggered after async
   // awaits — this code path runs sync so as long as the caller invoked us from a
