@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.10-v69.45-spectator-sims-seed-csv";
+const APP_VERSION = "2026.05.10-v69.49-honey-divisor-mode-spec-vs-calibrated";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2933,12 +2933,46 @@ function betTierForProposal(currentAgreed, proposedTotal, streetCap) {
 // Replaces the v40-v59 honeyMagnitude-scaled divisor with a hardcoded flat table.
 // CurrentHoneyMagnitude is retained as a no-op (always 1) for backward compat
 // with any code that still reads it; it has zero effect on the divisor.
+// v69.49 — honey-divisor MODE: two coexisting calibrations selectable from
+// the Spectator + Simulator UIs. The system was originally specified one
+// way and then re-tuned another; both interpretations are now honored so
+// runs can be compared apples-to-apples.
+//
+//   'spec'        — v23 design intent (also the documented spec at
+//                   SCORING_STYLES['honey-stroke'].desc): divisor = N where
+//                   N is the round/event hole count. 1 stroke per N honey =
+//                   "average honey per hole IS your stroke effect". Honey
+//                   is a light drizzle complementing the golf scorecard.
+//   'calibrated'  — Post-v23 stepped table (the deployed pre-v69.49 behavior):
+//                   9-hole → 4, 18-71-hole → 9, 72+-hole → 36. Honey is
+//                   ~2× more impactful than spec at every tier.
+//
+// The mode is set once at run-start (Spectator session begin OR Simulator
+// run begin), snapshotted into the run's session/snapshot so the resulting
+// CSV/JSON is unambiguous, and shown prominently in the Live Stats / Session
+// Report / scorecard / simulator config block. Default is 'spec' (matches
+// the documented behavior; cleaner audit trail).
+let CurrentHoneyDivisorMode = 'spec';
+function setHoneyDivisorMode(mode) {
+  if (mode !== 'spec' && mode !== 'calibrated') return CurrentHoneyDivisorMode;
+  CurrentHoneyDivisorMode = mode;
+  return mode;
+}
 function honeyDivisorFor(numHoles) {
-  const n = +numHoles || 0;
+  const n = Math.max(1, +numHoles || 0);
+  if (CurrentHoneyDivisorMode === 'spec') {
+    // 1 stroke per N honey, where N is the round/event hole count.
+    return n;
+  }
+  // Calibrated stepped table (post-v23 deployed values).
   if (n >= 72) return 36;
   if (n >= 18) return 9;
   if (n >= 9)  return 4;
   return 1;
+}
+// Friendly label for a divisor value at the active mode.
+function honeyDivisorModeLabel() {
+  return CurrentHoneyDivisorMode === 'spec' ? 'SPEC (÷N)' : 'CALIBRATED (÷stepped)';
 }
 // honeyNormalizationDivisor = 72 (4×18, like 4 rounds of golf / majors).
 // Golf dominates; honey is the light smoothing drizzle.
@@ -13760,10 +13794,9 @@ function resolveCashHand(t) {
       if (typeof spectatorHarvestTableLogs === 'function') spectatorHarvestTableLogs();
       if (typeof refreshSpectatorStats === 'function') refreshSpectatorStats();
     } catch (_) {}
-    // Tournament-mode bust check (only if liveTourney mode active)
-    if (SpectatorState.tournament && SpectatorState.mode === 'liveTourney') {
-      try { spectatorTournamentCheckBust(t); } catch (_) {}
-    }
+    // v69.47 — Live Tournament no longer runs through the cash engine, so
+    // this hook is intentionally a no-op for tourney mode. Cash spectator
+    // tables only fall through here.
     // v69.45 — run-limit terminus check (liveCash). If the scope is reached,
     // freeze every table and reveal the results panel — a logical conclusion.
     if (typeof spectatorCheckTerminus === 'function' && spectatorCheckTerminus()) {
@@ -14205,6 +14238,48 @@ function cashGolfScoreFromClassName(name) {
     default: return 0;
   }
 }
+
+// v69.46 — golf-tournament helpers: an "old-money" scorecard maps every dealt
+// hand to a stroke value AND a golf term, exactly the way a real Augusta-style
+// card reads. Lower is better (real-golf convention: −2 eagle is great,
+// +2 double-bogey is rough). Used by Spectator → Live Tournament's golf-cut
+// format, where field advancement is decided by cumulative strokes, not by
+// chip bust. The cash engine's strokeLedger uses an inverted convention for
+// its own purposes; this helper is the scorecard's source of truth.
+function golfTermForStroke(s) {
+  // YJ-Stroke caps the scorecard at +2 / −5, so these cover every cell.
+  if (s <= -5) return 'Royal';      // Straight/Royal Flush
+  if (s === -4) return 'Condor';    // Four of a Kind
+  if (s === -3) return 'Albatross'; // (not produced today but keep the slot)
+  if (s === -2) return 'Eagle';     // Full House
+  if (s === -1) return 'Birdie';    // Flush / Straight / Trips, or uncontested win
+  if (s === 0)  return 'Par';       // Two Pair
+  if (s === 1)  return 'Bogey';     // Pair, or fold-out loser
+  if (s === 2)  return 'Double';    // High Card
+  return s > 2 ? 'Triple+' : 'Eagle+';
+}
+function glyphForHandClass(name) {
+  switch (name) {
+    case 'Royal Flush':     return '👑';
+    case 'Straight Flush':  return '🔥';
+    case 'Four of a Kind':  return '🃟';
+    case 'Full House':      return '🏛';
+    case 'Flush':           return '♦';
+    case 'Straight':        return '➡';
+    case 'Three of a Kind': return '♣';
+    case 'Two Pair':        return '♠';
+    case 'One Pair':        return '•';
+    case 'High Card':       return '·';
+    default: return '';
+  }
+}
+// Score one seat's hand for the tournament scorecard. Every dealt seat gets a
+// row each hand — even folders (bogey +1) and uncontested winners (birdie −1)
+// — so the per-hole record is complete the way a real scorecard is.
+// v69.47 — tournamentHandScoreForSeat (v69.46) is gone: the tour engine
+// drives every Live Tournament hand now, so scorecard rows are produced
+// directly from playHole() output by spectatorTourneyMatchTick, not by
+// re-deriving a stroke from a cash-engine hand state.
 
 // === Bad Beat Jackpot =======================================================
 const BBJackpot = { pool: 0, lastHit: null, history: [] };
@@ -15486,6 +15561,7 @@ const SpectatorState = {
   director: { on: true, lastSwitchAt: 0, intervalMs: 8000 },
   log: [],                                 // universal broadcast log [{ts, tableId, line, kind}]
   logSeen: {},                             // tableId -> last h.log index harvested
+  scorecardOpen: false,                    // v69.46 — featured panel toggle (felt ↔ full scorecard) for liveTourney
   // Setup form state (persisted across view re-renders)
   setup: {
     variant: 'yj',                         // 'pure' | 'yj' | 'bb'
@@ -15507,6 +15583,9 @@ const SpectatorState = {
     // Optional RNG seed string. Blank => a fresh random seed is generated and
     // recorded; supplying the same string re-derives the same session.
     seed: '',
+    // v69.49 — Honey divisor calibration. 'spec' (÷N holes, v23 design intent)
+    // or 'calibrated' (deployed stepped table ÷9/÷4/÷36). Locks at run-start.
+    honeyDivisorMode: 'spec',
   },
   stats: {
     handsPlayed: 0, biggestPot: 0, biggestPotHand: null, biggestPotTableId: null,
@@ -15609,45 +15688,102 @@ function spectatorStartLiveCash() {
   spectatorPushLog(null, '🎬 Live Cash session started — ' + n + ' tables · ' + limTxt + ' · seed ' + (sess.seed || '(random)'), 'meta');
 }
 
-// --- Mode 2: spawn a small heads-up tournament -----------------------------
+// --- Mode 2: Live Tournament — golf-cut format (v69.47) -------------------
+// REWRITTEN AGAIN to use the actual TOUR ENGINE (playHole + Honey-pot + the
+// honeyDivisorFor smoothing math) instead of the cash engine. The user
+// surfaced the gap precisely:
+//   * NECTAR (◈) is the bankroll currency — what cash games settle in.
+//   * HONEY is the in-hand wager unit during golf-style tournament play:
+//     every hole has a Honey pot the winner sweeps; ties carry the pot to
+//     the next decisive hole.
+//   * Tournament final scoring isn't raw strokes — it's the Honey-smoothed
+//     formula honoured everywhere else in the codebase:
+//        final = totalGolf − netHoney / honeyDivisorFor(eventTotalHoles)
+// v69.46 cut by raw strokes only and ran the cash engine underneath, so
+// (a) bots appeared to "bet large amounts of honey" (it was actually
+// Nectar) and (b) the on-screen totals didn't match what Broadcast Replay
+// produces for the same field, because the divisor math was missing.
+// v69.47 drives every tournament hand through playHole(p1, p2, dealer,
+// carryPot, gameContext) — the exact function Broadcast Replay's event
+// engine uses — so the numbers a Live Tournament prints are now the same
+// numbers a recorded broadcast of that field would produce.
+//
+// Structural notes:
+//   - playHole is heads-up only; tournament matches are therefore HU.
+//     Each round pairs the surviving field into HU matches (snake-draft).
+//   - Match state lives on `tour.matches[i].engine` — NOT in CashLobby, so
+//     the cash engine is completely untouched.
+//   - Tables share the module-level DECK during shuffleDeck; ticks are
+//     setTimeout-scheduled so callbacks are serialised by the event loop
+//     and never interleave with cash hands.
+//   - Cumulative state per player:
+//        golfCum         — Σ rawScore across every played hole
+//        honeyCumSelf    — Σ Honey credits won, across every match
+//        honeyCumOpp     — Σ Honey credits won by opponents in this player's
+//                          matches (so netHoney = self − opp)
+//     final = golfCum − (honeyCumSelf − honeyCumOpp) / tour.divisor.
 function spectatorStartLiveTourney() {
   spectatorTeardown();
   spectatorInitSession('liveTourney');
   const evType = SpectatorState.setup.eventType;
   const fieldCap = evType === 'main' ? 32 : (evType === 'major' ? 16 : 8);
-  // Build a synthetic field — pull skills uniformly from the chosen profile pool
+  const handsPerRound = 18;
+  // Total rounds to crown a champion = ceil(log2(fieldCap)). 8→3, 16→4, 32→5.
+  const totalRounds = Math.ceil(Math.log2(Math.max(2, fieldCap)));
+  const eventTotalHoles = totalRounds * handsPerRound;
+  // v69.49 — divisor is PER-ROUND, applied at round end. Anchored to the
+  // hole count of one round (default 18). honeyDivisorFor() honors the
+  // active mode: 'spec' → ÷N (= 18), 'calibrated' → ÷stepped (= 9).
+  const divisor = (typeof honeyDivisorFor === 'function') ? honeyDivisorFor(handsPerRound) : 9;
+  const variant = SpectatorState.setup.variant;
+  // playHole's profile generator reads Math.random for jitter — wrap in
+  // withCashRng so seeded sessions get a deterministic field + profiles.
   const players = [];
   withCashRng(() => {
     for (let i = 0; i < fieldCap; i++) {
       let skill;
-      if (evType === 'main') skill = 0.30 + cashRng() * 0.65;       // wide field
-      else if (evType === 'major') skill = 0.55 + cashRng() * 0.40; // pro skewed
-      else skill = 0.40 + cashRng() * 0.50;                         // mid-pro
+      if (evType === 'main') skill = 0.30 + cashRng() * 0.65;
+      else if (evType === 'major') skill = 0.55 + cashRng() * 0.40;
+      else skill = 0.40 + cashRng() * 0.50;
       players.push({
         id: -1000 - i,
         name: spectatorMakePlayerName(i),
         skill: skill,
+        profile: makeProfileForSkill(skill, variant === 'pure' ? 'pure' : 'yellowjacket'),
+        // Per-player tournament state. v69.48 — Honey reconciles AT ROUND END
+        // (Augusta cumulative shape), not aggregated across the whole event.
+        scorecard: [],          // [{round, hole, ...row}]   per-hole audit trail
+        rounds: [],             // [{round, matchId, opp, holes, golf, honeyNet, divisor, honeyStrokes, roundFinal}]
+                                // committed by spectatorFinishTourneyMatch at the end of each round
+        golfCum: 0,             // Σ rawScore across all played holes (kept for sanity-check display only)
+        honeyCumSelf: 0,        // Σ Honey credits this player has won (committed cumulatively)
+        honeyCumOpp: 0,         // Σ Honey credits opponents won in matches with this player
         eliminatedRound: null,
         finalPlace: null,
+        matchId: null, seatIdx: null,
       });
     }
   });
-  // Pair into round-1 HU matches
-  const matches = [];
-  for (let i = 0; i < players.length; i += 2) {
-    matches.push({ p1: players[i], p2: players[i + 1], tableId: null, winner: null });
-  }
   SpectatorState.tournament = {
+    format: 'golf-honey',                            // v69.47 marker
     eventType: evType,
     fieldSize: fieldCap,
     players: players,
     round: 1,
-    matches: matches,
+    totalRounds: totalRounds,
+    handsPerRound: handsPerRound,
+    eventTotalHoles: eventTotalHoles,
+    divisor: divisor,                                // honeyDivisorFor(eventTotalHoles), fixed for the run
     surviving: players.slice(),
+    matches: [],                                     // populated by spectatorSeatTourneyRound
     history: [],
+    champion: null,
+    nextMatchId: 1,
   };
-  spectatorPushLog(null, '🏆 Live Tournament — ' + evType.toUpperCase() + ' field of ' + fieldCap + ' starting Round 1', 'meta');
-  spectatorSpawnRoundMatches();
+  spectatorPushLog(null, '🏆 Live Tournament — ' + evType.toUpperCase()
+    + ' · field of ' + fieldCap + ' · ' + handsPerRound + ' holes/round × ' + totalRounds + ' rounds'
+    + ' · honey divisor ' + divisor + ' (= 1 stroke per ' + divisor + ' net honey)', 'meta');
+  spectatorSeatTourneyRound();
 }
 
 function spectatorMakePlayerName(idx) {
@@ -15655,93 +15791,416 @@ function spectatorMakePlayerName(idx) {
   return FIRST[idx % FIRST.length] + ' #' + (idx + 1);
 }
 
-function spectatorSpawnRoundMatches() {
+// Helper used by renderers + Live Stats: per-player Honey-adjusted tournament
+// total. v69.48 — Honey reconciles AT ROUND END, not at event end. Each
+// completed round contributes `roundFinal = roundGolf − roundNetHoney/divisor`
+// to the player's tournament total. While a match is in flight, we add a
+// LIVE contribution from the in-flight match so the displayed number updates
+// per hole without lying about the round-end commit. The carry pot resets
+// every round (a tied hole at the end of round 1 does NOT carry into round 2).
+//   tournament final = Σ rounds[].roundFinal + (in-flight match live contribution)
+function spectatorPlayerFinal(player) {
+  if (!player) return 0;
   const tour = SpectatorState.tournament;
-  if (!tour) return;
-  const stakes = { sb: 25, bb: 50 };
-  // v69.45 — 40bb heads-up matches. The original 200bb depth meant a single HU
-  // match could run many hundreds of hands before someone busted; an 8-player
-  // field would take thousands of hands across 3 rounds and "concludes via
-  // champion" was true only in theory. 40bb keeps the bracket lively so the
-  // tournament actually reaches its champion in a reasonable run.
-  const MATCH_STACK_BB = 40;
-  tour.matches.forEach((m, i) => {
-    if (m.tableId != null) return;
-    const t = spectatorSpawnOneCashTable({
-      variant: SpectatorState.setup.variant,
-      stakes: stakes,
-      seats: 2,
-      skillMix: 'mixed',
-      label: 'R' + tour.round + ' Match ' + (i + 1),
-      seatNames: [m.p1.name, m.p2.name],
-      seatSkills: [m.p1.skill, m.p2.skill],
-      seatStacks: [MATCH_STACK_BB * stakes.bb, MATCH_STACK_BB * stakes.bb],
-    });
-    m.tableId = t.id;
-    m.p1.tableId = t.id; m.p1.seatIdx = 0;
-    m.p2.tableId = t.id; m.p2.seatIdx = 1;
-  });
+  const divisor = (tour && tour.divisor) || 9;
+  let total = 0;
+  for (const r of (player.rounds || [])) total += r.roundFinal;
+  // Add the live in-flight match contribution (if any). Live honey is treated
+  // as if the round ended now — that's a forward look, not a commit; the
+  // round entry is only pushed when the match actually finishes.
+  if (tour && Array.isArray(tour.matches)) {
+    for (const m of tour.matches) {
+      if (!m.engine || m.engine.done) continue;
+      if (m.engine.p1 === player) {
+        const liveNet = (m.engine.totalHoneyA || 0) - (m.engine.totalHoneyB || 0);
+        total += (m.engine.totalGolfA || 0) - liveNet / divisor;
+      } else if (m.engine.p2 === player) {
+        const liveNet = (m.engine.totalHoneyB || 0) - (m.engine.totalHoneyA || 0);
+        total += (m.engine.totalGolfB || 0) - liveNet / divisor;
+      }
+    }
+  }
+  return total;
 }
 
-// Called when a tournament HU table sees a player bust (stack hits 0)
-function spectatorTournamentCheckBust(t) {
+// Pair the current `surviving` field into HU matches for the next round.
+// Each match gets a fresh engine struct + scheduled tick. No CashLobby
+// involvement at all — this engine is independent of cash play.
+function spectatorSeatTourneyRound() {
   const tour = SpectatorState.tournament;
   if (!tour) return;
-  const m = tour.matches.find(x => x.tableId === t.id);
-  if (!m || m.winner != null) return;
-  const s0 = t.seats[0], s1 = t.seats[1];
-  if (!s0 || !s1) return;
-  let busted = null, survivor = null;
-  if (s0.stack < t.bigBlind) { busted = m.p1; survivor = m.p2; }
-  else if (s1.stack < t.bigBlind) { busted = m.p2; survivor = m.p1; }
-  if (!busted) return;
-  m.winner = survivor;
-  busted.eliminatedRound = tour.round;
-  SpectatorState.stats.eliminations++;
-  spectatorPushLog(t.id, '💀 ' + busted.name + ' eliminated by ' + survivor.name + ' (Round ' + tour.round + ')', 'elim');
-  // Tear down the table
-  t.spectatorMode = false;
-  if (t.handState && t.handState.tickTimer) clearTimeout(t.handState.tickTimer);
-  // Check if all matches in this round are done
-  if (tour.matches.every(x => x.winner != null)) {
-    spectatorAdvanceTourney();
+  const survivors = tour.surviving.slice();
+  if (survivors.length < 2) {
+    // Defensive — should be handled by spectatorApplyTournamentCut.
+    return;
+  }
+  // Snake-draft pairing: sort by current final, then top-vs-bottom pairings
+  // so the leader isn't always paired with the same neighbour rank.
+  const seeded = survivors.slice().sort((a, b) => spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
+  const pairs = [];
+  for (let i = 0; i < seeded.length / 2; i++) {
+    const p1 = seeded[i];
+    const p2 = seeded[seeded.length - 1 - i];
+    pairs.push({ p1, p2 });
+  }
+  // v69.48 — "Final Table" naming. The championship round is THE Final Table
+  // (HU in this format — the engine is HU-native). The round before is the
+  // semi-final pair of matches. Earlier rounds are numbered. Match labels
+  // pick up the right name so the featured panel + scorecard + log read as
+  // a real tour final.
+  const isFinal = (tour.round === tour.totalRounds);
+  const isSemi  = (tour.round === tour.totalRounds - 1);
+  const roundName = isFinal ? '🏆 Final Table' : (isSemi ? '🥇 Semi-Final' : ('Round ' + tour.round));
+  pairs.forEach((pair, idx) => {
+    const matchId = tour.nextMatchId++;
+    const dealer = (cashRng() < 0.5) ? 'a' : 'b';
+    const labelMatchPart = (pairs.length === 1) ? '' : ' · Match ' + (idx + 1);
+    const match = {
+      id: matchId,
+      label: roundName + labelMatchPart,
+      round: tour.round,
+      isFinal: isFinal,
+      isSemi: isSemi,
+      players: [pair.p1, pair.p2],
+      engine: {
+        p1: pair.p1, p2: pair.p2,
+        dealer: dealer,
+        carryPot: 0,
+        consecTies: 0,
+        currentHole: 0,                              // 0-based; reaches handsPerRound when done
+        totalGolfA: 0, totalGolfB: 0,                // running raw-stroke totals (this match)
+        totalHoneyA: 0, totalHoneyB: 0,              // running Honey credits (this match)
+        lastResult: null,                            // {aScore, bScore, aHand, bHand, strokes, tie, folded, ...}
+        tickTimer: null,
+        done: false,
+      },
+    };
+    pair.p1.matchId = matchId; pair.p1.seatIdx = 0;
+    pair.p2.matchId = matchId; pair.p2.seatIdx = 1;
+    tour.matches.push(match);
+    SpectatorState.tableIds.push(matchId);
+    SpectatorState.logSeen[matchId] = 0;
+  });
+  if (!SpectatorState.featuredTableId || !tour.matches.find(m => m.id === SpectatorState.featuredTableId)) {
+    // Auto-feature the Final Table when it spawns; otherwise pick the first match.
+    SpectatorState.featuredTableId = (isFinal && tour.matches[0]) ? tour.matches[0].id : (tour.matches[0] ? tour.matches[0].id : null);
+  }
+  spectatorPushLog(null, '⛳ ' + roundName + (isFinal ? ' — championship · ' : ' begins — ') + survivors.length
+    + ' player' + (survivors.length === 1 ? '' : 's') + ' · ' + pairs.length + ' HU match' + (pairs.length === 1 ? '' : 'es')
+    + ' · ' + tour.handsPerRound + ' holes · honey ÷' + tour.divisor, isFinal ? 'champion' : 'meta');
+  // Kick off every match's first tick. The handDelayMs cadence is the
+  // "between-holes" pacing; faster than between-hands in cash mode is fine
+  // because a hole is dramatic but atomic in the tour engine.
+  tour.matches.forEach(m => spectatorScheduleTourneyTick(m, 60));
+}
+
+// Schedule the next hole for a match. Honors session pause + termination.
+function spectatorScheduleTourneyTick(match, delayMs) {
+  if (!match || match.engine.done) return;
+  if (match.engine.tickTimer) { clearTimeout(match.engine.tickTimer); match.engine.tickTimer = null; }
+  if (spectatorSessionDone()) return;
+  const wait = SpectatorState.paused ? 600 : (delayMs != null ? delayMs : (SpectatorState.setup.handDelayMs || 1200));
+  match.engine.tickTimer = setTimeout(() => spectatorTourneyMatchTick(match), wait);
+}
+
+// Drive one hole at one HU match through the tour engine. Atomic: a single
+// playHole(...) resolves the entire hole (4 betting rounds + showdown) in
+// one synchronous call. We then post-process: scorecard rows, broadcast log,
+// round/match completion checks, throttled UI repaint.
+function spectatorTourneyMatchTick(match) {
+  const tour = SpectatorState.tournament;
+  if (!tour || !match || match.engine.done) return;
+  if (SpectatorState.paused) { spectatorScheduleTourneyTick(match, 600); return; }
+  if (spectatorSessionDone()) return;
+  const eng = match.engine;
+  const hole0 = eng.currentHole;                     // 0-based
+  const holeNo = hole0 + 1;                          // 1-based for display + scorecard
+  const gameContext = {
+    mode: 'match',
+    holeNumber: holeNo,
+    totalHoles: tour.handsPerRound,
+    honeyDivisor: tour.divisor,
+    decisionDivisor: tour.divisor,
+    isFinals: (tour.round === tour.totalRounds),
+    openerHoney: 2 * (hole0 >= 9 ? (+CurrentBackNineMultiplier || 1) : 1),
+    oppHistory: { a: { estBluffRate: 0.05, handsRevealed: 0, bluffsRevealed: 0 },
+                  b: { estBluffRate: 0.05, handsRevealed: 0, bluffsRevealed: 0 } },
+  };
+  let r;
+  try {
+    // Seed-determinism: playHole calls shuffleDeck() and bot decisions read
+    // Math.random; withCashRng aliases Math.random → cashRng while we drive
+    // the hole, restoring it after so cash play continues uninterrupted.
+    r = withCashRng(() => playHole(eng.p1, eng.p2, eng.dealer, eng.carryPot, gameContext));
+  } catch (e) {
+    spectatorPushLog(match.id, 'playHole failed: ' + (e && e.message ? e.message : e), 'meta');
+    eng.done = true;
+    return;
+  }
+  // Apply the same accounting playMatch uses: ties accumulate carry pot with
+  // a consecutive-tie bonus, decisive resolutions sweep carry to the winner.
+  eng.totalGolfA += r.aScore; eng.totalGolfB += r.bScore;
+  let carryToNext = 0;
+  if (r.tie) {
+    eng.consecTies += 1;
+    const bonus = Math.min(5, eng.consecTies);
+    carryToNext = eng.carryPot + (r.strokes || 0) + bonus;
+  } else {
+    eng.consecTies = 0;
+    const aSk = r.aHoneyCredit || 0;
+    const bSk = r.bHoneyCredit || 0;
+    let netA = aSk, netB = bSk;
+    if (eng.carryPot > 0) {
+      if (aSk > 0)      netA += eng.carryPot;
+      else if (bSk > 0) netB += eng.carryPot;
+    }
+    eng.totalHoneyA += netA;
+    eng.totalHoneyB += netB;
+  }
+  // Per-player scorecard rows. Each player sees their own perspective.
+  const carryIn = eng.carryPot;
+  const wonA = !r.tie && !r.folded && (r.aScore < r.bScore || (r.aHoneyCredit || 0) > 0);
+  const wonB = !r.tie && !r.folded && (r.bScore < r.aScore || (r.bHoneyCredit || 0) > 0);
+  const pushRow = (player, opp, ownScore, oppScore, ownHoney, oppHoney, ownFolded, oppFolded) => {
+    let role, term, glyph, handClass = null;
+    if (r.tie) { role = 'tied'; term = (ownScore === 0 ? 'Par' : golfTermForStroke(ownScore)); glyph = '⚖'; handClass = handCategoryName(player === eng.p1 ? r.aHand : r.bHand); }
+    else if (r.folded) {
+      if (ownFolded) { role = 'folded'; term = 'Bogey'; glyph = '·'; }
+      else { role = 'won-unc'; term = golfTermForStroke(ownScore); glyph = '✦'; }
+    } else {
+      const myHand = player === eng.p1 ? r.aHand : r.bHand;
+      handClass = handCategoryName(myHand);
+      if ((player === eng.p1 && wonA) || (player === eng.p2 && wonB)) { role = 'won-sd'; term = golfTermForStroke(ownScore); glyph = glyphForHandClass(handClass); }
+      else { role = 'lost-sd'; term = golfTermForStroke(ownScore); glyph = glyphForHandClass(handClass); }
+    }
+    player.scorecard.push({
+      round: tour.round, hole: holeNo, matchId: match.id,
+      opponentName: opp.name,
+      rawScore: ownScore,
+      honeyCredit: ownHoney,
+      opponentHoneyCredit: oppHoney,
+      potBefore: (r.strokes || 0),
+      carryIn: carryIn,
+      carryOut: r.tie ? carryToNext : 0,
+      tie: !!r.tie, folded: !!ownFolded, foldedOpp: !!oppFolded,
+      role: role, handClass: handClass, term: term, glyph: glyph,
+      ts: Date.now(),
+    });
+    // Incremental player cumulative (golf only — Honey is committed at match end)
+    player.golfCum += ownScore;
+  };
+  pushRow(eng.p1, eng.p2, r.aScore, r.bScore, r.aHoneyCredit || 0, r.bHoneyCredit || 0, r.folded === 'a', r.folded === 'b');
+  pushRow(eng.p2, eng.p1, r.bScore, r.aScore, r.bHoneyCredit || 0, r.aHoneyCredit || 0, r.folded === 'b', r.folded === 'a');
+  // Broadcast log line — terse, scorecard-flavoured.
+  const aTerm = golfTermForStroke(r.aScore), bTerm = golfTermForStroke(r.bScore);
+  let line;
+  if (r.tie) line = '⛳ H' + holeNo + ': ' + eng.p1.name + ' ' + aTerm + ' / ' + eng.p2.name + ' ' + bTerm + ' — TIE, pot ' + carryToNext + 'h carries';
+  else if (r.folded) line = '⛳ H' + holeNo + ': ' + (r.folded === 'a' ? eng.p1.name : eng.p2.name) + ' folds → ' + (r.folded === 'a' ? eng.p2.name : eng.p1.name) + ' wins ' + (r.strokes || 0) + 'h';
+  else line = '⛳ H' + holeNo + ': ' + eng.p1.name + ' ' + aTerm + ' vs ' + eng.p2.name + ' ' + bTerm + ' — ' + (wonA ? eng.p1.name : eng.p2.name) + ' wins ' + (r.strokes || 0) + 'h';
+  spectatorPushLog(match.id, line, r.folded ? 'fold' : r.tie ? 'meta' : 'win');
+  // v69.47 — keep SpectatorState.stats live for the Live Stats panel and the
+  // session summary: hands played, showdowns, fold-outs, biggest honey pot.
+  // "Pot" here is the in-hand Honey wager (the in-hand wager unit per the
+  // canonical YJ glossary) — NOT a Nectar/chip pot, which the cash mode uses.
+  try {
+    const s = SpectatorState.stats;
+    s.handsPlayed++;
+    if (r.tie) { /* tied holes don't count toward showdowns or fold-outs */ }
+    else if (r.folded) s.foldEndCount++;
+    else s.showdownsCount++;
+    const pot = (r.strokes || 0);
+    if (pot > s.biggestPot) {
+      s.biggestPot = pot;
+      s.biggestPotHand = s.handsPlayed;
+      s.biggestPotTableId = match.id;
+    }
+    const pt = s.perTable[match.id] || (s.perTable[match.id] = { hands: 0, biggestPot: 0, lastWinnerName: null });
+    pt.hands++;
+    if (pot > pt.biggestPot) pt.biggestPot = pot;
+    if (!r.tie && !r.folded) {
+      pt.lastWinnerName = (r.aHoneyCredit || 0) > 0 ? eng.p1.name : eng.p2.name;
+    } else if (r.folded) {
+      pt.lastWinnerName = (r.folded === 'a') ? eng.p2.name : eng.p1.name;
+    }
+  } catch (_) {}
+  // Advance match state.
+  eng.carryPot = carryToNext;
+  eng.lastResult = r;
+  eng.dealer = eng.dealer === 'a' ? 'b' : 'a';       // dealer alternates
+  eng.currentHole = hole0 + 1;
+  // Throttled UI repaint.
+  try { spectatorThrottledTourneyRefresh(match); } catch (_) {}
+  // Continue or finish?
+  if (eng.currentHole >= tour.handsPerRound) {
+    spectatorFinishTourneyMatch(match);
+  } else {
+    spectatorScheduleTourneyTick(match);
   }
 }
 
-function spectatorAdvanceTourney() {
+// Friendly category name from packed evaluate7 handValue (tour engine).
+function handCategoryName(hv) {
+  if (hv == null) return null;
+  const cat = hv >>> 24;
+  return (typeof CATEGORY_NAMES !== 'undefined' && CATEGORY_NAMES[cat]) || null;
+}
+
+// Throttled tournament-mode UI refresh, mirroring notifySpectatorTick's
+// shape for cash play. We can't share the same throttles because the cash
+// engine + tour engine fire at different cadences.
+let _tourneyThrottleAt = 0;
+let _tourneyThrottleQueued = null;
+let _tourneyFeaturedAt = 0;
+let _tourneyFeaturedQueued = null;
+function spectatorThrottledTourneyRefresh(match) {
+  if (document.body.dataset.activeView !== 'spectator') return;
+  const now = Date.now();
+  if (match && SpectatorState.featuredTableId === match.id) {
+    if (now - _tourneyFeaturedAt > 250) {
+      _tourneyFeaturedAt = now;
+      try { refreshSpectatorFeatured(); } catch (_) {}
+    } else if (!_tourneyFeaturedQueued) {
+      _tourneyFeaturedQueued = setTimeout(() => {
+        _tourneyFeaturedQueued = null;
+        _tourneyFeaturedAt = Date.now();
+        if (document.body.dataset.activeView !== 'spectator') return;
+        try { refreshSpectatorFeatured(); } catch (_) {}
+      }, 270);
+    }
+  }
+  if (now - _tourneyThrottleAt > 220) {
+    _tourneyThrottleAt = now;
+    try { refreshSpectatorGrid(); } catch (_) {}
+    try { refreshSpectatorLog(); } catch (_) {}
+    try { refreshSpectatorStats(); } catch (_) {}
+    try { refreshSpectatorScorecardStrip(); } catch (_) {}
+  } else if (!_tourneyThrottleQueued) {
+    _tourneyThrottleQueued = setTimeout(() => {
+      _tourneyThrottleQueued = null;
+      _tourneyThrottleAt = Date.now();
+      if (document.body.dataset.activeView !== 'spectator') return;
+      try { refreshSpectatorGrid(); } catch (_) {}
+      try { refreshSpectatorLog(); } catch (_) {}
+      try { refreshSpectatorStats(); } catch (_) {}
+      try { refreshSpectatorScorecardStrip(); } catch (_) {}
+    }, 240);
+  }
+}
+
+// Match-done = round-done for this pair. v69.48 — commit the round's
+// Honey-to-strokes conversion AT THIS POINT: each player gets a per-round
+// entry {round, golf, honeyNet, divisor, honeyStrokes, roundFinal} pushed
+// onto their rounds[] array, and the running golfCum/honeyCum mirrors stay
+// in sync for back-compat. The next round starts fresh on honey (carry pot
+// is bounded to the round — a tied hole at the close of round 1 does NOT
+// carry honey into round 2).
+function spectatorFinishTourneyMatch(match) {
+  const tour = SpectatorState.tournament;
+  if (!tour || !match || match.engine.done) return;
+  const eng = match.engine;
+  eng.done = true;
+  if (eng.tickTimer) { clearTimeout(eng.tickTimer); eng.tickTimer = null; }
+  // Divisor used for THIS round's reconciliation. Canonical YJ behavior
+  // (matching playMatch in the tour engine): one divisor for the whole
+  // event, derived from event-total-holes — applied at the END of each
+  // round. 8-player regular = 54 event holes → ÷9; 32-player main = 90 →
+  // ÷36. Stored on the round entry so the audit trail can re-derive the
+  // conversion without external lookup.
+  const roundDivisor = (tour.divisor || 9);
+  const commitRound = (player, opp, golf, honeySelf, honeyOpp) => {
+    const honeyNet = honeySelf - honeyOpp;
+    const honeyStrokes = -honeyNet / roundDivisor;          // sign so it adds directly to golf
+    const roundFinal = golf + honeyStrokes;                 // = golf − honeyNet/divisor
+    player.rounds.push({
+      round: tour.round, matchId: match.id, opponentName: opp.name,
+      holes: eng.currentHole,
+      golf: golf,
+      honeySelf: honeySelf, honeyOpp: honeyOpp, honeyNet: honeyNet,
+      divisor: roundDivisor,
+      honeyStrokes: honeyStrokes,
+      roundFinal: roundFinal,
+      ts: Date.now(),
+    });
+    // Keep cumulative mirrors fresh (used by per-cell glyphs + back-compat).
+    player.honeyCumSelf += honeySelf;
+    player.honeyCumOpp  += honeyOpp;
+  };
+  commitRound(eng.p1, eng.p2, eng.totalGolfA, eng.totalHoneyA, eng.totalHoneyB);
+  commitRound(eng.p2, eng.p1, eng.totalGolfB, eng.totalHoneyB, eng.totalHoneyA);
+  const fmt = v => (v > 0 ? '+' : '') + Number(v).toFixed(2);
+  const r1 = eng.p1.rounds[eng.p1.rounds.length - 1];
+  const r2 = eng.p2.rounds[eng.p2.rounds.length - 1];
+  spectatorPushLog(match.id, '✓ R' + tour.round + ' done — '
+    + eng.p1.name + ': ' + fmt(r1.golf) + ' golf · ' + (r1.honeyNet > 0 ? '+' : '') + r1.honeyNet + 'h ÷' + roundDivisor + ' = ' + fmt(r1.roundFinal) + '  |  '
+    + eng.p2.name + ': ' + fmt(r2.golf) + ' golf · ' + (r2.honeyNet > 0 ? '+' : '') + r2.honeyNet + 'h ÷' + roundDivisor + ' = ' + fmt(r2.roundFinal), 'meta');
+  if (tour.matches.every(m => m.engine.done)) {
+    setTimeout(() => spectatorApplyTournamentCut(), 700);
+  } else {
+    try { refreshSpectatorFeatured(); refreshSpectatorGrid(); refreshSpectatorStats(); refreshSpectatorScorecardStrip(); } catch (_) {}
+  }
+}
+
+// End-of-round: rank survivors by Honey-adjusted final (lowest = best),
+// cut the bottom half, advance round (or crown a champion + finish session).
+function spectatorApplyTournamentCut() {
   const tour = SpectatorState.tournament;
   if (!tour) return;
-  const winners = tour.matches.map(m => m.winner).filter(Boolean);
-  // Clean up tables from this round
-  tour.matches.forEach(m => {
-    CashLobby.tables = CashLobby.tables.filter(x => x.id !== m.tableId);
-    SpectatorState.tableIds = SpectatorState.tableIds.filter(id => id !== m.tableId);
+  const sorted = tour.surviving.slice().sort((a, b) => spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
+  const cutCount = Math.max(1, Math.floor(sorted.length / 2));
+  const survivors = sorted.slice(0, sorted.length - cutCount);
+  const cuts = sorted.slice(sorted.length - cutCount);
+  const fmt = v => (v > 0 ? '+' : '') + v.toFixed(2);
+  cuts.forEach(p => {
+    p.eliminatedRound = tour.round;
+    SpectatorState.stats.eliminations++;
+    spectatorPushLog(null, '✂ CUT R' + tour.round + ': ' + p.name + ' at ' + fmt(spectatorPlayerFinal(p)), 'elim');
   });
-  if (winners.length === 1) {
-    // Champion! — the tournament's logical conclusion.
-    const champ = winners[0];
-    spectatorPushLog(null, '🏆 CHAMPION: ' + champ.name + ' wins the ' + tour.eventType.toUpperCase() + ' (skill ' + champ.skill.toFixed(2) + ')', 'champion');
-    tour.matches = [];
+  const leader = sorted[0];
+  tour.history.push({
+    round: tour.round,
+    cuts: cuts.map(p => ({ name: p.name, final: spectatorPlayerFinal(p), golfCum: p.golfCum, honeyNet: p.honeyCumSelf - p.honeyCumOpp })),
+    leader: { name: leader.name, final: spectatorPlayerFinal(leader), golfCum: leader.golfCum, honeyNet: leader.honeyCumSelf - leader.honeyCumOpp },
+  });
+  spectatorPushLog(null, '🏌 R' + tour.round + ' leader: ' + leader.name
+    + ' at ' + fmt(spectatorPlayerFinal(leader))
+    + ' (golf ' + fmt(leader.golfCum) + ', honey ' + (leader.honeyCumSelf - leader.honeyCumOpp) + ') · '
+    + survivors.length + ' survive', 'meta');
+  // Tear down this round's matches.
+  tour.matches.forEach(m => {
+    if (m.engine && m.engine.tickTimer) { clearTimeout(m.engine.tickTimer); m.engine.tickTimer = null; }
+    SpectatorState.tableIds = SpectatorState.tableIds.filter(id => id !== m.id);
+    delete SpectatorState.logSeen[m.id];
+  });
+  tour.matches = [];
+  if (survivors.length <= 1) {
+    const champ = survivors[0] || leader;
+    champ.finalPlace = 1;
+    const others = tour.players.filter(p => p !== champ);
+    others.sort((a, b) => {
+      const ar = a.eliminatedRound == null ? Infinity : a.eliminatedRound;
+      const br = b.eliminatedRound == null ? Infinity : b.eliminatedRound;
+      if (ar !== br) return br - ar;
+      return spectatorPlayerFinal(a) - spectatorPlayerFinal(b);
+    });
+    others.forEach((p, idx) => { p.finalPlace = idx + 2; });
     tour.champion = champ;
     SpectatorState.featuredTableId = null;
-    // v69.45 — finalize the session so the results panel + CSV export unlock.
+    spectatorPushLog(null, '🏆 CHAMPION: ' + champ.name + ' wins the ' + tour.eventType.toUpperCase()
+      + ' at ' + fmt(spectatorPlayerFinal(champ)) + ' over ' + tour.history.length + ' rounds', 'champion');
     try { spectatorFinishSession('champion crowned'); } catch (_) {}
     return;
   }
-  if (winners.length === 2) {
-    // Heads-up final
-    spectatorPushLog(null, '⭐ FINAL: ' + winners[0].name + ' vs ' + winners[1].name, 'meta');
-  } else {
-    spectatorPushLog(null, '➡ Round ' + (tour.round + 1) + ' begins — ' + winners.length + ' players remain', 'meta');
-  }
   tour.round++;
-  tour.surviving = winners;
-  tour.matches = [];
-  for (let i = 0; i < winners.length; i += 2) {
-    tour.matches.push({ p1: winners[i], p2: winners[i + 1], tableId: null, winner: null });
-  }
-  setTimeout(() => spectatorSpawnRoundMatches(), 1500);
+  tour.surviving = survivors;
+  setTimeout(() => spectatorSeatTourneyRound(), 1200);
 }
+
+// v69.46/v69.47 — the legacy HU-bracket helpers (spectatorTournamentCheckBust
+// / spectatorAdvanceTourney / spectatorSpawnRoundMatches /
+// spectatorOnTourneyHandResolved / spectatorSpawnTournamentTables) are gone.
+// Their replacements live above: spectatorSeatTourneyRound,
+// spectatorTourneyMatchTick, spectatorFinishTourneyMatch, and
+// spectatorApplyTournamentCut — driven by the tour engine (playHole).
 
 // --- Mode 3: broadcast (recorded) — full event playback --------------------
 function spectatorStartBroadcast() {
@@ -15838,7 +16297,13 @@ function spectatorTeardown() {
   if (SpectatorState.broadcast && SpectatorState.broadcast.timer) {
     clearTimeout(SpectatorState.broadcast.timer);
   }
-  // Tear down all live tables
+  // v69.47 — cancel any in-flight tour-engine HU match ticks.
+  if (SpectatorState.tournament && Array.isArray(SpectatorState.tournament.matches)) {
+    SpectatorState.tournament.matches.forEach(m => {
+      if (m && m.engine && m.engine.tickTimer) { clearTimeout(m.engine.tickTimer); m.engine.tickTimer = null; }
+    });
+  }
+  // Tear down all live cash tables
   SpectatorState.tableIds.forEach(id => {
     const t = CashLobby.tables.find(x => x.id === id);
     if (t) {
@@ -15851,6 +16316,7 @@ function spectatorTeardown() {
   SpectatorState.featuredTableId = null;
   SpectatorState.tournament = null;
   SpectatorState.broadcast = null;
+  SpectatorState.scorecardOpen = false;
   SpectatorState.log = [];
   SpectatorState.logSeen = {};
   SpectatorState.stats = {
@@ -15881,6 +16347,10 @@ function spectatorInitSession(mode) {
   if (!seedStr) seedStr = String(Date.now() % 1e9) + '-' + ((Math.random() * 1e6) | 0);
   const seedNum = setCashRngSeed(seedStr);
   const su = SpectatorState.setup;
+  // v69.49 — lock the Honey divisor mode for the duration of this run.
+  // Changing the setup dropdown mid-run will only affect the NEXT run.
+  const honeyMode = (su.honeyDivisorMode === 'calibrated') ? 'calibrated' : 'spec';
+  setHoneyDivisorMode(honeyMode);
   SpectatorState.handLog = [];
   SpectatorState.handLogDropped = 0;
   SpectatorState.session = {
@@ -15891,6 +16361,7 @@ function spectatorInitSession(mode) {
     endReason: null,
     seed: seedStr,
     seedNumeric: seedNum,
+    honeyDivisorMode: honeyMode,           // snapshotted so CSV/JSON are unambiguous
     runLimit: {
       mode: (mode === 'liveCash') ? (su.runLimitMode || 'hands') : 'tournament',
       value: Math.max(1, Math.floor(+su.runLimitValue || 500)),
@@ -15904,6 +16375,7 @@ function spectatorInitSession(mode) {
       eventType: su.eventType,
       handDelayMs: su.handDelayMs, directorIntervalSec: su.directorIntervalSec,
       directorOn: !!SpectatorState.director.on,
+      honeyDivisorMode: honeyMode,
       rakePct: (NectarState && NectarState.config) ? NectarState.config.rakeStructurePct : null,
       rakeCapPerHand: (NectarState && NectarState.config) ? NectarState.config.rakeCapPerHand : null,
       goldenHandProb: (typeof GoldenLottery !== 'undefined' && GoldenLottery.config) ? GoldenLottery.config.handProbability : null,
@@ -16131,6 +16603,10 @@ function spectatorExportCSV() {
       ['seed_numeric', sess.seedNumeric],
       ['rng', sess.seedNumeric != null ? 'seeded:mulberry32' : 'Math.random'],
       ['rng_scope', 'deck shuffles, golden-card designation, bot decisions, lottery draws, run-it-twice, table skill mix + profile jitter (via withCashRng)'],
+      ['honey_divisor_mode', sess.honeyDivisorMode || 'spec'],
+      ['honey_divisor_mode_desc', (sess.honeyDivisorMode === 'calibrated')
+        ? 'calibrated: stepped honeyDivisorFor table (post-v23 deployed values, ÷9/÷4/÷36)'
+        : 'spec: v23 design intent, divisor = round/event hole count (÷N)'],
       ['run_limit_mode', sess.runLimit.mode],
       ['run_limit_value', sess.runLimit.value],
       ['variant', sess.settings.variant],
@@ -16177,22 +16653,108 @@ function spectatorExportCSV() {
       p.handsPlayed, Math.round(p.strokes * 100) / 100, p.busted,
     ])));
     chunks.push('\r\n');
-    // --- Section: tournament field (liveTourney only) ---
+    // --- Section: tournament field (liveTourney only). v69.47 — every column
+    //     an auditor needs to re-derive final = golf − netHoney/divisor.
     if (sess.mode === 'liveTourney' && SpectatorState.tournament) {
       const tour = SpectatorState.tournament;
+      const divisor = tour.divisor || 9;
       const maxRound = (tour.players || []).reduce((m, p) => Math.max(m, p.eliminatedRound || 0), tour.round || 1);
       chunks.push(row(['section', 'tournament_field']));
-      chunks.push(row(['player_id', 'name', 'skill', 'eliminated_round', 'finished']));
-      (tour.players || []).forEach(p => {
-        const finished = p.eliminatedRound == null
-          ? 'CHAMPION'
-          : ('out R' + p.eliminatedRound);
-        chunks.push(row([p.id, p.name, (typeof p.skill === 'number') ? p.skill.toFixed(4) : '', p.eliminatedRound == null ? '' : p.eliminatedRound, finished]));
+      chunks.push(row(['player_id', 'name', 'skill', 'final_place', 'golf_total', 'honey_won', 'honey_lost_to_opp', 'net_honey', 'honey_divisor', 'honey_adjusted_strokes', 'final_score', 'holes_played', 'eliminated_round', 'finished']));
+      const standings = (tour.players || []).slice().sort((a, b) => (a.finalPlace || 9999) - (b.finalPlace || 9999) || spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
+      standings.forEach(p => {
+        const finished = p.finalPlace === 1 ? 'CHAMPION'
+          : p.finalPlace ? ('#' + p.finalPlace)
+          : p.eliminatedRound != null ? ('cut R' + p.eliminatedRound)
+          : '—';
+        const net = (p.honeyCumSelf || 0) - (p.honeyCumOpp || 0);
+        const honeyAdj = -net / divisor;                              // sign-applied so caller adds it directly to golf_total
+        const finalScore = (p.golfCum || 0) + honeyAdj;
+        chunks.push(row([
+          p.id, p.name,
+          (typeof p.skill === 'number') ? p.skill.toFixed(4) : '',
+          p.finalPlace || '',
+          p.golfCum || 0,
+          p.honeyCumSelf || 0,
+          p.honeyCumOpp || 0,
+          net,
+          divisor,
+          honeyAdj.toFixed(4),
+          finalScore.toFixed(4),
+          (p.scorecard || []).length,
+          p.eliminatedRound == null ? '' : p.eliminatedRound,
+          finished,
+        ]));
       });
       chunks.push(row(['field_size', tour.fieldSize]));
+      chunks.push(row(['hands_per_round', tour.handsPerRound || 18]));
       chunks.push(row(['rounds', maxRound]));
+      chunks.push(row(['event_total_holes', tour.eventTotalHoles || (maxRound * (tour.handsPerRound || 18))]));
+      chunks.push(row(['honey_divisor', divisor]));
+      chunks.push(row(['format', tour.format || 'golf-honey']));
+      chunks.push(row(['engine', 'tour engine (playHole) — same as Broadcast Replay']));
       chunks.push(row(['champion', tour.champion ? tour.champion.name : '']));
+      chunks.push(row(['champion_final', tour.champion ? spectatorPlayerFinal(tour.champion).toFixed(4) : '']));
       chunks.push('\r\n');
+      // v69.47 — full per-hole scorecard with the complete Honey audit trail.
+      chunks.push(row(['section', 'tournament_scorecard']));
+      chunks.push(row(['player_id', 'name', 'round', 'hole', 'global_hole_seq', 'match_id', 'opponent', 'raw_stroke', 'role', 'hand_class', 'term', 'glyph', 'pot_before', 'honey_credit_self', 'honey_credit_opp', 'carry_in', 'carry_out', 'tied', 'folded']));
+      standings.forEach(p => {
+        (p.scorecard || []).forEach((r, idx) => {
+          chunks.push(row([
+            p.id, p.name, r.round, r.hole, idx + 1, r.matchId, r.opponentName || '',
+            r.rawScore, r.role || '', r.handClass || '', r.term || '', r.glyph || '',
+            r.potBefore || 0, r.honeyCredit || 0, r.opponentHoneyCredit || 0,
+            r.carryIn || 0, r.carryOut || 0,
+            !!r.tie, !!r.folded,
+          ]));
+        });
+      });
+      chunks.push('\r\n');
+      // v69.48 — per-round breakdown: every player × every round they played,
+      // showing the round-end Honey-to-strokes conversion (the canonical YJ
+      // formula: roundFinal = golf − netHoney/divisor). Cumulative tournament
+      // total = Σ roundFinal across rounds, which is what tournament_field
+      // reports in `final_score`. Auditors can independently re-derive that
+      // number from this section row-by-row.
+      chunks.push(row(['section', 'tournament_round_breakdown']));
+      chunks.push(row(['player_id', 'name', 'round', 'match_id', 'opponent', 'holes', 'round_golf', 'round_honey_self', 'round_honey_opp', 'round_honey_net', 'round_divisor', 'round_honey_strokes', 'round_final']));
+      standings.forEach(p => {
+        (p.rounds || []).forEach(r => {
+          chunks.push(row([
+            p.id, p.name,
+            r.round, r.matchId, r.opponentName || '',
+            r.holes,
+            r.golf,
+            r.honeySelf, r.honeyOpp, r.honeyNet,
+            r.divisor,
+            Number(r.honeyStrokes).toFixed(4),
+            Number(r.roundFinal).toFixed(4),
+          ]));
+        });
+      });
+      chunks.push('\r\n');
+      // Round leaders + cut log — Honey-adjusted finals.
+      if ((tour.history || []).length) {
+        chunks.push(row(['section', 'tournament_rounds']));
+        chunks.push(row(['round', 'round_name', 'leader_name', 'leader_final', 'leader_golf', 'leader_net_honey', 'cuts_count', 'cut_players']));
+        tour.history.forEach(h => {
+          const name = (h.round === tour.totalRounds) ? 'Final Table'
+            : (h.round === tour.totalRounds - 1) ? 'Semi-Final'
+            : ('Round ' + h.round);
+          chunks.push(row([
+            h.round,
+            name,
+            h.leader ? h.leader.name : '',
+            h.leader ? Number(h.leader.final).toFixed(4) : '',
+            h.leader ? h.leader.golfCum : '',
+            h.leader ? h.leader.honeyNet : '',
+            (h.cuts || []).length,
+            (h.cuts || []).map(c => c.name + ' (' + (c.final > 0 ? '+' : '') + Number(c.final).toFixed(2) + ')').join(' · '),
+          ]));
+        });
+        chunks.push('\r\n');
+      }
     }
     // --- Section: per-hand (the authoritative record) ---
     chunks.push(row(['section', 'hands']));
@@ -16289,26 +16851,39 @@ function spectatorDirectorTick() {
   if (SpectatorState.tableIds.length < 2) return;
   const now = Date.now();
   if (now - d.lastSwitchAt < d.intervalMs) return;
-  // Score each live table on interestingness
-  let bestId = null, bestScore = -Infinity;
-  SpectatorState.tableIds.forEach(id => {
-    const t = CashLobby.tables.find(x => x.id === id);
-    if (!t || !t.handState) return;
-    const h = t.handState;
-    let score = (h.pot || 0);
-    if (h.street === 3) score += 500;                                    // river
-    else if (h.street === 2) score += 200;                                // turn
-    if (h.activeMask && h.activeMask.length === 2) score += 100;          // HU left
-    const allInCount = h.seated ? h.seated.filter(i => t.seats[i] && t.seats[i].stack <= 0 && !h.folded[i]).length : 0;
-    if (allInCount >= 2) score += 5000;                                   // multi-way all-in
-    if (id === SpectatorState.featuredTableId) score -= 800;              // bias against re-picking current
-    if (score > bestScore) { bestScore = score; bestId = id; }
-  });
+  let bestId = null, bestScore = -Infinity, bestLabel = null;
+  // v69.47 — tournament-mode director: score on (a) tightness of the match
+  // (close finals = drama), (b) sitting on a carry pot, (c) recency of last
+  // hole. Bias against the current featured table so cuts actually happen.
+  if (SpectatorState.mode === 'liveTourney' && SpectatorState.tournament) {
+    SpectatorState.tournament.matches.forEach(m => {
+      if (!m || !m.engine || m.engine.done) return;
+      const gap = Math.abs(spectatorPlayerFinal(m.engine.p1) - spectatorPlayerFinal(m.engine.p2));
+      let score = 200 - gap * 30;                                        // tighter = more interesting
+      if (m.engine.carryPot > 0) score += 80 + m.engine.carryPot * 3;     // honey drama
+      if (m.engine.consecTies > 0) score += 60 * m.engine.consecTies;
+      if (m.id === SpectatorState.featuredTableId) score -= 250;
+      if (score > bestScore) { bestScore = score; bestId = m.id; bestLabel = m.label; }
+    });
+  } else {
+    SpectatorState.tableIds.forEach(id => {
+      const t = CashLobby.tables.find(x => x.id === id);
+      if (!t || !t.handState) return;
+      const h = t.handState;
+      let score = (h.pot || 0);
+      if (h.street === 3) score += 500;                                  // river
+      else if (h.street === 2) score += 200;                              // turn
+      if (h.activeMask && h.activeMask.length === 2) score += 100;        // HU left
+      const allInCount = h.seated ? h.seated.filter(i => t.seats[i] && t.seats[i].stack <= 0 && !h.folded[i]).length : 0;
+      if (allInCount >= 2) score += 5000;                                 // multi-way all-in
+      if (id === SpectatorState.featuredTableId) score -= 800;
+      if (score > bestScore) { bestScore = score; bestId = id; bestLabel = t.spectatorLabel; }
+    });
+  }
   if (bestId != null && bestId !== SpectatorState.featuredTableId) {
     SpectatorState.featuredTableId = bestId;
     d.lastSwitchAt = now;
-    const t = CashLobby.tables.find(x => x.id === bestId);
-    spectatorPushLog(bestId, '📺 Cut to ' + (t && t.spectatorLabel ? t.spectatorLabel : 'Table ' + bestId), 'meta');
+    spectatorPushLog(bestId, '📺 Cut to ' + (bestLabel || ('Table ' + bestId)), 'meta');
   }
 }
 
@@ -16659,6 +17234,326 @@ function yjScoreFromClassName(cn) {
 //   - Log: scrolling broadcast feed (refreshes on tick)
 // Each region targets a stable DOM element by data-attribute.
 
+// v69.46 — Live Tournament scorecard rendering. Three views, sharing a small
+// set of cell/swatch helpers so they read the same regardless of context:
+//   1. STRIP  — one row per surviving player, always visible below the felt.
+//   2. FULL   — parchment scorecard view (toggle on the featured panel).
+//   3. MODAL  — one player's complete hole-by-hole card (click any seat / row).
+// "Hole" = "hand" in this game. Lower stroke total is better (real golf).
+const _GOLF_TERM_COLOR = {
+  'Royal':'#F0C75E','Condor':'#F0C75E','Albatross':'#F0C75E','Eagle':'#7ED99C',
+  'Birdie':'#A8E6B5','Par':'#cfcfcf','Bogey':'#E8B070','Double':'#E08070','Triple+':'#C56060','Eagle+':'#7ED99C',
+};
+function scorecardCellTone(stroke) {
+  if (stroke <= -2) return '#7ED99C';      // eagle+ green
+  if (stroke === -1) return '#A8E6B5';     // birdie pale green
+  if (stroke === 0)  return '#cfcfcf';     // par grey
+  if (stroke === 1)  return '#E8B070';     // bogey gold
+  return '#E08070';                        // double+ red
+}
+function formatStroke(s) { return (s > 0 ? '+' : (s < 0 ? '' : '±')) + s; }
+
+// One compact cell — used in the FULL grid and the MODAL. Accepts either a
+// v69.46-shape row ({stroke, term, glyph}) or a v69.47-shape row where the
+// stroke is in row.rawScore; callers can pre-adapt or we read whichever is set.
+function makeScorecardCell(row, opts) {
+  opts = opts || {};
+  const stroke = (typeof row.stroke === 'number') ? row.stroke : (typeof row.rawScore === 'number') ? row.rawScore : 0;
+  const tone = scorecardCellTone(stroke);
+  const cell = el('td', { style: 'padding:5px 6px; text-align:center; border:1px solid rgba(212,160,23,0.15); background:rgba(0,0,0,0.10); font-variant-numeric:tabular-nums; min-width:44px;' });
+  const top = el('div', { style: 'font-size:13px; font-weight:700; color:' + tone + ';', text: formatStroke(stroke) });
+  cell.appendChild(top);
+  if (opts.verbose !== false) {
+    const term = el('div', { style: 'font-size:9px; opacity:0.7; letter-spacing:0.5px; color:' + (_GOLF_TERM_COLOR[row.term] || '#cfcfcf') + ';', text: row.term || '' });
+    cell.appendChild(term);
+    if (row.glyph) cell.appendChild(el('div', { style: 'font-size:11px; opacity:0.55; line-height:1;', text: row.glyph }));
+    // v69.47 — Honey credit (the in-hand wager unit). Shown only when the
+    // player swept the hole's honey pot; emphasises the parallel currency.
+    if (row.honeyCredit > 0) {
+      cell.appendChild(el('div', { style: 'font-size:8px; opacity:0.6; color:#F0C75E; letter-spacing:0.5px;', text: '+' + row.honeyCredit + 'h' }));
+    } else if (row.tie && row.carryOut > 0) {
+      cell.appendChild(el('div', { style: 'font-size:8px; opacity:0.5; color:#A8E6B5; letter-spacing:0.5px;', text: '→' + row.carryOut + 'h' }));
+    }
+  }
+  return cell;
+}
+
+// 9-hand sparkline used in the STRIP — last N strokes as little vertical bars.
+function makeStrokeSparkline(strokes, opts) {
+  opts = opts || {};
+  const N = opts.length || 9;
+  const cells = strokes.slice(-N);
+  while (cells.length < N) cells.unshift(null);
+  const wrap = el('span', { style: 'display:inline-flex; gap:2px; vertical-align:middle;' });
+  cells.forEach(s => {
+    const h = s == null ? 2 : Math.min(14, Math.max(2, 6 + s * 3));
+    const tone = s == null ? 'rgba(255,255,255,0.10)' : scorecardCellTone(s);
+    wrap.appendChild(el('span', { style: 'display:inline-block; width:5px; height:14px; background:linear-gradient(to top, ' + tone + ' ' + ((h / 14) * 100).toFixed(0) + '%, rgba(255,255,255,0.04) 0); border-radius:1px;' }));
+  });
+  return wrap;
+}
+
+// 1) STRIP — always visible during liveTourney runs, between felt and grid.
+// Fractional final (Honey-adjusted) formatter — used everywhere a player's
+// tournament total is shown. The cell-level rawScore stays integer-only.
+function formatFinal(f) {
+  const n = Number(f);
+  if (!isFinite(n)) return '—';
+  return (n > 0 ? '+' : '') + n.toFixed(2);
+}
+function refreshSpectatorScorecardStrip() {
+  const host = document.querySelector('[data-spectator-scorecard-strip]');
+  if (!host) return;
+  clear(host);
+  if (SpectatorState.mode !== 'liveTourney' || !SpectatorState.tournament) return;
+  const tour = SpectatorState.tournament;
+  const wrap = el('div', { class: 'card', style: 'padding:10px 14px; margin-bottom:12px; background:linear-gradient(to bottom, #1a3825, #0d2418); border:1px solid rgba(212,160,23,0.35); font-family: Georgia, "Times New Roman", serif;' });
+  // Header strip — "old money" parchment vibe.
+  const head = el('div', { style: 'display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px; border-bottom:1px solid rgba(212,160,23,0.25); padding-bottom:4px;' });
+  head.appendChild(el('div', { style: 'font-size:10px; letter-spacing:2.5px; text-transform:uppercase; color:#F0C75E; font-family: Georgia, serif;', text: '⛳ Tournament Scorecard · R' + tour.round + ' / ' + tour.totalRounds + ' · ' + tour.handsPerRound + ' holes' }));
+  // Hole progress: min across active matches this round (lagging match).
+  let minHoles = Infinity;
+  tour.matches.forEach(m => { if (m.engine) minHoles = Math.min(minHoles, m.engine.currentHole || 0); });
+  if (minHoles === Infinity) minHoles = 0;
+  const modeTag = (SpectatorState.session && SpectatorState.session.honeyDivisorMode === 'calibrated') ? 'CAL' : 'SPEC';
+  head.appendChild(el('div', { style: 'font-size:11px; opacity:0.75;', text: 'Hole ' + minHoles + ' / ' + tour.handsPerRound + ' · honey ÷' + tour.divisor + ' (' + modeTag + ') · ' + tour.surviving.length + ' surviving' }));
+  wrap.appendChild(head);
+  // Sorted by Honey-adjusted final (best first). Cut line drawn between survivors and the predicted bottom half.
+  const survivors = tour.surviving.slice().sort((a, b) => spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
+  const cutAt = Math.max(1, survivors.length - Math.floor(survivors.length / 2));
+  survivors.forEach((p, idx) => {
+    const final = spectatorPlayerFinal(p);
+    const row = el('div', { style: 'display:flex; align-items:center; gap:10px; padding:5px 4px; border-bottom:1px dashed rgba(255,255,255,0.06); cursor:pointer; font-family: Georgia, serif;' });
+    row.onclick = () => openPlayerScorecardModal(p);
+    row.onmouseenter = () => { row.style.background = 'rgba(212,160,23,0.07)'; };
+    row.onmouseleave = () => { row.style.background = 'transparent'; };
+    row.appendChild(el('span', { style: 'width:22px; font-size:10px; opacity:0.6; text-align:right; font-variant-numeric:tabular-nums;', text: String(idx + 1) }));
+    row.appendChild(el('span', { style: 'flex:1; font-size:13px; color:#F0C75E; font-weight:600; letter-spacing:0.3px;', text: p.name }));
+    row.appendChild(el('span', { style: 'font-size:10px; opacity:0.55;', text: 'sk ' + p.skill.toFixed(2) }));
+    row.appendChild(el('span', { style: 'min-width:62px; text-align:right; font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; color:' + scorecardCellTone(final > 0 ? 1 : final < 0 ? -1 : 0) + ';', text: formatFinal(final) }));
+    row.appendChild(makeStrokeSparkline(p.scorecard.map(r => r.rawScore), { length: 9 }));
+    row.appendChild(el('span', { style: 'width:50px; text-align:right; font-size:10px; opacity:0.55;', text: p.scorecard.length + 'h' }));
+    wrap.appendChild(row);
+    if (idx === cutAt - 1 && cutAt < survivors.length) {
+      const cutLine = el('div', { style: 'display:flex; align-items:center; gap:8px; margin:2px 0; font-family: Georgia, serif;' });
+      cutLine.appendChild(el('span', { style: 'flex:1; border-top:1px dashed rgba(224,128,112,0.40);' }));
+      cutLine.appendChild(el('span', { style: 'font-size:9px; letter-spacing:2px; color:#E08070; text-transform:uppercase;', text: '⋯ projected cut line ⋯' }));
+      cutLine.appendChild(el('span', { style: 'flex:1; border-top:1px dashed rgba(224,128,112,0.40);' }));
+      wrap.appendChild(cutLine);
+    }
+  });
+  // Eliminated tail (collapsed)
+  const eliminated = tour.players.filter(p => p.eliminatedRound != null).sort((a, b) => (b.eliminatedRound - a.eliminatedRound) || (spectatorPlayerFinal(a) - spectatorPlayerFinal(b)));
+  if (eliminated.length > 0) {
+    const elimWrap = el('div', { style: 'margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08); font-size:10px; opacity:0.55;' });
+    elimWrap.appendChild(el('div', { style: 'letter-spacing:1.5px; text-transform:uppercase; margin-bottom:3px;', text: 'Cut earlier (' + eliminated.length + ')' }));
+    const list = el('div', { style: 'display:flex; flex-wrap:wrap; gap:4px 10px;' });
+    eliminated.forEach(p => {
+      const tag = el('span', { style: 'font-family: Georgia, serif; cursor:pointer;', text: p.name + ' (R' + p.eliminatedRound + ' · ' + formatFinal(spectatorPlayerFinal(p)) + ')' });
+      tag.onclick = () => openPlayerScorecardModal(p);
+      list.appendChild(tag);
+    });
+    elimWrap.appendChild(list);
+    wrap.appendChild(elimWrap);
+  }
+  host.appendChild(wrap);
+}
+
+// 2) FULL — replaces the featured felt while SpectatorState.scorecardOpen is true.
+function renderTournamentScorecardFullInto(host) {
+  const tour = SpectatorState.tournament;
+  if (!tour) return;
+  const card = el('div', { class: 'card', style: 'padding:18px; background:linear-gradient(to bottom, #1f4030, #0d2418); border:1px solid rgba(212,160,23,0.45); font-family: Georgia, "Times New Roman", serif; color: #F2E8C9;' });
+  card.appendChild(el('div', { style: 'font-size:11px; letter-spacing:3px; text-transform:uppercase; color:#F0C75E; text-align:center;', text: '⛳ ' + tour.eventType.toUpperCase() + ' · YELLOW JACKET TOUR' }));
+  card.appendChild(el('div', { style: 'font-size:22px; text-align:center; margin:4px 0 10px 0; letter-spacing:2px; color:#F0C75E;', text: 'OFFICIAL SCORECARD — ROUND ' + tour.round }));
+  card.appendChild(el('div', { style: 'text-align:center; font-size:11px; opacity:0.7; margin-bottom:14px; font-style:italic;', text:
+    tour.handsPerRound + ' holes per round · lowest Honey-adjusted total survives · honey divisor ' + tour.divisor
+    + ' · field of ' + tour.fieldSize }));
+  // Build the matrix: rows = players (ordered by Honey-adjusted final ASC), cols = holes.
+  const allPlayers = tour.players.slice().sort((a, b) => {
+    if (a.finalPlace != null || b.finalPlace != null) return (a.finalPlace || 999) - (b.finalPlace || 999);
+    return spectatorPlayerFinal(a) - spectatorPlayerFinal(b);
+  });
+  const maxHoles = allPlayers.reduce((m, p) => Math.max(m, p.scorecard.length), 0);
+  const wrap = el('div', { style: 'overflow-x:auto;' });
+  const tbl = el('table', { style: 'border-collapse:separate; border-spacing:0; margin:0 auto; min-width:100%; font-family: Georgia, serif;' });
+  const thead = el('thead');
+  const headRow1 = el('tr');
+  headRow1.appendChild(el('th', { style: 'padding:6px 10px; text-align:left; font-weight:600; color:#F0C75E; border-bottom:2px solid rgba(212,160,23,0.40); min-width:160px;', text: 'PLAYER' }));
+  for (let h = 1; h <= maxHoles; h++) {
+    const roundOfHole = Math.ceil(h / tour.handsPerRound);
+    const holeOfRound = ((h - 1) % tour.handsPerRound) + 1;
+    headRow1.appendChild(el('th', { style: 'padding:4px 5px; font-size:9px; font-weight:600; color:#F0C75E; opacity:0.75; border-bottom:2px solid rgba(212,160,23,0.40);', text: 'R' + roundOfHole + 'H' + holeOfRound }));
+  }
+  headRow1.appendChild(el('th', { style: 'padding:6px 10px; text-align:right; font-weight:600; color:#F0C75E; border-bottom:2px solid rgba(212,160,23,0.40); border-left:2px solid rgba(212,160,23,0.40); min-width:70px;', text: 'GOLF' }));
+  headRow1.appendChild(el('th', { style: 'padding:6px 10px; text-align:right; font-weight:600; color:#F0C75E; border-bottom:2px solid rgba(212,160,23,0.40); min-width:80px;', text: '−HONEY/÷' + tour.divisor }));
+  headRow1.appendChild(el('th', { style: 'padding:6px 10px; text-align:right; font-weight:600; color:#F0C75E; border-bottom:2px solid rgba(212,160,23,0.40); border-left:2px solid rgba(212,160,23,0.40); min-width:78px;', text: 'FINAL' }));
+  headRow1.appendChild(el('th', { style: 'padding:6px 8px; text-align:right; font-weight:600; color:#F0C75E; border-bottom:2px solid rgba(212,160,23,0.40);', text: 'STATUS' }));
+  thead.appendChild(headRow1);
+  tbl.appendChild(thead);
+  const tbody = el('tbody');
+  allPlayers.forEach((p, ridx) => {
+    const isChamp = p.finalPlace === 1;
+    const isCut = p.eliminatedRound != null;
+    const final = spectatorPlayerFinal(p);
+    const netHoney = (p.honeyCumSelf || 0) - (p.honeyCumOpp || 0);
+    const honeyAdj = -netHoney / tour.divisor;
+    const tr = el('tr', { style: 'background:' + (isChamp ? 'linear-gradient(90deg, rgba(240,199,94,0.18), rgba(212,160,23,0.05))' : (ridx % 2 ? 'rgba(255,255,255,0.02)' : 'transparent')) + ';' + (isCut && !isChamp ? ' opacity:0.55;' : '') + ' cursor:pointer;' });
+    tr.onclick = () => openPlayerScorecardModal(p);
+    tr.onmouseenter = () => { tr.style.outline = '1px solid rgba(212,160,23,0.35)'; };
+    tr.onmouseleave = () => { tr.style.outline = 'none'; };
+    const nameCell = el('td', { style: 'padding:6px 10px; font-weight:600; color:' + (isChamp ? '#F0C75E' : '#F2E8C9') + '; border-bottom:1px solid rgba(212,160,23,0.10);' });
+    nameCell.appendChild(el('span', { text: (isChamp ? '🏆 ' : (isCut ? '✂ ' : '')) + p.name }));
+    nameCell.appendChild(el('span', { style: 'opacity:0.45; font-size:10px; margin-left:6px;', text: 'sk ' + p.skill.toFixed(2) }));
+    tr.appendChild(nameCell);
+    for (let hi = 0; hi < maxHoles; hi++) {
+      const row = p.scorecard[hi];
+      if (!row) {
+        tr.appendChild(el('td', { style: 'padding:5px 6px; text-align:center; border:1px solid rgba(212,160,23,0.08); opacity:0.25; min-width:44px;', text: '·' }));
+      } else {
+        tr.appendChild(makeScorecardCell(row, { verbose: maxHoles <= 36 }));
+      }
+    }
+    const golfCell = el('td', { style: 'padding:6px 10px; text-align:right; font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; color:' + scorecardCellTone(p.golfCum > 0 ? 1 : p.golfCum < 0 ? -1 : 0) + '; border-left:2px solid rgba(212,160,23,0.40); border-bottom:1px solid rgba(212,160,23,0.10);' });
+    golfCell.textContent = formatStroke(p.golfCum);
+    tr.appendChild(golfCell);
+    const honeyCell = el('td', { style: 'padding:6px 10px; text-align:right; font-size:12px; font-variant-numeric:tabular-nums; opacity:0.85; border-bottom:1px solid rgba(212,160,23,0.10);' });
+    honeyCell.textContent = (honeyAdj === 0 ? '±0.00' : (honeyAdj > 0 ? '+' : '') + honeyAdj.toFixed(2)) + ' (' + (netHoney > 0 ? '+' : '') + netHoney + 'h)';
+    tr.appendChild(honeyCell);
+    const finalCell = el('td', { style: 'padding:6px 10px; text-align:right; font-size:16px; font-weight:700; font-variant-numeric:tabular-nums; color:' + scorecardCellTone(final > 0 ? 1 : final < 0 ? -1 : 0) + '; border-left:2px solid rgba(212,160,23,0.40); border-bottom:1px solid rgba(212,160,23,0.10);' });
+    finalCell.textContent = formatFinal(final);
+    tr.appendChild(finalCell);
+    const statusCell = el('td', { style: 'padding:6px 8px; text-align:right; font-size:11px; border-bottom:1px solid rgba(212,160,23,0.10);' });
+    statusCell.textContent = p.finalPlace === 1 ? 'CHAMPION' : p.finalPlace ? ('#' + p.finalPlace) : p.eliminatedRound ? ('cut R' + p.eliminatedRound) : 'in';
+    tr.appendChild(statusCell);
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  card.appendChild(wrap);
+  card.appendChild(el('div', { style: 'text-align:center; font-size:10px; opacity:0.5; margin-top:14px; font-style:italic; letter-spacing:1px;', text:
+    '↳ click any row for that player\'s hole-by-hole card · GOLF column is raw scorecard, FINAL applies the YJ Honey-stroke divisor smoothing' }));
+  host.appendChild(card);
+}
+
+// 3) MODAL — one player's complete hole-by-hole scorecard.
+function openPlayerScorecardModal(player) {
+  if (!player) return;
+  const m = $('#modal-body');
+  if (!m) return;
+  clear(m);
+  const card = el('div', { style: 'padding:6px; font-family: Georgia, "Times New Roman", serif; color:#F2E8C9;' });
+  card.appendChild(el('div', { style: 'font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#F0C75E; text-align:center; opacity:0.7;', text: 'OFFICIAL SCORECARD' }));
+  card.appendChild(el('h2', { style: 'margin:4px 0 2px 0; text-align:center; color:#F0C75E; font-family: Georgia, serif; letter-spacing:1px;', text: player.name }));
+  card.appendChild(el('div', { style: 'text-align:center; font-size:11px; opacity:0.7; margin-bottom:12px;', text: 'Skill ' + player.skill.toFixed(2)
+    + ' · ' + player.scorecard.length + ' holes played'
+    + (player.finalPlace === 1 ? ' · 🏆 CHAMPION' : player.finalPlace ? ' · finished #' + player.finalPlace : player.eliminatedRound ? ' · cut after R' + player.eliminatedRound : ' · still in')
+  }));
+  // Grand total banner — the Honey-adjusted FINAL is the headline number,
+  // with raw golf + Honey breakdown below so the YJ divisor math is visible.
+  const tour = SpectatorState.tournament;
+  const divisor = (tour && tour.divisor) || 9;
+  const final = spectatorPlayerFinal(player);
+  const netHoney = (player.honeyCumSelf || 0) - (player.honeyCumOpp || 0);
+  const honeyAdj = -netHoney / divisor;
+  const tonecolor = scorecardCellTone(final > 0 ? 1 : final < 0 ? -1 : 0);
+  const totalBanner = el('div', { style: 'text-align:center; padding:14px; margin-bottom:14px; background:rgba(0,0,0,0.20); border:1px solid rgba(212,160,23,0.30); border-radius:6px;' });
+  totalBanner.appendChild(el('div', { style: 'font-size:11px; opacity:0.6; letter-spacing:2px;', text: 'TOURNAMENT FINAL' }));
+  totalBanner.appendChild(el('div', { style: 'font-size:36px; font-weight:700; color:' + tonecolor + '; font-variant-numeric:tabular-nums; line-height:1.1;', text: formatFinal(final) }));
+  const breakdown = el('div', { style: 'font-size:11px; opacity:0.75; margin-top:6px; font-variant-numeric:tabular-nums;' });
+  breakdown.textContent = 'GOLF ' + formatStroke(player.golfCum) + '  ·  HONEY ' + (netHoney > 0 ? '+' : '') + netHoney + 'h  ÷' + divisor + '  =  ' + (honeyAdj > 0 ? '+' : '') + honeyAdj.toFixed(2);
+  totalBanner.appendChild(breakdown);
+  card.appendChild(totalBanner);
+  // Group rows by round, render each round as Front-half / Back-half with
+  // per-row OUT / IN totals — the classic Augusta-style card layout.
+  const hpr = (tour && tour.handsPerRound) || 18;
+  const rounds = {};
+  player.scorecard.forEach(r => { (rounds[r.round] = rounds[r.round] || []).push(r); });
+  const sortedRounds = Object.keys(rounds).map(n => +n).sort((a, b) => a - b);
+  sortedRounds.forEach(rno => {
+    const rows = rounds[rno];
+    const block = el('div', { style: 'margin-bottom:14px; padding:8px; background:rgba(0,0,0,0.10); border:1px solid rgba(212,160,23,0.20); border-radius:4px;' });
+    const roundRaw = rows.reduce((s, r) => s + r.rawScore, 0);
+    const roundHoneySelf = rows.reduce((s, r) => s + (r.honeyCredit || 0), 0);
+    const roundHoneyOpp  = rows.reduce((s, r) => s + (r.opponentHoneyCredit || 0), 0);
+    const roundHoneyNet = roundHoneySelf - roundHoneyOpp;
+    const banner = el('div', { style: 'display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px;' });
+    banner.appendChild(el('div', { style: 'font-size:13px; color:#F0C75E; font-weight:600; letter-spacing:1px;', text: 'Round ' + rno + (rows[0] ? ' · vs ' + rows[0].opponentName : '') }));
+    banner.appendChild(el('div', { style: 'font-size:12px; font-variant-numeric:tabular-nums; color:' + scorecardCellTone(roundRaw > 0 ? 1 : roundRaw < 0 ? -1 : 0) + ';',
+      text: formatStroke(roundRaw) + ' golf · ' + (roundHoneyNet > 0 ? '+' : '') + roundHoneyNet + 'h honey · ' + rows.length + ' holes' }));
+    block.appendChild(banner);
+    const tbl = el('table', { style: 'border-collapse:separate; border-spacing:0; width:100%;' });
+    const half = Math.ceil(hpr / 2);
+    const makeNine = (start, count, label, totalLabel) => {
+      const head = el('tr');
+      head.appendChild(el('th', { style: 'padding:4px 6px; text-align:left; font-size:10px; opacity:0.6; letter-spacing:1px;', text: label }));
+      for (let i = 0; i < count; i++) head.appendChild(el('th', { style: 'padding:3px; font-size:9px; opacity:0.55; min-width:44px;', text: 'H' + (start + i) }));
+      head.appendChild(el('th', { style: 'padding:4px; font-size:10px; color:#F0C75E; min-width:44px; border-left:2px solid rgba(212,160,23,0.40);', text: totalLabel }));
+      const body = el('tr');
+      body.appendChild(el('td', { style: 'padding:4px 6px; font-size:10px; opacity:0.6;', text: 'STROKE' }));
+      let sum = 0;
+      for (let i = 0; i < count; i++) {
+        const r = rows[start - 1 + i];
+        if (!r) { body.appendChild(el('td', { style: 'padding:5px 6px; text-align:center; opacity:0.25;', text: '·' })); }
+        else { body.appendChild(makeScorecardCell(r, { verbose: true })); sum += r.rawScore; }
+      }
+      body.appendChild(el('td', { style: 'padding:5px 6px; text-align:center; font-weight:700; font-variant-numeric:tabular-nums; color:' + scorecardCellTone(sum > 0 ? 1 : sum < 0 ? -1 : 0) + '; border-left:2px solid rgba(212,160,23,0.40); font-size:14px;', text: formatStroke(sum) }));
+      return { head, body };
+    };
+    const frontCount = half;
+    const backCount = hpr - half;
+    const front = makeNine(1, frontCount, 'FRONT ' + frontCount, 'OUT');
+    tbl.appendChild(front.head); tbl.appendChild(front.body);
+    if (rows.length > half && backCount > 0) {
+      const back = makeNine(half + 1, backCount, 'BACK ' + backCount, 'IN');
+      tbl.appendChild(back.head); tbl.appendChild(back.body);
+    }
+    block.appendChild(tbl);
+    // v69.48 — per-round Honey reconciliation line. The committed round entry
+    // (player.rounds[rno-1]) carries the same numbers; we surface the math
+    // here as `golf · honey/÷divisor = roundFinal` so it reads like a real
+    // scorecard sub-total. When the round is mid-play, we show "in play".
+    const committed = (player.rounds || []).find(rr => rr.round === rno);
+    const reconLine = el('div', { style: 'margin-top:8px; padding:6px 10px; background:rgba(212,160,23,0.06); border-left:3px solid rgba(212,160,23,0.45); border-radius:0 4px 4px 0; display:flex; align-items:baseline; justify-content:space-between; font-family: Georgia, serif; gap:8px; flex-wrap:wrap;' });
+    reconLine.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; letter-spacing:1.5px; text-transform:uppercase;', text: 'Round ' + rno + ' reconciliation' }));
+    const math = el('div', { style: 'font-size:12px; font-variant-numeric:tabular-nums; display:flex; align-items:baseline; gap:6px;' });
+    if (committed) {
+      math.appendChild(el('span', { text: 'GOLF' }));
+      math.appendChild(el('span', { style: 'color:' + scorecardCellTone(committed.golf > 0 ? 1 : committed.golf < 0 ? -1 : 0) + ';', text: formatStroke(committed.golf) }));
+      math.appendChild(el('span', { style: 'opacity:0.5;', text: '+' }));
+      math.appendChild(el('span', { text: 'HONEY' }));
+      math.appendChild(el('span', { style: 'opacity:0.85;', text: (committed.honeyNet > 0 ? '+' : '') + committed.honeyNet + 'h ÷' + committed.divisor }));
+      math.appendChild(el('span', { style: 'opacity:0.5;', text: '=' }));
+      math.appendChild(el('strong', { style: 'color:' + scorecardCellTone(committed.roundFinal > 0 ? 1 : committed.roundFinal < 0 ? -1 : 0) + '; font-size:14px;', text: formatFinal(committed.roundFinal) }));
+    } else {
+      // Mid-round — pull live numbers from the active match
+      const tour2 = SpectatorState.tournament;
+      let liveGolf = 0, liveHoneyNet = 0;
+      if (tour2) {
+        for (const m of tour2.matches) {
+          if (!m.engine) continue;
+          if (m.engine.p1 === player && m.round === rno) { liveGolf = m.engine.totalGolfA; liveHoneyNet = (m.engine.totalHoneyA || 0) - (m.engine.totalHoneyB || 0); }
+          else if (m.engine.p2 === player && m.round === rno) { liveGolf = m.engine.totalGolfB; liveHoneyNet = (m.engine.totalHoneyB || 0) - (m.engine.totalHoneyA || 0); }
+        }
+      }
+      const divisor = (tour2 && tour2.divisor) || 9;
+      const liveFinal = liveGolf - liveHoneyNet / divisor;
+      math.style.opacity = '0.75';
+      math.appendChild(el('span', { text: 'GOLF ' + formatStroke(liveGolf) + '  +  HONEY ' + (liveHoneyNet > 0 ? '+' : '') + liveHoneyNet + 'h ÷' + divisor + '  →  ' + formatFinal(liveFinal) }));
+      math.appendChild(el('em', { style: 'opacity:0.55;', text: '(in play — locks at round end)' }));
+    }
+    reconLine.appendChild(math);
+    block.appendChild(reconLine);
+    card.appendChild(block);
+  });
+  const closeBtn = el('button', { class: 'btn ghost', style: 'margin-top:6px;', text: 'Close' });
+  closeBtn.onclick = () => { document.getElementById('modal-root').classList.remove('open'); };
+  card.appendChild(closeBtn);
+  m.appendChild(card);
+  const root = document.getElementById('modal-root');
+  if (root) root.classList.add('open');
+}
+
 // v69.45 — render the completed-session report (mirrors the broadcast Event
 // Report card): settings + seed, headline numbers, per-table + per-bot P&L,
 // and the export buttons that produce the auditable CSV/JSON.
@@ -16683,22 +17578,61 @@ function renderSpectatorResultsInto(host) {
     t.appendChild(el('div', { style: 'font-size:18px; font-weight:700; color:#F0C75E; font-variant-numeric:tabular-nums;', text: val }));
     return t;
   };
-  tiles.appendChild(tile('Hands', fmtN(sm.handsPlayed), true));
+  // v69.47 — tile labels follow the canonical YJ glossary: tournaments wager
+  // in Honey (🍯) and play "holes"; cash games wager in Nectar (◈) and play "hands".
+  const tIsTourney = (sess.mode === 'liveTourney');
+  tiles.appendChild(tile(tIsTourney ? 'Holes' : 'Hands', fmtN(sm.handsPlayed), true));
   tiles.appendChild(tile('Showdowns', fmtN(sm.showdowns)));
   tiles.appendChild(tile('Fold-outs', fmtN(sm.foldOuts)));
-  tiles.appendChild(tile('Biggest pot', '◈ ' + fmtN(Math.round(sm.biggestPot)) + (sm.biggestPotHand ? ' (#' + sm.biggestPotHand + ')' : '')));
-  if (sm.eliminations > 0) tiles.appendChild(tile('Eliminations', fmtN(sm.eliminations)));
-  tiles.appendChild(tile('Golden hits', fmtN(sm.goldenHits)));
-  tiles.appendChild(tile('Rake collected', '◈ ' + fmtN(Math.round(sm.rakeCollected))));
+  tiles.appendChild(tile(tIsTourney ? 'Biggest honey pot' : 'Biggest pot',
+    (tIsTourney ? '🍯 ' : '◈ ') + fmtN(Math.round(sm.biggestPot)) + (tIsTourney ? 'h' : '') + (sm.biggestPotHand ? ' (#' + sm.biggestPotHand + ')' : '')));
+  if (sm.eliminations > 0) tiles.appendChild(tile(tIsTourney ? 'Cuts' : 'Eliminations', fmtN(sm.eliminations)));
+  if (!tIsTourney) tiles.appendChild(tile('Golden hits', fmtN(sm.goldenHits)));
+  if (!tIsTourney) tiles.appendChild(tile('Rake collected', '◈ ' + fmtN(Math.round(sm.rakeCollected))));
   card.appendChild(tiles);
-  // Tournament champion box
-  if (sess.mode === 'liveTourney' && SpectatorState.tournament && SpectatorState.tournament.champion) {
-    const ch = SpectatorState.tournament.champion;
-    const champBox = el('div', { style: 'padding:12px; margin-bottom:14px; border-radius:8px; background:linear-gradient(135deg,rgba(240,199,94,0.2),rgba(212,160,23,0.06)); border:1px solid rgba(240,199,94,0.45);' });
-    champBox.appendChild(el('div', { style: 'font-size:10px; text-transform:uppercase; letter-spacing:2px; opacity:0.7;', text: '🏆 Champion' }));
-    champBox.appendChild(el('div', { style: 'font-size:18px; font-weight:700; color:#F0C75E;', text: ch.name + (typeof ch.skill === 'number' ? '  (skill ' + ch.skill.toFixed(2) + ')' : '') }));
-    champBox.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-top:2px;', text: SpectatorState.tournament.fieldSize + '-player field' }));
-    card.appendChild(champBox);
+  // Tournament champion box + full standings (v69.47: golf-cut + Honey divisor)
+  if (sess.mode === 'liveTourney' && SpectatorState.tournament) {
+    const tour = SpectatorState.tournament;
+    if (tour.champion) {
+      const ch = tour.champion;
+      const chFinal = spectatorPlayerFinal(ch);
+      const chNetHoney = (ch.honeyCumSelf || 0) - (ch.honeyCumOpp || 0);
+      const champBox = el('div', { style: 'padding:14px; margin-bottom:14px; border-radius:8px; background:linear-gradient(135deg,rgba(240,199,94,0.2),rgba(212,160,23,0.06)); border:1px solid rgba(240,199,94,0.45);' });
+      champBox.appendChild(el('div', { style: 'font-size:10px; text-transform:uppercase; letter-spacing:2px; opacity:0.7;', text: '🏆 Champion' }));
+      champBox.appendChild(el('div', { style: 'font-size:20px; font-weight:700; color:#F0C75E;', text: ch.name }));
+      champBox.appendChild(el('div', { style: 'font-size:14px; margin-top:6px; font-variant-numeric:tabular-nums; color:' + scorecardCellTone(chFinal > 0 ? 1 : chFinal < 0 ? -1 : 0) + ';', text: 'FINAL: ' + formatFinal(chFinal) }));
+      champBox.appendChild(el('div', { style: 'font-size:11px; margin-top:2px; opacity:0.8; font-variant-numeric:tabular-nums;', text: 'GOLF ' + formatStroke(ch.golfCum) + ' · HONEY ' + (chNetHoney > 0 ? '+' : '') + chNetHoney + 'h ÷' + tour.divisor + ' · ' + ch.scorecard.length + ' holes over ' + tour.history.length + ' rounds' }));
+      champBox.appendChild(el('div', { style: 'font-size:11px; opacity:0.7; margin-top:4px;', text: 'Skill ' + ch.skill.toFixed(2) + ' · ' + tour.fieldSize + '-player ' + tour.eventType + ' field' }));
+      const viewBtn = el('button', { class: 'btn ghost', style: 'margin-top:8px; font-size:11px; padding:4px 10px;', text: '📋 View champion scorecard' });
+      viewBtn.onclick = () => openPlayerScorecardModal(ch);
+      champBox.appendChild(viewBtn);
+      card.appendChild(champBox);
+    }
+    // Final standings (compact). Sort by finalPlace, fallback to Honey-adjusted final.
+    const standings = tour.players.slice().sort((a, b) => (a.finalPlace || 9999) - (b.finalPlace || 9999) || spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
+    card.appendChild(el('div', { style: 'font-size:11px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; margin-bottom:6px;', text: '⛳ Final standings (Honey-adjusted, divisor ÷' + tour.divisor + ')' }));
+    const sTbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:12px; margin-bottom:14px;' });
+    const sThr = el('tr', { style: 'border-bottom:1px solid rgba(212,160,23,0.30);' });
+    ['Pos', 'Player', 'Skill', 'Golf', 'Honey', 'Final', 'Cut R'].forEach(h => sThr.appendChild(el('th', { style: 'padding:5px 7px; text-align:left; font-weight:600; opacity:0.75;', text: h })));
+    sTbl.appendChild(el('thead', null, sThr));
+    const sTb = el('tbody');
+    standings.forEach((p, i) => {
+      const pFinal = spectatorPlayerFinal(p);
+      const pNetHoney = (p.honeyCumSelf || 0) - (p.honeyCumOpp || 0);
+      const tr = el('tr', { style: 'border-bottom:1px dashed rgba(255,255,255,0.06); cursor:pointer;' });
+      tr.onclick = () => openPlayerScorecardModal(p);
+      tr.appendChild(el('td', { style: 'padding:5px 7px; font-weight:700; color:' + (p.finalPlace === 1 ? '#F0C75E' : '#cfcfcf') + ';', text: '#' + (p.finalPlace || (i + 1)) }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px;', text: (p.finalPlace === 1 ? '🏆 ' : '') + p.name }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px; opacity:0.7; font-variant-numeric:tabular-nums;', text: p.skill.toFixed(2) }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px; font-variant-numeric:tabular-nums; color:' + scorecardCellTone(p.golfCum > 0 ? 1 : p.golfCum < 0 ? -1 : 0) + ';', text: formatStroke(p.golfCum) }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px; font-variant-numeric:tabular-nums; opacity:0.8;', text: (pNetHoney > 0 ? '+' : '') + pNetHoney + 'h' }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px; font-variant-numeric:tabular-nums; font-weight:700; color:' + scorecardCellTone(pFinal > 0 ? 1 : pFinal < 0 ? -1 : 0) + ';', text: formatFinal(pFinal) }));
+      tr.appendChild(el('td', { style: 'padding:5px 7px; opacity:0.7;', text: p.eliminatedRound != null ? ('R' + p.eliminatedRound) : '—' }));
+      sTb.appendChild(tr);
+    });
+    sTbl.appendChild(sTb);
+    card.appendChild(sTbl);
+    card.appendChild(el('div', { style: 'font-size:10px; opacity:0.45; margin-bottom:12px; font-style:italic;', text: '↳ click any row to inspect that player\'s hole-by-hole scorecard · the same numbers Broadcast Replay would produce for this field at divisor ÷' + tour.divisor }));
   }
   // Per-bot P&L table (top + bottom of the leaderboard)
   if (sm.perSeat && sm.perSeat.length) {
@@ -16985,6 +17919,39 @@ function refreshSpectatorFeatured() {
     host.appendChild(el('div', { class: 'card', style: 'padding:40px; text-align:center; opacity:0.6;', text: 'No spectator session running. Configure on the left and click Start.' }));
     return;
   }
+  // v69.47 — Live Tournament path: featured "table" is an HU match driven by
+  // the tour engine, NOT a cash table. Look it up on the tournament struct.
+  if (SpectatorState.mode === 'liveTourney' && SpectatorState.tournament) {
+    const tour = SpectatorState.tournament;
+    const match = tour.matches.find(m => m.id === SpectatorState.featuredTableId);
+    // Title strip — match label + scorecard toggle.
+    const title = el('div', { style: 'display:flex; align-items:center; gap:10px; margin-bottom:8px; padding:6px 12px; background:rgba(212,160,23,0.10); border-radius:6px;' });
+    title.appendChild(el('span', { style: 'font-size:11px; text-transform:uppercase; letter-spacing:2px; opacity:0.7;', text: '📺 FEATURED' }));
+    title.appendChild(el('span', { style: 'font-weight:700; color:var(--augusta-gold-hi,#F0C75E);', text: match ? match.label : ('R' + tour.round + ' Match') }));
+    const featModeTag = (SpectatorState.session && SpectatorState.session.honeyDivisorMode === 'calibrated') ? 'CAL' : 'SPEC';
+    title.appendChild(el('span', { style: 'opacity:0.6; font-size:12px;', text: '· YJ-Stroke · Honey ÷' + tour.divisor + ' (' + featModeTag + ')' }));
+    const spacer = el('span', { style: 'flex:1;' });
+    title.appendChild(spacer);
+    const toggle = el('button', { class: 'btn ' + (SpectatorState.scorecardOpen ? 'gold' : 'ghost'), style: 'font-size:11px; padding:3px 10px;', text: SpectatorState.scorecardOpen ? '⛳ Show match' : '📋 Show full scorecard' });
+    toggle.onclick = () => { SpectatorState.scorecardOpen = !SpectatorState.scorecardOpen; refreshSpectatorFeatured(); };
+    title.appendChild(toggle);
+    host.appendChild(title);
+    if (SpectatorState.scorecardOpen) {
+      try { renderTournamentScorecardFullInto(host); } catch (e) {
+        host.appendChild(el('div', { class: 'card', style: 'padding:18px; color:#E08070;', text: 'Scorecard render failed: ' + (e && e.message) }));
+      }
+      return;
+    }
+    if (!match) {
+      host.appendChild(el('div', { class: 'card', style: 'padding:18px; opacity:0.6;', text: 'Featured match no longer running — round transition in progress.' }));
+      return;
+    }
+    try { renderSpectatorTourneyMatchInto(host, match); } catch (e) {
+      host.appendChild(el('div', { class: 'card', style: 'padding:18px; color:#E08070;', text: 'Match render failed: ' + (e && e.message) }));
+    }
+    return;
+  }
+  // Cash spectator — original cash-felt path.
   const t = CashLobby.tables.find(x => x.id === SpectatorState.featuredTableId);
   if (!t) {
     host.appendChild(el('div', { class: 'card', style: 'padding:18px; opacity:0.6;', text: 'Featured table no longer running.' }));
@@ -17006,6 +17973,116 @@ function refreshSpectatorFeatured() {
   CashLobby.focusedTableId = prevFocus;
 }
 
+// v69.47 — featured-panel rendering for a tour-engine HU match. Replaces the
+// cash felt entirely for liveTourney mode: two-side scoreboard with live
+// totals, last-hole replay strip (cards + hand class + golf term + Honey
+// credit), carry-pot pill, and a compact this-match-only scorecard.
+function renderSpectatorTourneyMatchInto(host, match) {
+  const tour = SpectatorState.tournament;
+  if (!tour || !match) return;
+  const eng = match.engine;
+  const p1 = eng.p1, p2 = eng.p2;
+  const f1 = spectatorPlayerFinal(p1);
+  const f2 = spectatorPlayerFinal(p2);
+  const card = el('div', { class: 'card', style: 'padding:14px 18px; background:linear-gradient(to bottom, ' + (match.isFinal ? '#2a4030, #14281c' : '#1a3825, #0d2418') + '); border:1px solid rgba(212,160,23,' + (match.isFinal ? '0.65' : '0.40') + '); font-family: Georgia, "Times New Roman", serif;' });
+  // v69.48 — Final Table banner. The championship round gets its own
+  // visual treatment so the closing match reads as the event's climax.
+  if (match.isFinal) {
+    const banner = el('div', { style: 'text-align:center; margin-bottom:12px; padding:8px 12px; background:linear-gradient(90deg, rgba(240,199,94,0.10), rgba(240,199,94,0.25), rgba(240,199,94,0.10)); border:1px solid rgba(240,199,94,0.60); border-radius:6px;' });
+    banner.appendChild(el('div', { style: 'font-size:10px; letter-spacing:4px; text-transform:uppercase; color:#F0C75E; opacity:0.85;', text: 'Championship Match' }));
+    banner.appendChild(el('div', { style: 'font-size:22px; font-weight:700; color:#F0C75E; letter-spacing:2px; margin-top:2px;', text: '🏆 THE FINAL TABLE 🏆' }));
+    banner.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-top:2px; font-style:italic;', text: tour.eventType.toUpperCase() + ' · ' + tour.handsPerRound + ' holes · winner-take-all on Honey-adjusted strokes' }));
+    card.appendChild(banner);
+  } else if (match.isSemi) {
+    const banner = el('div', { style: 'text-align:center; margin-bottom:10px; padding:5px 10px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.30); border-radius:5px; font-size:11px; letter-spacing:2px; color:#F0C75E; text-transform:uppercase;', text: '🥇 Semi-Final · winner advances to the Final Table' });
+    card.appendChild(banner);
+  }
+  // === Two-side scoreboard ============================================
+  const board = el('div', { style: 'display:grid; grid-template-columns:1fr auto 1fr; gap:14px; align-items:center;' });
+  const sideTone = v => scorecardCellTone(v > 0 ? 1 : v < 0 ? -1 : 0);
+  const sideEl = (player, final) => {
+    const isLead = (player === p1 && f1 < f2) || (player === p2 && f2 < f1) || f1 === f2;
+    const cell = el('div', { style: 'padding:10px 14px; border-radius:8px; background:' + (isLead ? 'linear-gradient(135deg, rgba(240,199,94,0.16), rgba(212,160,23,0.04))' : 'rgba(255,255,255,0.03)') + '; border:1px solid ' + (isLead ? 'rgba(240,199,94,0.40)' : 'rgba(255,255,255,0.10)') + '; cursor:pointer;' });
+    cell.onclick = () => openPlayerScorecardModal(player);
+    cell.appendChild(el('div', { style: 'font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:2px;', text: 'Player' }));
+    cell.appendChild(el('div', { style: 'font-size:18px; font-weight:700; color:#F0C75E; margin-top:2px;', text: player.name }));
+    cell.appendChild(el('div', { style: 'font-size:10px; opacity:0.55; margin-top:1px;', text: 'skill ' + player.skill.toFixed(2) }));
+    cell.appendChild(el('div', { style: 'margin-top:8px; font-size:11px; opacity:0.7; letter-spacing:1px; text-transform:uppercase;', text: 'Tournament final' }));
+    cell.appendChild(el('div', { style: 'font-size:32px; font-weight:700; font-variant-numeric:tabular-nums; color:' + sideTone(final) + '; line-height:1.05;', text: formatFinal(final) }));
+    const netH = (player.honeyCumSelf || 0) - (player.honeyCumOpp || 0);
+    cell.appendChild(el('div', { style: 'font-size:10px; opacity:0.65; margin-top:3px; font-variant-numeric:tabular-nums;', text: 'GOLF ' + formatStroke(player.golfCum) + ' · HONEY ' + (netH > 0 ? '+' : '') + netH + 'h ÷' + tour.divisor }));
+    cell.appendChild(el('div', { style: 'font-size:9px; opacity:0.45; margin-top:6px; font-style:italic;', text: '↳ click for full scorecard' }));
+    return cell;
+  };
+  board.appendChild(sideEl(p1, f1));
+  // Centre column: hole counter + carry pot.
+  const centre = el('div', { style: 'text-align:center; padding:0 8px;' });
+  centre.appendChild(el('div', { style: 'font-size:10px; opacity:0.6; letter-spacing:2px; text-transform:uppercase;', text: 'Hole' }));
+  centre.appendChild(el('div', { style: 'font-size:34px; font-weight:700; color:#F0C75E; font-variant-numeric:tabular-nums; line-height:1;', text: Math.min(eng.currentHole + (eng.done ? 0 : 1), tour.handsPerRound) + '' }));
+  centre.appendChild(el('div', { style: 'font-size:10px; opacity:0.6; letter-spacing:1px;', text: 'of ' + tour.handsPerRound }));
+  if (eng.carryPot > 0) {
+    centre.appendChild(el('div', { style: 'margin-top:8px; padding:4px 10px; border-radius:99px; background:rgba(240,199,94,0.18); border:1px solid rgba(240,199,94,0.45); display:inline-block; font-size:11px; color:#F0C75E; font-weight:700;', text: '🍯 ' + eng.carryPot + 'h carrying' }));
+  } else {
+    centre.appendChild(el('div', { style: 'margin-top:8px; font-size:9px; opacity:0.4; letter-spacing:1px;', text: 'no carry' }));
+  }
+  if (eng.done) {
+    centre.appendChild(el('div', { style: 'margin-top:6px; font-size:10px; opacity:0.6; font-style:italic;', text: '✓ match complete' }));
+  } else if (eng.consecTies > 0) {
+    centre.appendChild(el('div', { style: 'margin-top:4px; font-size:9px; opacity:0.55;', text: eng.consecTies + ' consecutive tie' + (eng.consecTies > 1 ? 's' : '') }));
+  }
+  board.appendChild(centre);
+  board.appendChild(sideEl(p2, f2));
+  card.appendChild(board);
+  // === Last hole replay strip =========================================
+  const last = eng.lastResult;
+  if (last) {
+    const lastWrap = el('div', { style: 'margin-top:14px; padding:8px 12px; background:rgba(0,0,0,0.18); border:1px solid rgba(212,160,23,0.20); border-radius:6px;' });
+    lastWrap.appendChild(el('div', { style: 'font-size:10px; opacity:0.55; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;', text: 'Hole ' + (eng.currentHole) + ' — last result' }));
+    let summary;
+    if (last.tie) summary = 'TIE · ' + (golfTermForStroke(last.aScore)) + ' vs ' + (golfTermForStroke(last.bScore)) + ' · pot of ' + (last.strokes || 0) + 'h carries forward';
+    else if (last.folded) summary = (last.folded === 'a' ? p1.name : p2.name) + ' folds → ' + (last.folded === 'a' ? p2.name : p1.name) + ' wins ' + (last.strokes || 0) + 'h';
+    else {
+      const aWon = (last.aHoneyCredit || 0) > 0;
+      const winName = aWon ? p1.name : p2.name;
+      const aHand = handCategoryName(last.aHand), bHand = handCategoryName(last.bHand);
+      summary = p1.name + ' (' + (aHand || '?') + ', ' + golfTermForStroke(last.aScore) + ') vs ' + p2.name + ' (' + (bHand || '?') + ', ' + golfTermForStroke(last.bScore) + ') · ' + winName + ' wins ' + (last.strokes || 0) + 'h';
+    }
+    lastWrap.appendChild(el('div', { style: 'font-size:12px; font-family: Georgia, serif;', text: summary }));
+    card.appendChild(lastWrap);
+  }
+  // === This-match-only scorecard (compact) =============================
+  // Pull the rows on the players' personal scorecards that match this match id.
+  const p1Rows = p1.scorecard.filter(r => r.matchId === match.id);
+  const p2Rows = p2.scorecard.filter(r => r.matchId === match.id);
+  const matchN = Math.max(p1Rows.length, p2Rows.length);
+  if (matchN > 0) {
+    card.appendChild(el('div', { style: 'margin-top:14px; font-size:10px; opacity:0.6; letter-spacing:2px; text-transform:uppercase;', text: 'This match (round ' + match.round + ')' }));
+    const mTbl = el('table', { style: 'border-collapse:separate; border-spacing:0; width:100%; margin-top:4px; font-family: Georgia, serif;' });
+    const head = el('tr');
+    head.appendChild(el('th', { style: 'padding:4px 6px; font-size:10px; opacity:0.55; text-align:left;', text: 'PLAYER' }));
+    for (let h = 1; h <= matchN; h++) head.appendChild(el('th', { style: 'padding:3px; font-size:9px; opacity:0.55; min-width:44px;', text: 'H' + h }));
+    head.appendChild(el('th', { style: 'padding:4px; font-size:10px; color:#F0C75E; min-width:48px; border-left:2px solid rgba(212,160,23,0.40);', text: 'GOLF' }));
+    head.appendChild(el('th', { style: 'padding:4px; font-size:10px; color:#F0C75E; min-width:48px;', text: 'HONEY' }));
+    mTbl.appendChild(head);
+    [{ player: p1, rows: p1Rows, totals: { golf: eng.totalGolfA, honey: eng.totalHoneyA } },
+     { player: p2, rows: p2Rows, totals: { golf: eng.totalGolfB, honey: eng.totalHoneyB } }].forEach(({ player, rows, totals }) => {
+      const tr = el('tr', { style: 'cursor:pointer;' });
+      tr.onclick = () => openPlayerScorecardModal(player);
+      tr.appendChild(el('td', { style: 'padding:5px 6px; font-size:12px; color:#F2E8C9; font-weight:600;', text: player.name }));
+      for (let i = 0; i < matchN; i++) {
+        const r = rows[i];
+        if (!r) { tr.appendChild(el('td', { style: 'padding:5px 6px; text-align:center; opacity:0.25;', text: '·' })); }
+        else { tr.appendChild(makeScorecardCell(r, { verbose: matchN <= 18 })); }
+      }
+      tr.appendChild(el('td', { style: 'padding:5px 6px; text-align:center; font-weight:700; font-variant-numeric:tabular-nums; color:' + sideTone(totals.golf) + '; border-left:2px solid rgba(212,160,23,0.40);', text: formatStroke(totals.golf) }));
+      tr.appendChild(el('td', { style: 'padding:5px 6px; text-align:center; font-size:11px; opacity:0.8; font-variant-numeric:tabular-nums;', text: '+' + totals.honey + 'h' }));
+      mTbl.appendChild(tr);
+    });
+    card.appendChild(mTbl);
+  }
+  host.appendChild(card);
+}
+
 function refreshSpectatorGrid() {
   const host = document.querySelector('[data-spectator-grid]');
   if (!host) return;
@@ -17019,10 +18096,53 @@ function refreshSpectatorGrid() {
   }
   const grid = el('div', { style: 'display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px;' });
   others.forEach(id => {
+    if (SpectatorState.mode === 'liveTourney' && SpectatorState.tournament) {
+      const m = SpectatorState.tournament.matches.find(x => x.id === id);
+      if (m) grid.appendChild(spectatorMiniTourneyMatch(m));
+      return;
+    }
     const t = CashLobby.tables.find(x => x.id === id); if (!t) return;
     grid.appendChild(spectatorMiniFelt(t));
   });
   host.appendChild(grid);
+}
+
+// v69.47 — mini-card for a tournament HU match (the tour-engine equivalent
+// of spectatorMiniFelt). Shows the two players with running finals, hole
+// progress, carry pot, and a compact last-9 sparkline per side.
+function spectatorMiniTourneyMatch(match) {
+  const tour = SpectatorState.tournament;
+  const eng = match.engine;
+  const p1 = eng.p1, p2 = eng.p2;
+  const f1 = spectatorPlayerFinal(p1), f2 = spectatorPlayerFinal(p2);
+  const card = el('div', { class: 'spectator-mini', style: 'background:linear-gradient(135deg,#1a3a25,#0a3024); border:1px solid rgba(212,160,23,0.35); border-radius:10px; padding:9px; cursor:pointer; transition:transform 120ms,border-color 120ms; min-height:130px; position:relative; font-family: Georgia, serif;' });
+  card.onmouseenter = () => { card.style.transform = 'translateY(-2px)'; card.style.borderColor = 'rgba(240,199,94,0.7)'; };
+  card.onmouseleave = () => { card.style.transform = ''; card.style.borderColor = 'rgba(212,160,23,0.35)'; };
+  card.onclick = () => {
+    SpectatorState.featuredTableId = match.id;
+    SpectatorState.director.lastSwitchAt = Date.now();
+    refreshSpectatorFeatured();
+    refreshSpectatorGrid();
+  };
+  const hdr = el('div', { style: 'display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;' });
+  hdr.appendChild(el('span', { style: 'font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#F0C75E;', text: match.label }));
+  hdr.appendChild(el('span', { style: 'font-size:9px; opacity:0.7;', text: 'H' + Math.min(eng.currentHole + (eng.done ? 0 : 1), tour.handsPerRound) + '/' + tour.handsPerRound }));
+  card.appendChild(hdr);
+  const sideRow = (player, final) => {
+    const matchRows = player.scorecard.filter(r => r.matchId === match.id);
+    const row = el('div', { style: 'display:flex; align-items:center; gap:6px; padding:3px 0; border-bottom:1px dashed rgba(255,255,255,0.06);' });
+    row.appendChild(el('span', { style: 'flex:1; font-size:11px; color:#F2E8C9;', text: player.name }));
+    row.appendChild(makeStrokeSparkline(matchRows.map(r => r.rawScore), { length: 9 }));
+    row.appendChild(el('span', { style: 'min-width:42px; text-align:right; font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; color:' + scorecardCellTone(final > 0 ? 1 : final < 0 ? -1 : 0) + ';', text: formatFinal(final) }));
+    return row;
+  };
+  card.appendChild(sideRow(p1, f1));
+  card.appendChild(sideRow(p2, f2));
+  const footer = el('div', { style: 'display:flex; justify-content:space-between; align-items:center; margin-top:6px; font-size:9px; opacity:0.7;' });
+  footer.appendChild(el('span', { text: eng.done ? '✓ done' : (eng.consecTies > 0 ? eng.consecTies + ' tie streak' : 'in play') }));
+  if (eng.carryPot > 0) footer.appendChild(el('span', { style: 'color:#F0C75E;', text: '🍯 ' + eng.carryPot + 'h carry' }));
+  card.appendChild(footer);
+  return card;
 }
 
 function spectatorMiniFelt(t) {
@@ -17132,13 +18252,17 @@ function refreshSpectatorStats() {
     }
     return;
   }
-  // Live modes (cash + tourney) show table-driven stats
-  host.appendChild(row('Tables live', String(SpectatorState.tableIds.length)));
-  host.appendChild(row('Hands played', s.handsPlayed.toLocaleString()));
+  // Live modes (cash + tourney) show table-driven stats. v69.47 — tourney
+  // mode labels reflect the right *unit* of the wager: Honey for tournaments
+  // (per the YJ-Stroke glossary), Nectar (◈) for cash games.
+  const isTourney = (SpectatorState.mode === 'liveTourney');
+  host.appendChild(row(isTourney ? 'Matches live' : 'Tables live', String(SpectatorState.tableIds.length)));
+  host.appendChild(row(isTourney ? 'Holes played' : 'Hands played', s.handsPlayed.toLocaleString()));
   host.appendChild(row('Showdowns', s.showdownsCount.toLocaleString()));
-  host.appendChild(row('Folds out', s.foldEndCount.toLocaleString()));
-  if (s.eliminations > 0) host.appendChild(row('Eliminations', String(s.eliminations)));
-  host.appendChild(row('Biggest pot', '◈ ' + Math.round(s.biggestPot).toLocaleString()));
+  host.appendChild(row('Fold-outs', s.foldEndCount.toLocaleString()));
+  if (s.eliminations > 0) host.appendChild(row(isTourney ? 'Cuts' : 'Eliminations', String(s.eliminations)));
+  host.appendChild(row(isTourney ? 'Biggest honey pot' : 'Biggest pot',
+    (isTourney ? '🍯 ' : '◈ ') + Math.round(s.biggestPot).toLocaleString() + (isTourney ? 'h' : '')));
   // v69.45 — session/run-limit progress (the path to a logical conclusion).
   const sess = SpectatorState.session;
   if (sess) {
@@ -17161,9 +18285,20 @@ function refreshSpectatorStats() {
   if (SpectatorState.tournament) {
     host.appendChild(el('div', { style: 'margin-top:6px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px;', text: 'Tournament' }));
     const tt = SpectatorState.tournament;
-    host.appendChild(row('Round', String(tt.round)));
-    host.appendChild(row('Surviving', String((tt.surviving || []).length)));
-    host.appendChild(row('Field size', String(tt.fieldSize)));
+    host.appendChild(row('Round', String(tt.round) + ' / ' + (tt.totalRounds || '—')));
+    host.appendChild(row('Surviving', String((tt.surviving || []).length) + ' / ' + tt.fieldSize));
+    // v69.47 — hole-of-round = min across active matches (lagging match)
+    let minHoles = Infinity;
+    (tt.matches || []).forEach(m => { if (m.engine) minHoles = Math.min(minHoles, m.engine.currentHole || 0); });
+    if (minHoles === Infinity) minHoles = 0;
+    host.appendChild(row('Hole of round', minHoles + ' / ' + (tt.handsPerRound || 18)));
+    host.appendChild(row('Honey divisor', '÷' + (tt.divisor || 9) + ' · ' + (SpectatorState.session && SpectatorState.session.honeyDivisorMode === 'calibrated' ? 'CALIBRATED' : 'SPEC')));
+    // Leader by Honey-adjusted final
+    const sorted = (tt.surviving || []).slice().sort((a, b) => spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
+    if (sorted.length) {
+      const lead = sorted[0];
+      host.appendChild(row('Leader', lead.name + ' (' + formatFinal(spectatorPlayerFinal(lead)) + ')'));
+    }
   }
 }
 
@@ -17203,6 +18338,7 @@ function notifySpectatorTick(t) {
     try { refreshSpectatorGrid(); } catch (_) {}
     try { refreshSpectatorLog(); } catch (_) {}
     try { refreshSpectatorStats(); } catch (_) {}
+    try { refreshSpectatorScorecardStrip(); } catch (_) {}
   } else if (!_spectatorThrottleQueued) {
     // Coalesce: ensure a trailing refresh so the last update isn't dropped
     _spectatorThrottleQueued = setTimeout(() => {
@@ -17212,6 +18348,7 @@ function notifySpectatorTick(t) {
       try { refreshSpectatorGrid(); } catch (_) {}
       try { refreshSpectatorLog(); } catch (_) {}
       try { refreshSpectatorStats(); } catch (_) {}
+      try { refreshSpectatorScorecardStrip(); } catch (_) {}
     }, 260);
   }
 }
@@ -17391,6 +18528,26 @@ Views.spectator = function() {
     seedIn.onchange = () => { SpectatorState.setup.seed = seedIn.value.trim(); };
     seedIn.oninput = () => { SpectatorState.setup.seed = seedIn.value.trim(); };
     setupCard.appendChild(seedIn);
+
+    // v69.49 — Honey divisor calibration. Two coexisting modes: 'spec' (v23
+    // intent, ÷N) and 'calibrated' (deployed stepped table). Default to spec.
+    // Locks at run-start so changes mid-run don't corrupt the active session.
+    setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'Honey divisor calibration' }));
+    const honeySel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:4px; font-size:12px;' });
+    [
+      { v: 'spec',       l: 'Spec (v23): ÷ holes-in-round  (1 stroke per N honey)' },
+      { v: 'calibrated', l: 'Calibrated: stepped ÷ table  (1 stroke per ~½ N honey)' },
+    ].forEach(o => {
+      const opt = el('option', { value: o.v, text: o.l });
+      if ((SpectatorState.setup.honeyDivisorMode || 'spec') === o.v) opt.selected = true;
+      honeySel.appendChild(opt);
+    });
+    honeySel.onchange = () => { SpectatorState.setup.honeyDivisorMode = honeySel.value; };
+    setupCard.appendChild(honeySel);
+    setupCard.appendChild(el('div', { style: 'font-size:9px; opacity:0.55; margin-bottom:10px; font-style:italic; line-height:1.4;', text:
+      (SpectatorState.setup.honeyDivisorMode === 'calibrated')
+        ? 'Calibrated: 18-hole round ⇒ ÷9, 72-hole final ⇒ ÷36. Honey ~2× more impactful.'
+        : 'Spec: 18-hole round ⇒ ÷18, 72-hole final ⇒ ÷72. Average honey per hole IS your stroke effect.' }));
   }
 
   // Action buttons
@@ -17430,7 +18587,7 @@ Views.spectator = function() {
     pauseBtn.onclick = () => {
       SpectatorState.paused = !SpectatorState.paused;
       if (!SpectatorState.paused) {
-        // Resume: re-deal any cash table whose hand finished while paused
+        // Resume cash spectator: re-deal any table whose hand finished while paused
         if (!spectatorSessionDone()) {
           SpectatorState.tableIds.forEach(id => {
             const t = CashLobby.tables.find(x => x.id === id);
@@ -17438,6 +18595,12 @@ Views.spectator = function() {
               setTimeout(() => spectatorDealNextHand(t), 200);
             }
           });
+          // v69.47 — resume tournament-engine match ticks too.
+          if (SpectatorState.tournament && Array.isArray(SpectatorState.tournament.matches)) {
+            SpectatorState.tournament.matches.forEach(m => {
+              if (m && m.engine && !m.engine.done && !m.engine.tickTimer) spectatorScheduleTourneyTick(m, 200);
+            });
+          }
         }
         // Resume broadcast playback
         if (SpectatorState.broadcast && SpectatorState.broadcast.playing) {
@@ -17473,6 +18636,8 @@ Views.spectator = function() {
   // ============ CENTER: featured + grid =================================
   const center = el('div', null);
   center.appendChild(el('div', { 'data-spectator-featured': '1', style: 'margin-bottom:14px;' }));
+  // v69.46 — Tournament scorecard strip (auto-shows only for liveTourney mode).
+  center.appendChild(el('div', { 'data-spectator-scorecard-strip': '1' }));
   center.appendChild(el('div', { 'data-spectator-grid': '1' }));
   layout.appendChild(center);
 
@@ -17491,6 +18656,7 @@ Views.spectator = function() {
   refreshSpectatorGrid();
   refreshSpectatorLog();
   refreshSpectatorStats();
+  refreshSpectatorScorecardStrip();
 };
 
 // === The Iconic Hands view ================================================
@@ -19306,6 +20472,10 @@ const DEFAULT_SIM_CONFIG = {
   // Honey-Stroke is the sole scoring law. carryOverEnabled (true) and honeyDivisor (1)
   // are permanent invariants on SCORING_STYLES['honey-stroke'] — not user-tunable.
   scoringStyle: 'honey-stroke',
+  // v69.49 — Honey divisor calibration mode. 'spec' (v23 design: divisor=N) or
+  // 'calibrated' (deployed stepped ÷9/÷4/÷36 table). Applied at runLabSession
+  // start via setHoneyDivisorMode(); snapshotted into the run snap.
+  honeyDivisorMode: 'spec',
   // σ of the truncated-Normal used to sample authored skills. Bumped in v30
   // from 0.18 → 0.24 to widen the skill distribution so per-event skill→
   // finish-position curves separate more cleanly across tiers. With σ=0.24,
@@ -20517,6 +21687,11 @@ async function runLabSession(cfg, onProgress) {
   setHoneyMagnitude(cfg.honeyMagnitude);
   setPotElasticK(cfg.potElasticK);
   setBackNineMultiplier(cfg.backNineOpenerMultiplier);
+  // v69.49 — lock the Honey divisor mode for this run. honeyDivisorFor() reads
+  // CurrentHoneyDivisorMode; setting it here so every gameContext built
+  // downstream uses the active calibration consistently. Snapshotted into the
+  // run's snap.config below.
+  setHoneyDivisorMode(cfg.honeyDivisorMode === 'calibrated' ? 'calibrated' : 'spec');
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
@@ -21849,8 +23024,12 @@ function _exportRunToCSVImpl(snap) {
   // round-end honey-normalisation divisor.
   cfgRow('scoring.decisionDivisor',
     Number.isFinite(+snapCfg.decisionDivisor) ? +snapCfg.decisionDivisor : 9);
-  // Honey divisor is a flat integer table by round length, not a magnitude scalar.
-  cfgRow('scoring.divisorTable', '1=1, 9=4, 18=9, 72=36');
+  // v69.49 — Honey divisor MODE used for this run. 'spec' = v23 design intent
+  // (divisor = round/event hole count, ÷N). 'calibrated' = stepped table
+  // (÷9/÷4/÷36). Locked at run start; recorded here so any CSV is unambiguous.
+  cfgRow('scoring.honeyDivisorMode', snapCfg.honeyDivisorMode === 'calibrated' ? 'calibrated' : 'spec');
+  cfgRow('scoring.divisorTable',
+    snapCfg.honeyDivisorMode === 'calibrated' ? 'calibrated: 1=1, 9=4, 18=9, 72=36' : 'spec: divisor = hole count (N)');
   cfgRow('scoring.carryOverEnabled', true);
   // Back-9 opener multiplier. Mandatory pot ×N for back 9 of every 18-hole round.
   cfgRow('scoring.backNineOpenerMultiplier',
@@ -22679,6 +23858,46 @@ function renderConfigPanel(panel, mode) {
     text: 'YELLOW JACKET (default): the competitive tour. Decisive-showdown losers post +1 bogey regardless of hand. Sharper per-event skill; champions in the +12 to +28 range. BUMBLEBEE: the casual league. Decisive-showdown losers score their own hand (-5..+2) — flush-loser still posts -1 birdie. Gentler scoring; champions in the -10 to -18 range. Both share the same engine, mandatory pot, agreed-total wagering, fold rule, and divisor. Folds and ties are NOT affected by this choice.'
   }));
 
+  // === HONEY DIVISOR MODE (v69.49) =========================================
+  // Two coexisting calibrations selectable per run:
+  //   'spec'        — v23 design intent: divisor = round/event hole count.
+  //                   For an 18-hole round → ÷18; 72-hole final → ÷72.
+  //                   "Average honey per hole IS your stroke effect."
+  //                   Matches SCORING_STYLES['honey-stroke'].desc text.
+  //   'calibrated'  — Deployed stepped table from honeyDivisorFor: ÷9 / ÷4 /
+  //                   ÷36 by length tier. Honey ~2× more impactful than spec.
+  // The mode locks at runLabSession() start; runs done under different modes
+  // produce different stroke totals on the same field. Both are valid;
+  // changing this control without comparing modes is fine — just be aware
+  // any saved-run comparisons should be apples-to-apples.
+  const hdmRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  hdmRow.appendChild(el('label', { text: 'Honey ÷', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const hdmSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 'spec',       label: '🪶 Spec (v23) — ÷ holes-in-round  (1 stroke per N honey · light drizzle)' },
+    { v: 'calibrated', label: '⚖ Calibrated — stepped ÷9/÷4/÷36 (1 stroke per ~½ N honey · 2× impactful)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    const current = LabState.config.honeyDivisorMode || 'spec';
+    if (current === o.v) opt.selected = true;
+    hdmSel.appendChild(opt);
+  });
+  hdmSel.onchange = () => {
+    LabState.config.honeyDivisorMode = hdmSel.value;
+    setHoneyDivisorMode(hdmSel.value);                        // takes effect on the next run
+    saveLabState();
+    toast('Honey divisor: ' + (hdmSel.value === 'spec'
+      ? 'Spec (÷N — v23 design intent)'
+      : 'Calibrated (stepped ÷table — post-v23 deployed)'));
+  };
+  hdmRow.appendChild(hdmSel);
+  evSec.appendChild(hdmRow);
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'SPEC (default): the documented design intent — net honey divided by the round/event hole count, applied at round end. Average honey per hole IS your stroke effect; honey is a light smoothing drizzle on the golf scorecard. CALIBRATED: the post-v23 stepped table (÷9 for 18-hole rounds, ÷36 for 72-hole finals). Honey is ~2× more impactful — winning roughly half a round of honey earns 1 stroke off. Both modes appear in the run CSV header (honey_divisor_mode); comparing runs across modes will diverge accordingly.'
+  }));
+
   // === TABLE SIZE TOGGLE (v69) ============================================
   // HU (2) is the canonical engine; 6 and 9 route aggregate stroke-play events
   // through the multi-way matched-contribution runner. Per-player honey caps
@@ -23022,6 +24241,11 @@ async function runSimulator(cfg, onProgress) {
   setHoneyMagnitude(cfg.honeyMagnitude);
   setPotElasticK(cfg.potElasticK);
   setBackNineMultiplier(cfg.backNineOpenerMultiplier);
+  // v69.49 — lock the Honey divisor mode for this run. honeyDivisorFor() reads
+  // CurrentHoneyDivisorMode; setting it here so every gameContext built
+  // downstream uses the active calibration consistently. Snapshotted into the
+  // run's snap.config below.
+  setHoneyDivisorMode(cfg.honeyDivisorMode === 'calibrated' ? 'calibrated' : 'spec');
   const progressCtl = createProgressThrottler(onProgress);
   const actionStats = {
     preflop: { check:0, bet:0, call:0, raise:0, fold:0 },
