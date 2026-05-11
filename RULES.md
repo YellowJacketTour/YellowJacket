@@ -429,7 +429,7 @@ Pure NLHE has no parallel ledger, no scorecard, no stroke score. Your only resul
 
 ## 5. Mode C — Cash Tables, YJ Stroke / Bumblebee Stroke
 
-Same NLHE engine as Pure, **plus a parallel stroke ledger** that settles separately at cashout.
+Same NLHE engine as Pure, **plus a separate golf scorecard** — a per-hand evaluation of skill that runs alongside the chips. You wager Nectar; your hand quality is graded on its own card. The scorecard **does not convert to Nectar** — it is a pure skill record (it feeds your Tour reputation / leaderboards), so a session can be chip-positive and over par, or chip-negative and under par. The chips are the money game; the scorecard is the golf. *(You want to wager cash but have the skill of golf — the two ledgers stay separate.)*
 
 ### 5.1 Where to play
 
@@ -438,63 +438,49 @@ Same NLHE engine as Pure, **plus a parallel stroke ledger** that settles separat
 
 ### 5.2 The chip side: identical to Pure NLHE
 
-Bet/call/raise/fold mechanics are unchanged. Stack is Nectar. All-in is your full stack on any street. Matched-contribution pots. Standard rake per pot.
+Bet/call/raise/fold mechanics are unchanged. Stack is Nectar. All-in is your full stack on any street. Matched-contribution pots. Standard rake per pot. Cashout pays your chip stack — nothing else.
 
-### 5.3 The stroke side: a parallel ledger
+### 5.3 The golf scorecard: a separate per-hand skill record
 
-In addition to the chip P/L, every showdown adds an integer to your **stroke ledger**:
-
-```
-   ┌──── STROKE LEDGER (cash variants) ──────┐
-   │                                          │
-   │  At each SHOWDOWN:                       │
-   │                                          │
-   │    Winner: ledger += -(own hand score)   │
-   │            (positive = good for you)     │
-   │                                          │
-   │    Loser:                                │
-   │      YJ Stroke (Bogey Loss):             │
-   │        ledger += -(+1) = -1              │
-   │      Bumblebee Stroke (Honored Loss):    │
-   │        ledger += -(own hand score)       │
-   │                                          │
-   │  Folds do NOT touch the ledger.          │
-   │  Only showdowns produce strokes.         │
-   │                                          │
-   └──────────────────────────────────────────┘
-```
-
-The sign convention: **positive ledger = under par across the session** (good for you).
-
-Example: you win a hand at showdown with a flush (golf score −1). Your ledger goes +1. You win another with two pair (golf score 0). Ledger stays at +1. You lose a showdown with a high card. Under YJ Stroke, ledger goes to 0. Under Bumblebee Stroke, ledger goes to −1 (your high card was +2 golf score).
-
-### 5.4 Settlement at cashout
-
-When you stand up:
+Every **showdown** adds to your scorecard, in **true golf convention** — lower is better, exactly like a tour-event scorecard and the dashboard champion score:
 
 ```
-   CASHOUT SETTLEMENT (YJ Stroke / Bumblebee Stroke)
-   ────────────────────────────────────────────────────
-   final Nectar payout = chip stack
-                       + (stroke ledger × $0.50)
-
-   Worked example:
-     You buy in for $400.
-     After 100 hands you have $445 chips and
-     ledger of +18 (you played good hands well).
-
-     Cashout = $445 + (18 × $0.50)
-             = $445 + $9
-             = $454 Nectar
-
-   The +$0.50/stroke premium is paid by the house
-   from rake. Negative ledger pays a small Nectar
-   penalty beyond chip P/L.
+   ┌──── GOLF SCORECARD (cash YJ / BB Stroke) ─┐
+   │                                            │
+   │  At each SHOWDOWN, for every player still   │
+   │  in the hand:                               │
+   │                                             │
+   │    Pot winner:  card += own hand class      │
+   │       (Royal / Straight Flush −5 …          │
+   │        Full House −2 … Two Pair 0 …         │
+   │        High Card +2)                        │
+   │                                             │
+   │    Every other showdown player:             │
+   │      YJ Stroke (Bogey Loss):   card += +1   │
+   │      Bumblebee Stroke (Honored Loss):       │
+   │                  card += own hand class     │
+   │                                             │
+   │  Multi-way tables: one pot winner; every    │
+   │  other showdown player posts the loser      │
+   │  score above.                               │
+   │                                             │
+   │  Folds do NOT touch the card. Only          │
+   │  showdowns are scored.                      │
+   │                                             │
+   └─────────────────────────────────────────────┘
 ```
+
+Sign convention: **a negative card = under par over the session** (good — like a real round). The ⛳ pill on each seat is that player's running card; green under par, red over.
+
+Example: you win a showdown with a flush (−1) — card goes to −1. You win another with two pair (0) — card stays −1. You then lose a showdown holding only a high card: under YJ Stroke your card goes to 0 (a +1 bogey for the loss); under Bumblebee Stroke it goes to +1 (your high card scores its own +2, so −1 + 2 = +1).
+
+### 5.4 No Nectar settlement — it's pure skill
+
+When you stand up, your cashout is **just your chip stack** — the golf scorecard never adds to or subtracts from it. The scorecard is recorded to your Tour profile / leaderboards as a skill measure; it does not move money.
 
 ### 5.5 Why honey is NOT involved
 
-Despite the brand name "Stroke," these cash variants borrow only the **scorecard** half of the tour Honey-Stroke law. The honey-pot half (agreed-total wagering, mandatory pots, divisor conversion) does NOT apply at cash. Cash is pure NLHE on the wagering side; the strokes are a parallel scoring layer that runs alongside.
+Despite the brand name "Stroke," these cash variants borrow only the **scorecard** half of the tour Honey-Stroke law. The honey-pot half (agreed-total wagering, mandatory pots, divisor conversion) does NOT apply at cash. Cash is pure NLHE on the wagering side; the scorecard is a parallel skill layer that runs alongside.
 
 ---
 
@@ -527,13 +513,13 @@ Despite the brand name "Stroke," these cash variants borrow only the **scorecard
                   │  ≤3×envel.   │          │              │
    Scorecard      │ Yes          │ No       │ Yes (cash)   │
    Honey ledger   │ Yes          │ No       │ No           │
-   Stroke ledger  │ No (per-hand │ No       │ Yes          │
-                  │  rolled into │          │              │
-                  │  round)      │          │              │
+   Golf scorecard │ Per-hand,    │ No       │ Yes (cumul.  │
+                  │  rolled into │          │  session;    │
+                  │  round score │          │  skill only) │
    Tied pots      │ Roll forward │ Split    │ Split        │
    Length         │ Event/round  │ Continu. │ Continuous   │
-   Payout         │ Finish-pos   │ Per-hand │ Per-hand +   │
-                  │ ITM curve    │ winner   │ cashout adj  │
+   Payout         │ Finish-pos   │ Per-hand │ Per-hand     │
+                  │ ITM curve    │ winner   │ winner       │
    ───────────────┴──────────────┴──────────┴──────────────┘
 ```
 
@@ -679,11 +665,11 @@ If two or more players are tied after the scheduled holes, a short 2–4 hole ag
    ║    → Yellow Jacket Cash → Pure NLHE                       ║
    ║      Just Nectar P/L. No strokes. Honey not involved.     ║
    ║                                                            ║
-   ║  Want cash poker WITH a stroke layer that pays            ║
-   ║  +$0.50/stroke at cashout?                                ║
+   ║  Want cash poker WITH a separate golf scorecard          ║
+   ║  grading your hand quality (skill only, no payout)?      ║
    ║    → Yellow Jacket Cash → YJ Stroke (Bogey Loss)          ║
    ║    → Bumblebee Cash → Bumblebee Stroke (Honored Loss)     ║
-   ║      NLHE wagering + parallel stroke ledger.              ║
+   ║      NLHE wagering + separate golf scorecard.            ║
    ║                                                            ║
    ╚══════════════════════════════════════════════════════════╝
 ```
@@ -694,6 +680,6 @@ If two or more players are tied after the scheduled holes, a short 2–4 hole ag
 
 - **Tour Honey-Stroke** (also marketed as **Sweet Stroke**): 8-beat Hold'em hole (Tea Box → The Fairway → The Lay-Up → The Hazard → The Approach → The Green → The Putt → The Cup) + bounded golf score per hole + honey pot that converts to strokes via the honey cap at each round end. Two variants (Yellow Jacket / Bumblebee) differ only on decisive-showdown loser score.
 - **Pure NLHE Cash**: Standard online poker, no strokes, no honey, just chip P/L.
-- **YJ Stroke / Bumblebee Stroke Cash**: Pure NLHE wagering + parallel stroke ledger from hand class at showdown, settling at cashout for ±$0.50 per net stroke.
+- **YJ Stroke / Bumblebee Stroke Cash**: Pure NLHE wagering + a *separate* golf scorecard scored per showdown from hand class (true golf convention, lower = better; YJ loser posts +1 bogey, Bumblebee loser posts own hand). The scorecard is a pure skill record — it does not convert to Nectar; cashout pays your chip stack only.
 
 That's the entire game in three sentences.

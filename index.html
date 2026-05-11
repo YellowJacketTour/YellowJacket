@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.11-v69.63-interactive-envelope-and-mp-settings";
+const APP_VERSION = "2026.05.11-v69.65-cash-golf-scorecard";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5769,7 +5769,7 @@ const NectarState = {
     rakeStructurePct: 0.05,         // cash rake % of pot
     rakeCapPerHand: 5,              // max nectar raked per hand
     p2pTransferFeePct: 0.01,        // 1% house fee on peer-to-peer transfers
-    nectarPerStrokePoint: 0.5,      // dual-ledger HS settlement weight at cash
+    nectarPerStrokePoint: 0.5,      // DEPRECATED (v69.65): the cash golf scorecard no longer settles to Nectar — it is a pure per-hand skill record. Kept for save-file/back-compat; unused.
     badBeatDropPerHand: 0.1,        // BB jackpot drop
   },
 };
@@ -11121,14 +11121,15 @@ function standUpFromTable(tableId, seatIdx) {
     if (t.handState.tickTimer) { clearTimeout(t.handState.tickTimer); t.handState.tickTimer = null; }
     t.handState = null;
   }
-  let settlement = seat.stack;
-  let strokeAdjust = 0;
-  if (t.variant !== 'pure' && seat.handsPlayed > 0) {
-    strokeAdjust = (seat.strokeLedger / seat.handsPlayed) * NectarState.config.nectarPerStrokePoint * seat.handsPlayed;
-    settlement += strokeAdjust;
-  }
+  // v69.65 — the cash golf scorecard is a pure skill record; it does NOT settle to
+  // Nectar. Cashout pays the chip stack only. The session's golf score is still
+  // carried in the ledger entry's meta for Tour reputation / leaderboards.
+  const settlement = seat.stack;
   if (settlement > 0) {
-    nectarPost({ type: 'cash.cashout', from: null, to: 0, amount: Math.round(settlement), reason: 'Cashout from #' + t.id + ' (chip ' + Math.round(seat.stack) + (strokeAdjust ? ' + stroke ' + Math.round(strokeAdjust) : '') + ')', meta: { tableId: t.id, strokeLedger: seat.strokeLedger, handsPlayed: seat.handsPlayed } });
+    const golfNote = (t.variant !== 'pure' && seat.handsPlayed > 0)
+      ? (', golf ' + (seat.strokeLedger > 0 ? '+' : '') + (Math.round(seat.strokeLedger * 10) / 10))
+      : '';
+    nectarPost({ type: 'cash.cashout', from: null, to: 0, amount: Math.round(settlement), reason: 'Cashout from #' + t.id + ' (chip ' + Math.round(seat.stack) + golfNote + ')', meta: { tableId: t.id, golfScore: seat.strokeLedger, handsPlayed: seat.handsPlayed } });
   }
   t.seats[seatIdx] = null;
   CashLobby.activeTableIds = CashLobby.activeTableIds.filter(id => id !== t.id);
@@ -12421,14 +12422,15 @@ function updateCashCardInPlace(t, cardNode) {
       } else if (!shouldShowOppCards && oppCardsEl) {
         oppCardsEl.remove();
       }
-      // Stroke pill text (variant !== 'pure')
+      // Golf-scorecard pill text (variant !== 'pure'). v69.65 — true golf
+      // convention: lower is better, so under par is the "good" (green) class.
       if (t.variant !== 'pure') {
         const pillEl = seatEl.querySelector('.stroke-pill');
         if (pillEl) {
           const sl = seat.strokeLedger;
-          const newText = (sl > 0 ? '+' : '') + sl.toFixed(1) + 'σ';
+          const newText = '⛳ ' + (sl > 0 ? '+' : '') + sl.toFixed(1);
           if (pillEl.textContent !== newText) pillEl.textContent = newText;
-          const cls = sl > 0.5 ? 'pos' : sl < -0.5 ? 'neg' : 'flat';
+          const cls = sl < -0.5 ? 'pos' : sl > 0.5 ? 'neg' : 'flat';
           pillEl.className = 'stroke-pill ' + cls;
         }
       }
@@ -12719,12 +12721,13 @@ function renderCashTableView(tableId) {
         }
       }
       if (handState && handState.folded && handState.folded[i]) seatEl.classList.add('folded');
-      // Stroke pill (HS variants only) — kept on plate as a tiny indicator.
-      // Score belongs near the player; not hidden in a popover.
+      // Golf-scorecard pill (HS variants only) — the player's running golf score
+      // at this table, in true golf convention (lower = better). Kept on the plate
+      // as a tiny indicator; the chip stack is the separate money number above.
       if (t.variant !== 'pure') {
         const sl = s.strokeLedger;
-        const cls = sl > 0.5 ? 'pos' : sl < -0.5 ? 'neg' : 'flat';
-        const pill = el('div', { class: 'stroke-pill ' + cls, style: 'margin-top:3px; font-size:9px;', text: (sl > 0 ? '+' : '') + sl.toFixed(1) + 'σ' });
+        const cls = sl < -0.5 ? 'pos' : sl > 0.5 ? 'neg' : 'flat';
+        const pill = el('div', { class: 'stroke-pill ' + cls, style: 'margin-top:3px; font-size:9px;', title: 'Golf scorecard (skill only — separate from chips, no Nectar settlement)', text: '⛳ ' + (sl > 0 ? '+' : '') + sl.toFixed(1) });
         seatEl.appendChild(pill);
       }
       // HUD pills (opponents only, not yourself).
@@ -12904,16 +12907,14 @@ function renderCashTableView(tableId) {
         text: (chipPL >= 0 ? '+' : '') + Math.round(chipPL).toLocaleString() })
     ));
     if (t.variant !== 'pure') {
-      sess.appendChild(el('div', { class: 'cash-stat', title: 'Cumulative stroke-credit banked this session (higher is better — strong showdowns bank more; a Bogey Loss banks −1).' },
-        el('div', { class: 'lbl', text: 'Stroke ledger (Σ)' }),
-        el('div', { class: 'val', style: 'color:' + (me.strokeLedger >= 0 ? '#7ED6A0' : '#F3A889') + ';',
-          text: (me.strokeLedger >= 0 ? '+' : '') + me.strokeLedger.toFixed(1) })
-      ));
-      const projected = (me.strokeLedger) * NectarState.config.nectarPerStrokePoint;
-      sess.appendChild(el('div', { class: 'cash-stat', title: 'What the stroke ledger adds to (or subtracts from) your cashout: +◈' + NectarState.config.nectarPerStrokePoint + ' per net credit.' },
-        el('div', { class: 'lbl', text: 'Ledger → ◈' }),
-        el('div', { class: 'val', style: 'color:' + (projected >= 0 ? '#7ED6A0' : '#F3A889') + ';',
-          text: (projected >= 0 ? '+' : '') + Math.round(projected) + ' ◈' })
+      // The golf scorecard — a separate per-hand skill record. True golf
+      // convention (lower = better), independent of the chips, no Nectar
+      // settlement: you wager Nectar, but your hand quality is scored on its own.
+      const sl = me.strokeLedger;
+      sess.appendChild(el('div', { class: 'cash-stat', title: 'Your golf score this session — a per-showdown skill record (winner posts own hand; ' + (t.variant === 'yj' ? 'a showdown loss posts +1 bogey under Yellow Jacket' : 'a showdown loss posts your own hand under Bumblebee') + '). Lower is better, like a real scorecard. Separate from chips — it does not convert to Nectar.' },
+        el('div', { class: 'lbl', text: 'Golf scorecard' }),
+        el('div', { class: 'val', style: 'color:' + (sl <= 0 ? '#7ED6A0' : '#F3A889') + ';',
+          text: '⛳ ' + (sl > 0 ? '+' : '') + sl.toFixed(1) })
       ));
     }
     card.appendChild(sess);
@@ -13677,13 +13678,14 @@ function runItTwiceResolve(t, h, stillIn) {
   h.log.push('--- Run It Twice ---');
   h.log.push('Run 1 board: ' + r1.board.map(c => c.rank + c.suit).join(' ') + ' — ' + t.seats[r1.winnerIdx].name + ' wins ' + Math.round(halfPot));
   h.log.push('Run 2 board: ' + r2.board.map(c => c.rank + c.suit).join(' ') + ' — ' + t.seats[r2.winnerIdx].name + ' wins ' + Math.round(halfPot));
-  // Stroke ledger: average across both boards (for HS variants).
+  // Golf scorecard, averaged across both boards (HS variants only; v69.65 — true
+  // golf convention, lower = better; see resolveCashHand's scorecard block).
   if (t.variant !== 'pure') {
     for (const idx of stillIn) {
       const ev1 = evalSevenCard(h.hole[idx].concat(r1.board));
       const ev2 = evalSevenCard(h.hole[idx].concat(r2.board));
-      const g1 = idx === r1.winnerIdx ? -cashGolfScoreFromClassName(ev1.className) : (t.variant === 'yj' ? -1 : -cashGolfScoreFromClassName(ev1.className));
-      const g2 = idx === r2.winnerIdx ? -cashGolfScoreFromClassName(ev2.className) : (t.variant === 'yj' ? -1 : -cashGolfScoreFromClassName(ev2.className));
+      const g1 = idx === r1.winnerIdx ? cashGolfScoreFromClassName(ev1.className) : (t.variant === 'yj' ? 1 : cashGolfScoreFromClassName(ev1.className));
+      const g2 = idx === r2.winnerIdx ? cashGolfScoreFromClassName(ev2.className) : (t.variant === 'yj' ? 1 : cashGolfScoreFromClassName(ev2.className));
       t.seats[idx].strokeLedger += (g1 + g2) / 2;
     }
   }
@@ -13896,14 +13898,22 @@ function resolveCashHand(t) {
   // Auto-trigger a draw if the configured interval has elapsed.
   runGoldenLotteryDraw(false);
   if (t.variant !== 'pure' && isShowdown) {
+    // v69.65 — the cash golf scorecard. A separate per-hand evaluation of skill,
+    // kept in TRUE golf convention (lower = better, exactly like the tour scorecard
+    // and the dashboard champion score) and entirely independent of the chip pot —
+    // you wager Nectar, but your hand quality is scored on its own. Each showdown
+    // participant: the pot winner posts their own hand's golf value; every other
+    // showdown player posts a fixed +1 bogey under Yellow Jacket (Bogey Loss) or
+    // their own hand class under Bumblebee (Honored Loss). Multi-way: one winnerIdx,
+    // everyone else is a loser. The scorecard does not settle to Nectar.
     for (const i of h.activeMask) {
       const ev = evalSevenCard(h.hole[i].concat(h.board));
-      const golfScore = cashGolfScoreFromClassName(ev.className);
-      let strokeForSeat;
-      if (i === winnerIdx) strokeForSeat = -golfScore;
-      else if (t.variant === 'yj') strokeForSeat = -1;
-      else strokeForSeat = -golfScore;
-      t.seats[i].strokeLedger += strokeForSeat;
+      const ownGolf = cashGolfScoreFromClassName(ev.className);
+      let golfDelta;
+      if (i === winnerIdx) golfDelta = ownGolf;
+      else if (t.variant === 'yj') golfDelta = 1;       // Bogey Loss
+      else golfDelta = ownGolf;                          // Honored Loss
+      t.seats[i].strokeLedger += golfDelta;
     }
   }
   for (const i of h.seated) t.seats[i].handsPlayed++;
@@ -14134,22 +14144,21 @@ function dealCashHand(t) {
     t.seats[winnerIdx].stack += rakedPot;
   }
 
-  // Stroke ledger update for HS variants.
+  // Golf scorecard update for HS variants (v69.65 — true golf convention, lower =
+  // better; a separate per-hand skill record, not tied to the chip pot, no Nectar
+  // settlement). Pot winner posts own hand's golf value; every other showdown
+  // player posts a fixed +1 bogey under Yellow Jacket (Bogey Loss) or their own
+  // hand class under Bumblebee (Honored Loss). Multi-way: one winnerIdx, rest lose.
   if (t.variant !== 'pure' && isShowdown) {
     for (const i of activeMask) {
       const seat = t.seats[i];
       const ev = evalSevenCard(hole[i].concat(board));
-      // Adapter: map evalSevenCard's className to the YJ golf-score table.
-      const golfScore = cashGolfScoreFromClassName(ev.className);
-      // YJ variant: loser fixed +1; winner own score. Bumblebee: both own.
-      let strokeForSeat;
-      if (i === winnerIdx) {
-        strokeForSeat = -golfScore; // negative golf score = good (under par); flip so positive = good for stroke ledger
-      } else {
-        if (t.variant === 'yj') strokeForSeat = -1; // bogey loss
-        else strokeForSeat = -golfScore; // honored loss
-      }
-      seat.strokeLedger += strokeForSeat;
+      const ownGolf = cashGolfScoreFromClassName(ev.className);
+      let golfDelta;
+      if (i === winnerIdx) golfDelta = ownGolf;
+      else if (t.variant === 'yj') golfDelta = 1;       // Bogey Loss
+      else golfDelta = ownGolf;                          // Honored Loss
+      seat.strokeLedger += golfDelta;
     }
   }
   // All seats that played a hand get hands++.
@@ -14402,9 +14411,9 @@ function cashGolfScoreFromClassName(name) {
 // hand to a stroke value AND a golf term, exactly the way a real Augusta-style
 // card reads. Lower is better (real-golf convention: −2 eagle is great,
 // +2 double-bogey is rough). Used by Spectator → Live Tournament's golf-cut
-// format, where field advancement is decided by cumulative strokes, not by
-// chip bust. The cash engine's strokeLedger uses an inverted convention for
-// its own purposes; this helper is the scorecard's source of truth.
+// format and (since v69.65) by the cash tables' golf scorecard, which now uses
+// this same true-golf convention — the cash strokeLedger is a per-hand skill
+// record, independent of the chip pot, with no Nectar settlement.
 function golfTermForStroke(s) {
   // YJ-Stroke caps the scorecard at +2 / −5, so these cover every cell.
   if (s <= -5) return 'Royal';      // Straight/Royal Flush
@@ -15346,9 +15355,9 @@ function renderCashView(gameMode) {
 
     const hint = el('div', { class: 'ui-sans', style: 'font-size:11px; opacity:0.65; margin-top:14px; line-height:1.5;' });
     if (isBB) {
-      hint.innerHTML = '<strong>Bumblebee Cash — the Tour at the cash table, gentler side.</strong> You\'re still on the Tour; you\'re just playing a cash format inside it. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker inside the Tour ecosystem). <strong>Bumblebee Stroke</strong> runs the same parallel stroke ledger as YJ Stroke, but the showdown loser banks their own hand class instead of a fixed Bogey Loss — so a flush that loses the pot still banks credit, not a debit. On the ledger higher is better, like chips: a strong showdown banks more, a weak one banks less; the σ pill on each seat is that player\'s running ledger. It settles at session end at +◈0.5 per net credit and counts toward your Tour reputation.';
+      hint.innerHTML = '<strong>Bumblebee Cash — the Tour at the cash table, gentler side.</strong> You\'re still on the Tour; you\'re just playing a cash format inside it. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker inside the Tour ecosystem). <strong>Bumblebee Stroke</strong> keeps a second, separate ledger: a <em>golf scorecard</em> scored per showdown — you wager Nectar, but your hand quality is graded on its own. Real golf convention (lower is better): the pot winner posts their own hand class (Royal/Straight Flush −5 … Full House −2 … Two Pair 0 … High Card +2); a showdown loss posts <em>your own hand class</em> (Honored Loss — so a flush that loses the pot still posts −1 birdie). It is purely a skill record — it does not convert to Nectar — and it counts toward your Tour reputation. The ⛳ pill on each seat is that player\'s running scorecard (green = under par, red = over).';
     } else {
-      hint.innerHTML = '<strong>Yellow Jacket Cash — the Tour at the cash table.</strong> You\'re still on the Tour; cash play is just a different format within it. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker inside the Tour ecosystem). <strong>YJ Stroke</strong> adds a parallel stroke ledger: every showdown banks stroke-credit by hand class — a strong hand banks more; the Bogey Loss (the showdown loser, fixed) banks −1. Higher is better, like chips; the σ pill on each seat is that player\'s running ledger. It settles at session end at +◈0.5 per net credit and counts toward your Tour reputation. Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a> (the loser banks their own hand instead of a fixed −1).';
+      hint.innerHTML = '<strong>Yellow Jacket Cash — the Tour at the cash table.</strong> You\'re still on the Tour; cash play is just a different format within it. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker inside the Tour ecosystem). <strong>YJ Stroke</strong> keeps a second, separate ledger: a <em>golf scorecard</em> scored per showdown — you wager Nectar, but your hand quality is graded on its own. Real golf convention (lower is better): the pot winner posts their own hand class (Royal/Straight Flush −5 … Full House −2 … Two Pair 0 … High Card +2); a showdown loss posts a fixed <em>+1 bogey</em> (Bogey Loss). It is purely a skill record — it does not convert to Nectar — and it counts toward your Tour reputation. The ⛳ pill on each seat is that player\'s running scorecard (green = under par, red = over). Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a> — there a showdown loss posts your own hand instead of a fixed bogey.';
     }
     lobby.appendChild(hint);
     view.appendChild(lobby);
