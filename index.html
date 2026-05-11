@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.11-v69.53.2-csv-audit-cleanup";
+const APP_VERSION = "2026.05.11-v69.58-main-final-scoring-toggle";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2712,18 +2712,20 @@ function setDecisionDivisor(n) {
   const v = +n;
   CurrentDecisionDivisor = (Number.isFinite(v) && v >= 1) ? v : 9;
 }
-// POT-ELASTIC CAP (v43) — streetCap dynamically scales with pot size, capped
-// by a global ceiling. Restores no-limit-style overbet pressure on hot pots
-// without re-importing chip-counting friction. The progressive 25/50/75/100%
-// schedule remains as a floor (small pots stay small); pot-elastic kicks in
-// when k×agreedTotal exceeds the progressive floor. Setting k=0 reverts to
-// pure legacy progressive caps. Default 3 — produces meaningful preflop play
-// (Tea Box cap = 6 vs opener=2 → 4 honey room) and dramatic late-street
-// pressure on carry-pot inflated holes (cap can reach 3× the global cap).
-let CurrentPotElasticK = 3;
+// POT-ELASTIC K (v43; v69.52 simplified; v69.53 default 5) — each betting beat's
+// cap is K × the Honey already agreed into the pot, hard-ceilinged at 3× the
+// per-hole envelope so a single hole's risk stays bounded:
+//     streetCap = min(3 × envelopeCap, ceil(K × agreedTotal))
+// (short-circuit: envelopeCap ≤ 3 → just envelopeCap.) The legacy v43
+// "progressive 25/50/75/100% per-beat unlock" floor was REMOVED in v69.52 —
+// there is no per-street percentage schedule any more; K-driven escalation
+// covers it. Setting K=0 pins the cap flat at 3× the envelope (no growth).
+// Default 5 (was 3) — pairs with the hole-envelope E=3 default so pots can
+// spiral toward the envelope ceiling only late in big hands.
+let CurrentPotElasticK = 5;
 function setPotElasticK(n) {
   const v = +n;
-  CurrentPotElasticK = (Number.isFinite(v) && v >= 0) ? v : 3;
+  CurrentPotElasticK = (Number.isFinite(v) && v >= 0) ? v : 5;
 }
 // =============================================================================
 // SCORING — Honey-Stroke is the sole, permanent scoring law for Yellow Jacket Tour.
@@ -2745,7 +2747,7 @@ const SCORING_STYLES = {
     key: 'honey-stroke',
     name: 'Honey-Stroke',
     shortName: 'Honey-Stroke',
-    desc: 'Hand category sets a bounded golf score per hole (−5..+2). Wagered strokes form a honey pot taken by the hole winner; tied holes carry the pot to the next decisive hole. Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard.',
+    desc: 'Hand category sets a bounded golf score per hole (−5..+2). Wagered strokes form a honey pot taken by the hole winner; tied holes carry the pot to the next decisive hole. At the end of each round, net honey is divided by the honey cap and subtracted from that round\'s golf scorecard — under the calibrated default the cap is 9 for an 18-hole round (36 for 72-hole finals, 4 for 9-hole bracket matches); the optional "spec" cap mode divides by the round\'s hole count instead.',
     useHoneyStroke: true,
     carryOverEnabled: true,
     honeyDivisor: 1,
@@ -5713,10 +5715,14 @@ function runFinals(p1, p2) {
 
 // Tour state
 const POOL_SIZE = 2000;
-const EVENTS_PER_SEASON = { majors: 4, regulars: 8, main: 1 };
+// v69.54 — PGA + WSOP schedule: 4 majors + 40 regular events + 1 World
+// Championship = 45 events/season, matching the real PGA Tour's count and
+// its 4-major / 1-in-10 cadence; the lone Main mirrors the WSOP Main Event
+// (and the FedEx Cup finale rolled into the same slot).
+const EVENTS_PER_SEASON = { majors: 4, regulars: 40, main: 1 };
 const MAJOR_FIELD = 256;
 const REGULAR_FIELD = 128;
-const MAIN_FIELD = 1024;
+const MAIN_FIELD = 1024;   // championship has the biggest, hardest field (WSOP-style)
 const MAJOR_EXEMPTION = 5;
 const MAJOR_NAMES = ['The Hive Invitational', 'The Nectar Open', 'The Clubhouse Classic', 'The Pollen Championship'];
 const REGULAR_PREFIX = ['Spring', 'Meadow', 'Honeydew', 'Clover', 'Thistle', 'Wildflower', 'Fairway', 'Azalea'];
@@ -6570,7 +6576,7 @@ const BuzzKnowledge = {
     { cat: 'rules', q: 'How does betting work?', a: 'Agreed-total wagering. Every hole opens at 2 honey. A "bet" or "raise" is a PROPOSAL to set a new total agreed pot size (capped by the stroke cap). A "call" is acceptance — the pot then stands at the proposed total. No summing, no doubling, no matched contributions. The pot at any moment is the LAST agreed total only.' },
     { cat: 'rules', q: 'What happens on a tied hole?', a: 'Both players score 0 (par) and the wagered-strokes pot accumulates into a carry pot for the next decisive hole. Multiple consecutive ties stack; the winner of the next decisive hole sweeps the entire accumulated carry.' },
     { cat: 'rules', q: 'What happens on a fold?', a: 'The folder takes +1 bogey on the scorecard and loses the previously agreed pot to the bettor. The bettor takes 0 par on the scorecard and gains that pot in honey. The fold penalty is the same on every betting beat — Tea Box, Lay-Up, Approach, and Putt — exactly +1 stroke.' },
-    { cat: 'rules', q: 'How many strokes can be bet per hole?', a: 'The event\'s stroke-cap controls the maximum total agreed pot per hole, partitioned across the four betting beats (25% by Tea Box, 50% by Lay-Up, 75% by Approach, 100% by Putt). v66 anchored caps to divisor 9: regular 6 (2/3 anchor), major 9 (anchor — exactly one stroke per max-pot win at 18-hole divisor), main 8 (8/9 anchor), main finals 18 (2× anchor — apex pressure). The pot-elastic multiplier (default 3) lets late-beat caps scale with the live pot when carry-over has stacked it.' },
+    { cat: 'rules', q: 'How many strokes can be bet per hole?', a: 'Per-hole risk is bounded by the hole envelope (E) — each player may wager up to E strokes\' worth of honey per hole. The per-hole pot ceiling is E × honey-cap(round length): with the default E=3 and calibrated cap that\'s 27 honey/player on 9- and 18-hole rounds, 108 on the 72-hole finals. Within that envelope, each betting beat\'s cap is the pot-elastic multiplier K (default 5) times the honey already agreed in — so the pot can escalate fast once players commit, hard-ceilinged at 3× the envelope. There is no per-street percentage unlock. (If E is set to 0, the legacy fixed per-tier caps apply instead: regular 6 / major 9 / main 8 / main finals 18.)' },
     { cat: 'rules', q: 'How do sudden-death playoffs work?', a: 'If round totals are tied after the full event length (9-hole knockouts, 18-hole later rounds, 72-hole finals), players continue one hole at a time. First to end a hole ahead wins. Up to 30 playoff holes before a fair-coin tiebreaker.' },
     { cat: 'rules', q: 'What counts as the official tournament score?', a: 'The 72-hole Grand Finals total decides the championship. Bracket-round scores accumulate into careerScore for the Career Total chart but do not affect the official champion number.' },
     { cat: 'rules', q: 'Why do strong hands matter even when bets are large?', a: 'Hands set the scorecard; bets only set the size of the side pot. To win a round you need both — a strong scorecard (negative golf scores from good hands) AND honey-pot leverage (winning the bigger pots). Pure aggression with weak hands gets you the pot but a worse golf number.' },
@@ -6598,7 +6604,7 @@ const BuzzKnowledge = {
     { cat: 'strategy', q: 'Does making the cut earn money?', a: 'Yes. Top 15% of finish positions cash. Eliminated players earn finish positions ranked by elimination round, so a player who survives R3 always finishes higher than a player eliminated R2 — and earns the corresponding higher cash prize even if the latter had a "better" cumulative score at elimination. Making the cut is structurally rewarded.' },
     { cat: 'tournament', q: 'What is the multiplayer table format?', a: 'A 6- or 9-player table variant via cfg.tableSize (HU=2 / 6 / 9). R1-R3 are played at multi-player tables with matched-contribution wagering (poker-native pot construction); R4 collapses to a heads-up final between the top 2 survivors. Multi-way calibration: per-player honey caps scale by tableSize, foldOpt slack tightens by 0.025 per extra seat (slack = 0.20 − 0.025·(N−2)) so AI fold discipline doesn\'t collapse at 9-handed, and at tableSize > 6 the mandatory opener doubles to 2 honey to compensate for thinner per-seat equity. Cushion + cut mechanics apply identically with a tighter [8, 5, 3, 2] cushion at multi-way. Bumblebee (Honored Loss) is the multi-way default because YJ Bogey Loss × 8 losers/pot drags Major champion scores well above par at 9-handed; v69.24 collapsed the mw-yj profile optima onto the mw-bb numbers (0.40 / 0.15 / 0.70) after audit-confirmed inversion (authoredVsMeasured = −0.55 in v69.23 → +0.04 in v69.24), so the variant difference now lives purely in the scoring rule, not in AI behavior.' },
     { cat: 'rules', q: 'What\'s the difference between Nectar and Honey?', a: 'Nectar is the BANKROLL currency — your USD-equivalent wallet, what you use to pay tournament buy-ins and what cash-table chips ARE 1:1. Honey is the WAGER abstraction inside a TOURNAMENT EVENT only — the per-hole pot unit that gets normalized by the round divisor and subtracted from the golf scorecard. Nectar moves between events; Honey lives and dies inside a single tour event. They never interconvert directly: you spend Nectar to enter, and inside a tour event Honey is the scoring instrument; finish position determines your Nectar payout. CASH TABLES DO NOT USE HONEY AT ALL. The YJ-Stroke and Bumblebee-Stroke cash variants borrow only the stroke half of the tour scoring law — they accumulate an integer stroke ledger (from hand class) that settles to Nectar at cashout (+$0.50 per net stroke). The "Honey-Stroke" name is the tour scoring law\'s name, not a description of the cash variants\' wager unit.' },
-    { cat: 'rules', q: 'What is the Golden Card Lottery?', a: 'A per-event lottery layer: each hand has a tiny chance of drawing a Golden Card, which awards a bonus payout drawn from a separate prize pool funded by a slice of the rake. Modeled after BB Jackpot mechanics in real cash poker rooms — provides a long-tail upside that lifts mid-tier ROI without distorting skill expression at the top.' },
+    { cat: 'rules', q: 'What is the Golden Card Lottery?', a: 'A per-event lottery layer: each hand has a tiny chance of drawing a Golden Card, which awards a bonus payout drawn from a separate prize pool funded by a small slice of the event\'s entry-fee pool (or, for cash tables, of the cash rake). Modeled after BB Jackpot mechanics in real cash poker rooms — provides a long-tail upside that lifts mid-tier ROI without distorting skill expression at the top.' },
     { cat: 'rules', q: 'What is the BB Jackpot?', a: 'A cash-table progressive jackpot: when an exceptionally rare hand-vs-hand cooler hits at a cash table (e.g. quads beaten by a higher hand, or a royal flush at showdown), the table draws from an accumulating pool funded by a small slice of every cash-table rake. Both the loser of the cooler and the winner share the jackpot; remaining seated players get smaller seed shares. Models real-card-room BB Jackpot promotions.' },
     { cat: 'tournament', q: 'What is the staking marketplace?', a: 'A peer-to-peer marketplace where players sell action in upcoming events: a backer pays a fraction of the buy-in upfront and receives that same fraction of the player\'s prize-pool earnings, typically with a markup the seller chooses (e.g. 1.2× = 20% markup). Models real-world tournament staking. Backers spread variance across multiple players; sellers get capital relief. The marketplace tracks buy-in obligations, payouts, and ROI per backer-seller pair.' },
     { cat: 'strategy', q: 'What are weekly quests and daily login streaks?', a: 'Weekly quests are deterministically-seeded objectives (Monday RNG seed) that refresh every Monday — concrete goals like "win 3 regulars this week" or "post a sub-par round" with Nectar rewards. Daily login streak grants compounding bonuses for consecutive-day visits. Both are engagement loops that don\'t affect competitive integrity — rewards are paid in Nectar (bankroll), not in any in-event scoring advantage.' },
@@ -6757,8 +6763,8 @@ Views.dashboard = function() {
         ' ',
         el('span', { class: 'ui-sans', style: 'color: var(--green); font-size: 15px;' },
           el('b', null, champ.name), ' · ',
-          el('span', { class: 'mono', title: 'Final scores are 72-hole aggregate totals. Every pot transfers zero-sum honey credits. Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard, preserving poker skill while keeping champion totals PGA-realistic.', text: formatScore(lastMajor.champScore) }),
-          el('span', { class: 'score-info-icon', title: 'Final scores are 72-hole aggregate totals. Every pot transfers zero-sum honey credits. Total net honey credits earned across the event are divided by 18 before being subtracted from the golf scorecard, preserving poker skill while keeping champion totals PGA-realistic.', style: 'margin-left: 6px; font-size: 11px; color: var(--gold); cursor: help; user-select: none;', text: ' ⓘ' })
+          el('span', { class: 'mono', title: 'Final scores are 72-hole aggregate totals. Every pot transfers zero-sum honey credits. At the end of each round, net honey is divided by the honey cap (9 for an 18-hole round under the calibrated default; 36 for the 72-hole finals) and subtracted from that round of the golf scorecard, preserving poker skill while keeping champion totals PGA-realistic.', text: formatScore(lastMajor.champScore) }),
+          el('span', { class: 'score-info-icon', title: 'Final scores are 72-hole aggregate totals. Every pot transfers zero-sum honey credits. At the end of each round, net honey is divided by the honey cap (9 for an 18-hole round under the calibrated default; 36 for the 72-hole finals) and subtracted from that round of the golf scorecard, preserving poker skill while keeping champion totals PGA-realistic.', style: 'margin-left: 6px; font-size: 11px; color: var(--gold); cursor: help; user-select: none;', text: ' ⓘ' })
         )
       ));
       leftCard.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 12px; color: var(--fairway); margin-bottom: 8px;' },
@@ -7092,9 +7098,9 @@ Views.codex = function() {
     h3('Variant — Yellow Jacket vs Bumblebee'),
     p('The two variants share every rule EXCEPT how a decisive-showdown loser is scored. This is the only difference.'),
     ul([
-      'YELLOW JACKET (competitive tour): the decisive-showdown loser posts a fixed +1 bogey regardless of hand strength. Mirrors the fold rule for any non-winning resolution. Sharper skill expression; champion scores typically +12 to +28.',
-      'BUMBLEBEE (casual league): the decisive-showdown loser scores their own hand\'s golf value (−5..+2) — flush-loser still posts −1 birdie. Preserves "your hand always counts" texture; champion scores typically −10 to −18 (golf-realistic below-par totals).',
-      'Both variants share: per-hole engine, mandatory pot (front-9 and back-9 openers), agreed-total wagering, stroke caps with progressive unlock, the uniform fold rule, tied-hole carry, the round-length divisor table, tournament formats, field selection, payout structure, and economics. Only the decisive-showdown loser score differs.',
+      'YELLOW JACKET (competitive tour): the decisive-showdown loser posts a fixed +1 bogey regardless of hand strength. Mirrors the fold rule for any non-winning resolution. Sharper skill expression; with the calibrated honey cap and the default schedule, champion totals run several strokes under par on 9- and 18-hole rounds (majors and regulars typically around −5 to −8), while the 72-hole Main runs close to par on average — swinging from a dozen strokes under to mid-teens over depending on the season.',
+      'BUMBLEBEE (casual league): the decisive-showdown loser scores their own hand\'s golf value (−5..+2) — flush-loser still posts −1 birdie. Preserves "your hand always counts" texture. Because the loser doesn\'t post a fixed bogey, champion totals run a few strokes lower than Yellow Jacket at every event length — deeper under par on 9- and 18-hole rounds, and even the Main usually finishes at or below par.',
+      'Both variants share: per-hole engine, mandatory pot (front-9 and back-9 openers), agreed-total wagering, the hole-envelope + pot-elastic-K cap model, the uniform fold rule, tied-hole carry, the round-end honey cap (calibrated stepped table by default; "spec" ÷N mode optional), tournament formats, field selection, payout structure, and economics. Only the decisive-showdown loser score differs.',
       'Variant is a design dial between "competitive sharpness" and "casual texture." Pick the one that matches your audience.',
     ])
   );
@@ -7127,8 +7133,8 @@ Views.codex = function() {
       'WEAK HANDS HAVE ASYMMETRIC DOWNSIDE PROTECTION. Folding a weak high card costs you +1 bogey. Reaching showdown with the same hand and losing also costs you +1 (Yellow Jacket) or up to +2 (Bumblebee, your own weak hand value). Folding can be the cheaper escape route — especially in Yellow Jacket, where the showdown loss already caps at +1. Skilled weak-hand play looks like: fold to large bets when the previously-agreed pot is small, call to large bets when the previously-agreed pot is already large (the saving from folding shrinks as the agreed total grows).',
       'IMPLICATION FOR AGGRESSION. Classic-poker intuition says "premium hand → bet big → opponent folds → you win the pot." In Yellow Jacket, that pattern caps your reward at the previously-agreed honey + 0 par. The richer reward path is "premium hand → bet to a level the opponent CALLS → showdown → realize -3 to -5 plus the agreed honey." Skilled players bet for value (extraction), not for fold equity (denial).',
     ]),
-    h3('Per-event stroke caps — strategic implications'),
-    p('Stroke caps and the 25/50/75/100 progressive bet-cap unlock are documented in the Rulebook ("Per-event stroke caps and progressive bet-cap unlock") with worked examples for Regular and Major caps. Strategic note: the progressive unlock means committed value bets must be staged across betting beats — you cannot reach a Major\'s 10-honey ceiling on Tea Box. This forces information-revealing escalation, which is one of the main skill levers in YJ. Watch how an opponent paces their Tea-Box / Lay-Up proposals: aggressive early proposals at the unlock ceiling signal commitment to a strong hand; passive early beats followed by a Putt-cap shove often signals a missed draw turning bluff.'),
+    h3('Per-hole risk — strategic implications'),
+    p('The hole envelope (E) and pot-elastic K are documented in the Rulebook ("Per-hole risk — the hole envelope (E) and pot-elastic K") with a worked Major-round example. Strategic note: the per-beat cap is K times the honey already in the pot (default K=5), hard-ceilinged at 3× the per-hole envelope — so it grows as the pot grows. You can\'t jump straight to a Major round\'s 81-honey ceiling on Tea Box (the cap there is ⌈5×2⌉ = 10), but a Tea-Box raise to that full beat cap is already a 5×-pot overbet — a loud commitment signal. As players pump the pot, the cap compounds, so staged value betting builds naturally. Watch the pacing: an opponent who inflates the pot early (lifting the cap fast) is committing to a hand; one who keeps it small until a late shove — now legal because the pot has grown to support it — often signals a missed draw turning bluff.'),
     h3('Tied-hole carry — strategic implications'),
     p('Tied-hole stacking math is documented in the Rulebook ("Tied holes carry forward — and stack across consecutive ties") with a three-hole worked example. Strategic implications: (1) tied holes are a free option for whoever wins the NEXT decisive hole, not for the player who built the prior pot. With suspected board-runout ties (paired boards, four-card straights/flushes on the board), a small bet that survives a tie outperforms a large bet that gets folded to — the small carry compounds; the fold loses the agreed total outright. (2) After two or more consecutive ties, the next decisive hole becomes a high-leverage spot — both players are now competing for an inflated stack, so equity edges that would normally call for moderate bets justify aggressive proposals.'),
     h3('Major qualifier path'),
@@ -7146,7 +7152,7 @@ Views.codex = function() {
 
   // ---- Economics ----
   const eco = section('4 · Tour Economics',
-    p('Yellow Jacket Inc. operates the Tour. Every direct buy-in flows into a gross pool; rake is taken off the top to fund the Tour foundation, and the remainder becomes that event\'s prize pool. Rake is tiered by event class — Regular ' + (((cfg.rakePercentRegular != null ? cfg.rakePercentRegular : 0.015) * 100).toFixed(1)) + '%, Major ' + (((cfg.rakePercentMajor != null ? cfg.rakePercentMajor : 0.020) * 100).toFixed(1)) + '%, Main ' + (((cfg.rakePercentMain != null ? cfg.rakePercentMain : 0.030) * 100).toFixed(1)) + '% — calibrated so elite skill expression produces neutral-to-positive ROI on regulars and majors while the marquee Main keeps full rake to fund the elite tier\'s career upside via sponsor purse + lottery payouts. Sponsor purses, when configured (modeled after PGA Tour broadcast money), are added on top of the player prize pool and are NOT raked.'),
+    p('Yellow Jacket Inc. operates the Tour. There is no rake — every direct buy-in flows in full into that event\'s prize pool. Entry fees per event, nothing skimmed off the top. Sponsor purses, when configured (modeled after PGA Tour broadcast money), are added on top of the entry-fee pool. Satellite winners pay nothing for their higher-tier seat — that seat is funded by the lower-tier satellite\'s player pool, not by a house cut.'),
     h3('Buy-ins by event class'),
     tbl(
       ['Event', 'Buy-in', 'Field size'],
@@ -7159,7 +7165,7 @@ Views.codex = function() {
     h3('Payout structure'),
     p('Top 15% of the field cashes (with a floor of 2 paid places and a cap of 64). Payouts decay geometrically across in-the-money finishers (default decay factor ' + (cfg.payoutDecay != null ? cfg.payoutDecay : 0.74) + ') — each successive finishing position pays the prior position multiplied by the decay factor, so the champion takes the largest single share and subsequent places taper toward the cut line.'),
     h3('Champion exemption'),
-    p('A player who wins any major receives free entry into all subsequent majors for ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years after their most recent major win. The exemption renews every time they win another major. This compounds career advantage for proven champions and is paid for by the rake on direct entries.')
+    p('A player who wins any major receives free entry into all subsequent majors for ' + (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' years after their most recent major win. The exemption renews every time they win another major. This compounds career advantage for proven champions; the exempt seat is simply waived (that player doesn\'t pay), so the event\'s prize pool is correspondingly smaller, shared among the same field.')
   );
   view.appendChild(eco);
 
@@ -7174,21 +7180,21 @@ Views.codex = function() {
 
   // ---- The Phases of a Hole ----
   const phases = section('6 · The Phases of a Hole',
-    p('Every hole has eight named beats: a state (where the ball is) followed by an action (the next bet), real-golf-order. Internal logic still uses standard poker street names; the display is themed throughout the UI. Stroke-cap unlocks at each betting beat are documented in the Rulebook ("Per-event stroke caps and progressive bet-cap unlock").'),
+    p('Every hole has eight named beats: a state (where the ball is) followed by an action (the next bet), real-golf-order. Internal logic still uses standard poker street names; the display is themed throughout the UI. The per-beat bet cap is pot-driven — it grows with the honey already in the pot, not on a fixed per-beat schedule; the rule is documented in the Rulebook ("Per-hole risk — the hole envelope (E) and pot-elastic K").'),
     tbl(
-      ['Beat', 'Type', 'Poker phase', 'What happens', 'Stroke-cap unlock'],
+      ['Beat', 'Type', 'Poker phase', 'What happens', 'Bet cap this beat'],
       [
-        ['Tea Box', 'state + action', 'Pre-flop', 'Hole cards dealt; mandatory opener already posted (2 honey on holes 1–9, ' + (2 * (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2)) + ' honey on holes 10–18 of an 18-hole round); first round of betting. (Tea Box collapses tee-up + drive into one beat — at a real tee box you tee up and immediately drive.)', '25%'],
+        ['Tea Box', 'state + action', 'Pre-flop', 'Hole cards dealt; mandatory opener already posted (2 honey on holes 1–9, ' + (2 * (cfg.backNineOpenerMultiplier != null ? cfg.backNineOpenerMultiplier : 2)) + ' honey on holes 10–18 of an 18-hole round); first round of betting. (Tea Box collapses tee-up + drive into one beat — at a real tee box you tee up and immediately drive.)', '⌈K × pot⌉, ≤ 3×envelope'],
         ['The Fairway', 'state', 'Flop deal', 'Three community cards revealed — where your tee-shot ball landed.', '—'],
-        ['The Lay-Up', 'action', 'Flop bet', 'Second-shot betting based on the Fairway position.', '50%'],
+        ['The Lay-Up', 'action', 'Flop bet', 'Second-shot betting based on the Fairway position.', '⌈K × pot⌉, ≤ 3×envelope'],
         ['The Hazard', 'state', 'Turn deal', 'Fourth community card — where your second shot landed.', '—'],
-        ['The Approach', 'action', 'Turn bet', 'Third-shot betting; the shot toward the green.', '75%'],
+        ['The Approach', 'action', 'Turn bet', 'Third-shot betting; the shot toward the green.', '⌈K × pot⌉, ≤ 3×envelope'],
         ['The Green', 'state', 'River deal', 'Fifth community card — ball is on the green.', '—'],
-        ['The Putt', 'action', 'River bet', 'Final round of betting; the last shot.', '100%'],
+        ['The Putt', 'action', 'River bet', 'Final round of betting; the last shot.', '⌈K × pot⌉, ≤ 3×envelope'],
         ['The Cup', 'resolution', 'Showdown', 'Cards revealed (only on a decisive showdown — folds never reveal cards); hole resolves; honey + scorecard credited per the variant rule (Yellow Jacket: loser +1 bogey; Bumblebee: loser scores own hand). The ball drops in the cup.', '—'],
       ]
     ),
-    p('For caps of 3 or less the progressive unlock is disabled and the full cap is available from Tea Box (a 25% step would round to <1 honey and break wagerability).')
+    p('"Envelope" = the per-hole, per-player honey ceiling, E × honey-cap(round length) — default E=3, so 27 honey on 9- and 18-hole rounds, 108 on the 72-hole finals; "K" = the pot-elastic multiplier, default 5. When the per-hole envelope is 3 or less, the cap is just that envelope from Tea Box on (no headroom to scale).')
   );
   view.appendChild(phases);
 
@@ -7260,13 +7266,14 @@ Views.codex = function() {
   );
   view.appendChild(odds);
 
-  // ---- Section 8 · Economics & Company Profitability ----
-  // Documents the full pricing table and the rake mechanics that fund the Tour.
-  // The progressive satellite ladder + 70/30 Main field split is the core
-  // anti-multi-accounting mechanism — laid out plainly so players can audit
-  // the model. Quotes the cfg buy-ins live so the docs stay in sync.
-  const econ = section('8 · Economics & Company Profitability',
-    p('Yellow Jacket Inc. funds itself through a transparent rake on every direct buy-in. Direct entries pay full price; satellite winners pay nothing for the higher-tier seat — that seat is funded by the lower-tier satellite\'s player pool. Sponsor purses (when configured) are added on top of the prize pool and are not raked.'),
+  // ---- Section 8 · Economics & the entry-fee model ----
+  // Documents the full pricing table and the entry-fee model — there is NO
+  // rake; every buy-in flows in full into a prize pool. The progressive
+  // satellite ladder + 65/35 Main field split is the core anti-multi-accounting
+  // mechanism — laid out plainly so players can audit the model. Quotes the cfg
+  // buy-ins live so the docs stay in sync.
+  const econ = section('8 · Economics & the entry-fee model',
+    p('Yellow Jacket Inc. operates the Tour with no rake. Every direct buy-in flows in full into that event\'s prize pool — entry fees per event, nothing skimmed. Satellite winners pay nothing for their higher-tier seat — that seat is funded by the lower-tier satellite\'s player pool, not by a house cut. Sponsor purses (when configured) are added on top of the entry-fee pool.'),
     h3('Pricing Table'),
     tbl(
       ['Event Tier', 'Direct Buy-in', 'Satellite Tier(s)', 'Field Size'],
@@ -7276,22 +7283,22 @@ Views.codex = function() {
         ['Main Event', fmtMoney(cfg.buyInMain    || 10000), (Array.isArray(cfg.satelliteTierMain) ? cfg.satelliteTierMain.map(fmtMoney).join(' → ') : '$500 → $1,500 → $4,000 → $5,000') + ' (Tier 3 ladder)', fmtNum(cfg.mainField || 128)],
       ]
     ),
-    h3('Rake Mechanics'),
-    p('Rake is tiered by event class — Regular ' + (((cfg.rakePercentRegular != null ? cfg.rakePercentRegular : 0.015) * 100).toFixed(1)) + '%, Major ' + (((cfg.rakePercentMajor != null ? cfg.rakePercentMajor : 0.020) * 100).toFixed(1)) + '%, Main ' + (((cfg.rakePercentMain != null ? cfg.rakePercentMain : 0.030) * 100).toFixed(1)) + '% — taken off every direct buy-in into that tier. The satellite ladder generates additional rake at every tier: a player who climbs from Tier 1 → Tier 2 → Tier 3 → Main has paid into multiple separate rake events, so the Tour collects more total revenue from satellite climbers than from a single direct buy-in of equivalent face value. This is the intentional design — the ladder funds the Tour foundation while keeping the headline Main buy-in accessible to anyone who plays the qualifier path.'),
+    h3('Entry-fee model — no rake'),
+    p('There is no rake at any tier. A direct buy-in flows entirely into that event\'s prize pool. The satellite ladder costs a climber several smaller buy-ins — each of those goes into that satellite\'s own prize pool, and the higher-tier seat the climber earns is paid for out of the satellite\'s player pool, not by any house cut. The ladder keeps the headline Main buy-in accessible to anyone willing to grind the qualifier path; the Tour takes nothing off the top anywhere in the chain.'),
     h3('Main Event Field Composition'),
     p('The Main field (default ' + fmtNum(cfg.mainField || 128) + ' seats) is composed ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65)) * 100).toFixed(0) + '% via the satellite ladder and ' + ((cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65) * 100).toFixed(0) + '% via direct entry. Direct seats prioritize champion exemptions (past Main winners within the ' + (cfg.exemptionYears || 3) + '-year window) and then top season-points players. Satellite seats prioritize current-year major qualifiers (top ' + fmtNum(cfg.mainQualifiersPerMajor || 28) + ' from each major), then active cashers across regulars and majors. Any remaining seats fill from open random buy-in.'),
     h3('Progressive Satellite Requirement'),
     p('A player must cash in a lower-tier event to unlock the next satellite tier. In the offline simulator this is implemented through the existing event types: cashing in regulars during the season counts as Tier-1 progression; cashing in majors counts as Tier-2/3 progression; the mainQualifierUntil flag (top finishers of this year\'s majors) is the top gate. The satellite priority order is: major qualifiers → active cashers → open entry.'),
-    h3('Why This Maximizes Rake While Keeping the Game Fair'),
+    h3('Why the entry-fee model keeps the Tour fair'),
     ul([
       'Direct buy-ins are accessible: a player who wants to bypass the ladder can pay the headline price and play, no questions asked.',
-      'Satellite climbers pay multiple rakes across the ladder, so the Tour\'s revenue per Main seat is higher when the seat was earned through the ladder.',
+      'No rake anywhere — every buy-in, at every tier, becomes prize money; a satellite climber\'s several smaller buy-ins all fund prize pools (theirs, and the seat they earn). Players never pay a house cut.',
       'Top performers (champion exemptions, top season-points players) get direct-entry priority — the Tour rewards prestige rather than monopolizing every seat for the highest bidders.',
       'The progressive requirement forces a fresh account to cash repeatedly before reaching the Main, paying buy-ins along the way. This makes multi-accounting (Sybil patterns) economically unprofitable: the cost of fielding a fake identity exceeds the expected return from a single deep run.',
-      'Sponsor purses, when added, are not raked — the Tour gives broadcast money straight to the prize pool, so the more sponsors a season attracts, the better the player ROI.',
+      'Sponsor purses go straight to the prize pool — the more sponsors a season attracts, the better player ROI.',
     ]),
     h3('Tour Foundation Ledger'),
-    p('Every event the simulator runs contributes to the Foundation Ledger — the career-cumulative tally of total revenue collected, total prize pool paid, ITM rate across all events, and ROI by skill tier. The ledger lives on the Simulator results page and updates in real time as new runs are saved.')
+    p('Every event the simulator runs contributes to the Foundation Ledger — the career-cumulative tally of total entry fees collected, total prize pool paid, ITM rate across all events, and ROI by skill tier. With no rake, entry fees collected and prize pool paid are equal (plus any sponsor purse on the prize side); the foundation\'s own revenue from events is zero. The ledger lives on the Simulator results page and updates in real time as new runs are saved.')
   );
   view.appendChild(econ);
 
@@ -7597,17 +7604,18 @@ function newHoleState(dealer, carryPot) {
   };
 }
 
-// Compute the maximum agreed-total a player may propose this street, applying
-// the progressive 25/50/75/100% street unlock to the per-event stroke cap. For
-// caps ≤ 3, the full cap is available from preflop (no headroom to split).
+// Compute the maximum agreed-total a player may propose this street. Routes
+// through streetCapFor (v69.52: cap = min(3 × envelopeCap, ceil(K × agreedTotal)),
+// short-circuit at envelopeCap ≤ 3) — no per-street percentage unlock.
 function mpStreetCap(g, street) {
   const totalCap = g.strokeCap || CurrentStrokeCap || 3;
   return streetCapFor(street, totalCap);
 }
 
-// Display total = golfTotal − honeyTotal / divisor. The divisor matches the
-// simulator's playMatch / the rulebook: 72 for 72-hole rounds, 18 for 18-hole,
-// 9 for 9-hole, 1 for 1-hole quick matches.
+// Display total = golfTotal − honeyTotal / honeyCap. The honey cap matches the
+// simulator (honeyDivisorFor, which honours CurrentHoneyCapMode): under the
+// 'calibrated' default that's 36 for 72-hole rounds, 9 for 18-hole, 4 for
+// 9-hole, 1 for single-hole; under 'spec' it's just the hole count N.
 function mpRecomputeTotals(g) {
   const div = honeyDivisorFor(g.totalHoles) || 1;
   g.p1.total = g.p1.golfTotal - g.p1.honeyTotal / div;
@@ -7761,10 +7769,19 @@ Views.rules = function() {
   cfgStrip.appendChild(snap('Main field',  (cfg.mainField  != null ? cfg.mainField  : 128),  'players per main'));
   cfgStrip.appendChild(snap('Exemption', (cfg.exemptionYears != null ? cfg.exemptionYears : 3) + ' yrs', 'past champs play free'));
   cfgStrip.appendChild(snap('Season schedule', (cfg.majors != null ? cfg.majors : 4) + ' / ' + (cfg.regulars != null ? cfg.regulars : 25) + ' / ' + (cfg.mains != null ? cfg.mains : 1), 'majors · regulars · main'));
-  const rakeReg = ((cfg.rakePercentRegular != null ? cfg.rakePercentRegular : 0.015) * 100).toFixed(1);
-  const rakeMaj = ((cfg.rakePercentMajor   != null ? cfg.rakePercentMajor   : 0.020) * 100).toFixed(1);
-  const rakeMn  = ((cfg.rakePercentMain    != null ? cfg.rakePercentMain    : 0.030) * 100).toFixed(1);
-  cfgStrip.appendChild(snap('Rake (R / M / Main)', rakeReg + '% / ' + rakeMaj + '% / ' + rakeMn + '%', 'tiered house take · direct buy-ins only'));
+  const rakeMaxPct = Math.max(
+    (cfg.rakePercentRegular != null ? cfg.rakePercentRegular : 0),
+    (cfg.rakePercentMajor   != null ? cfg.rakePercentMajor   : 0),
+    (cfg.rakePercentMain    != null ? cfg.rakePercentMain    : 0),
+    (cfg.rakePercent        != null ? cfg.rakePercent        : 0)
+  );
+  cfgStrip.appendChild(rakeMaxPct > 0
+    ? snap('Rake (R / M / Main)',
+        ((cfg.rakePercentRegular != null ? cfg.rakePercentRegular : 0) * 100).toFixed(1) + '% / ' +
+        ((cfg.rakePercentMajor   != null ? cfg.rakePercentMajor   : 0) * 100).toFixed(1) + '% / ' +
+        ((cfg.rakePercentMain    != null ? cfg.rakePercentMain    : 0) * 100).toFixed(1) + '%',
+        'house take on direct buy-ins')
+    : snap('Rake', 'none', 'no house take — full entry-fee pool to prizes'));
   liveCard.appendChild(cfgStrip);
   view.appendChild(liveCard);
 
@@ -7825,9 +7842,9 @@ Views.rules = function() {
   ));
   core.appendChild(rule('Bankroll, buy-ins, and prize flow — cash architecture outside the event',
     'BANKROLL. A player\'s bankroll is their personal pool of cash (or branded YJ credit) used to fund event buy-ins. The bankroll lives entirely outside any individual event — it grows when the player cashes; it shrinks when buy-ins are paid. Bankroll persists across the entire career. ' +
-    'BUY-IN. Each event has a fixed cash buy-in: Regular ' + fmtMoney(cfg.buyInRegular || 100) + ', Major ' + fmtMoney(cfg.buyInMajor || 1000) + ', Main ' + fmtMoney(cfg.buyInMain || 10000) + ' at v59 defaults. Buy-ins are paid from bankroll at registration. The buy-in flows into the event\'s gross prize pool minus rake (' + (((cfg.rakePercent || 0.03) * 100).toFixed(1)) + '% by default). Champion exemptions and satellite qualifiers may waive the cash buy-in but still seat a player in the event. ' +
+    'BUY-IN. Each event has a fixed cash buy-in: Regular ' + fmtMoney(cfg.buyInRegular || 100) + ', Major ' + fmtMoney(cfg.buyInMajor || 1000) + ', Main ' + fmtMoney(cfg.buyInMain || 10000) + ' at v59 defaults. Buy-ins are paid from bankroll at registration. The buy-in flows in full into the event\'s prize pool — there is no rake on tour events — and any configured sponsor purse is added on top. Champion exemptions and satellite qualifiers may waive the cash buy-in but still seat a player in the event. ' +
     'IN-EVENT PLAY. Once seated, the player plays the event in honey only. No cash changes hands during play. Honey wagering across all holes is purely zero-sum within the event. Players are NOT eliminated by running out of any in-game resource — eliminations happen at structural cut-line and match-loss boundaries (36-hole cut, 54-hole cut, bracket match loss). ' +
-    'PRIZE PAYOUT. Top 15% of the field cashes (floor 2, cap 64). Each finishing position earns a fixed share of the post-rake prize pool, decaying geometrically across positions (default decay factor ' + (cfg.payoutDecay || 0.74) + '). Cash prize lands in bankroll at event end. Honey ledger has no role in determining cash payout — only the finish position derived from final round score matters. ' +
+    'PRIZE PAYOUT. Top 15% of the field cashes (floor 2, cap 64). Each finishing position earns a fixed share of the prize pool — which, with no rake, is the full entry-fee pool plus any sponsor purse — decaying geometrically across positions (default decay factor ' + (cfg.payoutDecay || 0.74) + '). Cash prize lands in bankroll at event end. Honey ledger has no role in determining cash payout — only the finish position derived from final round score matters. ' +
     'WHY THE CASH LAYER MIRRORS WSOP. WSOP\'s cash architecture (buy-in funds prize pool, finish position determines payout) is identical to YJ\'s. Where YJ differs is in what happens DURING the event: WSOP uses chip stacks that can deplete to zero (bust-out); YJ uses per-hole wager units (honey) and structural cuts (golf-native elimination). The CASH loop is preserved; the in-event wagering primitive differs.'
   ));
   core.appendChild(rule('Per-round score — two ledgers, one normalization at round end',
@@ -7896,7 +7913,7 @@ Views.rules = function() {
     'POT — pot grows 100% to 200% (full pot commitment, "I\'m engaged"); ' +
     'POLARIZE — pot grows more than 200% but stays under the street cap (nuts-or-bluff polarization); ' +
     'SHOVE — proposal at or near the street\'s ceiling (final commitment, no further escalation legal). ' +
-    'AVAILABLE TIERS BY BETTING BEAT. The cap unlock structure (25/50/75/100% of the per-event cap by Tea Box / Lay-Up / Approach / Putt) determines which tiers are LEGAL at each beat: Tea Box typically only allows Probe and Press; Lay-Up opens Pot; Approach opens Polarize; Putt opens Shove. Each beat unlocks a new tier — that\'s the escalation primitive. The decision space genuinely expands as the hand develops, exactly as in poker where 4-bet wars only happen when stacks are deep. ' +
+    'WHICH TIERS ARE AVAILABLE. The legal tiers at any beat are set by the pot-elastic street cap (K × the honey already agreed in, hard-ceilinged at 3× the per-hole envelope) — not by a fixed per-beat schedule. On Tea Box the pot is just the 2-honey opener, so the cap is small and only Probe / Press fit; as players commit and the pot grows, K-driven escalation widens the cap and Pot, then Polarize, then Shove come into reach. The decision space genuinely expands as the hand develops — exactly as in poker, where 4-bet wars only happen once the pot is deep enough to support them. ' +
     'WHY THIS DELIVERS DIVERSITY. Five named categories with structurally distinct strategic meanings is the same depth WSOP delivers (the min-raise / 2.5× / 3-bet / 4-bet / shove ladder). Players reason in tier-language ("Polarize the Putt," "Probe the Approach"), commentators narrate in tier-language, AI decision profiles can be tier-conditioned (a "polarizing player" persona, a "probe-heavy player" persona). The integer honey amounts remain — they\'re just labels for what\'s happening at the strategic layer. ' +
     'NOT A NEW UNIT. Honey is still the per-hole wager unit. Tiers are a CLASSIFICATION on top of honey amounts — every honey wager fits exactly one tier based on its pot-fraction. Implemented via the betTierForProposal() helper.'
   ));
@@ -7915,9 +7932,9 @@ Views.rules = function() {
   ));
   core.appendChild(rule('Game variants — Yellow Jacket vs Bumblebee',
     'The game ships as two variants that share every rule except how a decisive-showdown loser is scored. ' +
-    'YELLOW JACKET (competitive tour). The loser at a decisive showdown posts a fixed +1 bogey regardless of hand strength. The fold rule and the loser rule are identical, so any non-winning resolution costs exactly one stroke. Skill expression is sharper; champion scores typically land in the +12 to +28 range. ' +
-    'BUMBLEBEE (casual league). The loser at a decisive showdown scores their own hand\'s golf value (range −5..+2) — a flush-loser still records −1 birdie. The "your hand always counts" texture is preserved; champion scores typically land in the −10 to −18 range, golf-realistic below-par totals. ' +
-    'BOTH share: the per-hole engine, the mandatory openers, agreed-total wagering, per-event stroke caps with progressive unlock, the fold rule, tied-hole carry, the round-length divisor table, tournament formats, field selection, payout structure, and economics. Folds and ties are not affected by the variant choice — only the decisive-showdown loser score differs.'
+    'YELLOW JACKET (competitive tour). The loser at a decisive showdown posts a fixed +1 bogey regardless of hand strength. The fold rule and the loser rule are identical, so any non-winning resolution costs exactly one stroke. Skill expression is sharper. Under the calibrated honey cap and the default schedule, champion totals run several strokes under par on 9- and 18-hole rounds (majors and regulars typically around −5 to −8); the 72-hole Main runs close to par on average, swinging from a dozen strokes under to mid-teens over season to season. ' +
+    'BUMBLEBEE (casual league). The loser at a decisive showdown scores their own hand\'s golf value (range −5..+2) — a flush-loser still records −1 birdie. The "your hand always counts" texture is preserved. With no fixed bogey on a loss, champion totals run a few strokes lower than Yellow Jacket at every event length — deeper under par on 9- and 18-hole rounds, and the Main usually finishes at or below par. ' +
+    'BOTH share: the per-hole engine, the mandatory openers, agreed-total wagering, the hole-envelope + pot-elastic-K cap model, the fold rule, tied-hole carry, the round-end honey cap (calibrated stepped table by default; optional "spec" ÷N mode), tournament formats, field selection, payout structure, and economics. Folds and ties are not affected by the variant choice — only the decisive-showdown loser score differs.'
   ));
   core.appendChild(rule('Folds — uniform on every betting beat',
     'The fold rule is the same on Tea Box, Lay-Up, Approach, and Putt: the folder posts +1 (bogey) on the scorecard and gains 0 honey. The non-folder posts 0 (par) on the scorecard and takes the PREVIOUSLY AGREED pot (the level both players had already accepted before the proposal that triggered the fold) as a honey credit. Example: pot is agreed at 5. Opponent raises to 8. You fold. You post +1 bogey. Opponent posts 0 par and gains 5 honey. The unaccepted proposal of 8 is moot — only the prior agreed total transfers. There is no beat-based penalty table; what makes late-beat folds more valuable in practice is that the previously agreed pot has had more chances to climb.'
@@ -7928,13 +7945,13 @@ Views.rules = function() {
     'STRATEGIC CONSEQUENCE FOR WEAK HANDS: folding a weak hand costs +1 bogey but caps your honey loss at the PREVIOUSLY agreed pot (not the new proposal). Reaching showdown and losing also costs +1 in Yellow Jacket (or up to +2 in Bumblebee), but loses the LARGER agreed honey. Folding can be the cheaper escape, especially when the previously-agreed pot is small. ' +
     'BOTTOM LINE: in Yellow Jacket, bet for value (extraction), not for fold equity (denial). Classic-poker pressure plays under-reward you here.'
   ));
-  core.appendChild(rule('Per-event stroke caps and progressive bet-cap unlock',
-    'STROKE CAP. Each event sets a maximum agreed pot size for any single hole — the stroke cap. v66 defaults, anchored to the divisor 9: Regular ' + (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6) + ' honey, Major ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 9) + ' honey (= divisor → 1 stroke per max pot), Main early rounds ' + (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 8) + ' honey, Main 72-hole finals ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 18) + ' honey (= 2× anchor → apex drama tier). ' +
-    'PROGRESSIVE UNLOCK. Within each hole the cap unlocks across the four betting beats: 25% available by Tea Box (preflop), 50% by Lay-Up (flop bet), 75% by Approach (turn bet), 100% by Putt (river bet). Integer rounding via ceil. ' +
-    'WORKED EXAMPLE — Major (cap 9). Tea Box: max agreed total 3 (25% of 9 = 2.25, ceil to 3). Lay-Up: max 5 (50% = 4.5, ceil to 5). Approach: max 7. Putt: max 9. So an early-beat raise to 8 is illegal on Tea Box but legal on Approach. ' +
-    'WORKED EXAMPLE — Main finals (cap 18). Tea Box: max 5. Lay-Up: max 9. Approach: max 14. Putt: max 18 = 2 strokes per max pot. ' +
-    'SHORT-CAP EXEMPTION. For caps of 3 or less the progressive unlock is disabled and the full cap is available from Tea Box (a 25% unlock would round to <1 honey and break wagerability). ' +
-    'WHY IT EXISTS. Forcing pot escalation across betting beats mirrors real no-limit Hold\'em — players have to commit to escalation in stages, which surfaces information about hand strength along the way. A single-cap free-for-all on Tea Box would collapse all betting decisions into one beat.'
+  core.appendChild(rule('Per-hole risk — the hole envelope (E) and pot-elastic K',
+    'HOLE ENVELOPE (E). Each player may wager up to E strokes\' worth of honey per hole. The per-hole pot ceiling is E × honey-cap(round length). Default E = ' + (cfg.holeEnvelopeStrokes != null ? cfg.holeEnvelopeStrokes : 3) + ': under the calibrated honey cap that is 27 honey per player on 9- and 18-hole rounds and 108 on the 72-hole Main finals. ' +
+    'POT-ELASTIC K. Within the envelope, each betting beat\'s cap is K times the honey already agreed into the pot, hard-ceilinged at 3× the per-hole envelope: streetCap = min(3 × envelope, ceil(K × agreedTotal)). Default K = ' + (cfg.potElasticK != null ? cfg.potElasticK : 5) + '. There is no per-street percentage unlock — escalation is pot-driven, not schedule-driven. ' +
+    'WORKED EXAMPLE — Major round (E=3, calibrated → envelope 27, ceiling 81). Tea Box opener 2 → cap = ⌈5×2⌉ = 10. Lay-Up with 8 agreed → cap = ⌈5×8⌉ = 40. Approach with 24 agreed → ⌈5×24⌉ = 120, clamped to the 81 ceiling. Putt → 81. The pot stays small until players commit, then can spiral toward the ceiling within a single hand. ' +
+    'LEGACY MODE (E = 0). With the hole envelope disabled, the old fixed per-tier caps apply instead — Regular ' + (cfg.regularStrokeCap != null ? cfg.regularStrokeCap : 6) + ' / Major ' + (cfg.majorStrokeCap != null ? cfg.majorStrokeCap : 9) + ' / Main early ' + (cfg.mainStrokeCap != null ? cfg.mainStrokeCap : 8) + ' / Main 72-hole finals ' + (cfg.mainFinalsStrokeCap != null ? cfg.mainFinalsStrokeCap : 18) + ' honey — still with K-driven escalation and no per-street unlock. ' +
+    'SHORT-CAP RULE. When the per-hole envelope is 3 or less, the cap is just that envelope from Tea Box on (no headroom to scale). ' +
+    'WHY IT EXISTS. K is the pot\'s "acceleration"; the envelope is its "speed limit." Together they make a hole expensive without ever letting a single hand bust a bankroll — poker-style escalation pressure, bounded so the golf scorecard stays the dominant signal.'
   ));
   core.appendChild(rule('AI decision logic — pure Honey-Stroke EV',
     'AI opponents evaluate each decision in Honey-Stroke EV, not in classic poker pot odds. On every street they estimate their adjusted equity, compare expected value across every available action, and pick the highest-EV move — perturbed by player-specific decision noise. Lower-skill profiles inject more randomness; elites act closer to optimal. ' +
@@ -7982,7 +7999,7 @@ Views.rules = function() {
     'Direct buy-ins: Regular ' + fmtMoney(cfg.buyInRegular || 100) + ', Major ' + fmtMoney(cfg.buyInMajor || 1000) + ', Main ' + fmtMoney(cfg.buyInMain || 10000) + '. Satellite ladder: Regular tier ' + fmtMoney(cfg.satelliteTierRegular || 15) + ', Major tier ' + fmtMoney(cfg.satelliteTierMajor || 150) + ', Main tier ladder ' + (Array.isArray(cfg.satelliteTierMain) ? cfg.satelliteTierMain.map(fmtMoney).join(' → ') : '$500 → $1,500 → $4,000') + '. Progressive requirement: a player must cash in a lower-tier event to unlock the next satellite tier. The Main Event field is composed ' + ((1 - (cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65)) * 100).toFixed(0) + '% via the satellite ladder (qualifiers + active cashers) and ' + ((cfg.mainDirectEntryShare != null ? cfg.mainDirectEntryShare : 0.65) * 100).toFixed(0) + '% direct entry (champion exemptions first, then top season-points players). The progressive lock makes Sybil-pattern multi-accounting unprofitable: a fresh account starting at the bottom must cash repeatedly across regulars and majors to reach the Main, paying multiple buy-ins along the way — so the cost of fielding a fake account exceeds the expected return from a single deep run.'
   ));
   core.appendChild(rule('Yellow Jacket Inc. economics',
-    'grossPool = Σ direct buy-ins per event. revenue = grossPool × tierRake — tiered by event class: Regular ' + (((cfg.rakePercentRegular != null ? cfg.rakePercentRegular : 0.015) * 100).toFixed(1)) + '%, Major ' + (((cfg.rakePercentMajor != null ? cfg.rakePercentMajor : 0.020) * 100).toFixed(1)) + '%, Main ' + (((cfg.rakePercentMain != null ? cfg.rakePercentMain : 0.030) * 100).toFixed(1)) + '%. (The legacy flat cfg.rakePercent of ' + (((cfg.rakePercent != null ? cfg.rakePercent : 0.03) * 100).toFixed(1)) + '% is retained as a fallback for cash tables and pre-v69.8 configs.) prizePool = grossPool − revenue + sponsorPurse. Sponsor purses (when configured per event) ride on top of player money — modeled after PGA Tour broadcast/sponsor money — and are NOT raked. Payouts go to the top 15% of the field (with a floor of 2 paid places and a cap of 64), decaying geometrically across positions with default decay factor ' + (cfg.payoutDecay != null ? cfg.payoutDecay : 0.74) + ' (each successive ITM position pays the prior position × the decay factor). Satellite winners do not contribute to the gross pool of the higher-tier event — their seats are already paid for by the lower-tier satellite\'s player pool.'
+    'grossPool = Σ direct buy-ins per event. There is NO RAKE on tour events at any tier — revenue from events is 0 — so the full entry-fee pool flows straight into the prize pool: prizePool = grossPool + sponsorPurse. Sponsor purses (when configured per event) ride on top of player money — modeled after PGA Tour broadcast/sponsor money — and are likewise paid out in full. (The cfg.rakePercent* knobs remain in the config for experiments but default to 0 for tour events; cash-table rake is a separate mechanic and is unaffected.) Payouts go to the top 15% of the field (with a floor of 2 paid places and a cap of 64), decaying geometrically across positions with default decay factor ' + (cfg.payoutDecay != null ? cfg.payoutDecay : 0.74) + ' (each successive ITM position pays the prior position × the decay factor). Satellite winners do not contribute to the gross pool of the higher-tier event — their seats are already paid for by the lower-tier satellite\'s player pool.'
   ));
   view.appendChild(core);
 
@@ -8489,7 +8506,7 @@ function renderGameTable(g) {
   //   Pot: the level both players have already accepted.
   //   Proposed: the level a pending bet/raise is asking the other player to
   //             accept (only shown when there's a live proposal).
-  //   Cap: the per-street stroke cap currently in effect (after progressive unlock).
+  //   Cap: the pot-elastic street cap currently in effect (⌈K × pot⌉, ≤ 3× the per-hole envelope).
   const streetCap = mpStreetCap(g, c.street);
   const potWrap = el('div', { style: 'text-align: center;' });
   const potRow = el('div', { class: 'pot-info' },
@@ -8621,7 +8638,7 @@ function mpAct(g, action, amount) {
     //   - amount IS the proposed new agreed total (NOT an additive increment).
     //   - Must strictly exceed the current floor: agreedTotal for a bet,
     //     currentProposal for a raise.
-    //   - Capped by the per-street stroke cap (progressive 25/50/75/100%).
+    //   - Capped by the pot-elastic street cap (⌈K × agreedTotal⌉, ≤ 3× the per-hole envelope).
     const cap = mpStreetCap(g, c.street);
     const floor = pending ? c.currentProposal : c.agreedTotal;
     const proposed = +amount | 0;
@@ -14408,8 +14425,8 @@ function runEconomyStressTest(outEl) {
   const avgPotByStake = 80;
   const projectedRake = seatedAI * handsPerDayPerSeat * days * Math.min(avgPotByStake * NectarState.config.rakeStructurePct, NectarState.config.rakeCapPerHand);
   const projectedPromo = 365 * 50; // user claims daily 50
-  const projectedBuyins = (LabState?.config?.regulars || 25) * 365 * (LabState?.config?.regularField || 256) * (LabState?.config?.buyInRegular || 100);
-  const projectedPayouts = projectedBuyins * 0.97; // after rake
+  const projectedBuyins = (LabState?.config?.regulars || 40) * 365 * (LabState?.config?.regularField || 512) * (LabState?.config?.buyInRegular || 100);
+  const projectedPayouts = projectedBuyins; // tour events take no rake — full entry-fee pool pays out
   const projectedBBJackpotDrop = seatedAI * handsPerDayPerSeat * days * NectarState.config.badBeatDropPerHand;
   // Inflation = (sources - sinks) / circulating.
   const m = nectarMacroSnapshot();
@@ -17161,10 +17178,12 @@ function replayIconicHand(hand) {
   // meaningless astronomical numbers (122,222 strokes). WSOP chips are
   // not YJ honey. The correct mapping projects the WSOP hand onto the
   // YJ Main Event tournament structure:
-  //   • Cap honey pot at the YJ Main Event finals stroke cap (18 honey)
-  //   • Divide by 72-hole final divisor (36) → max ±0.5 strokes per hand
-  //   • The hand's AGGRESSION ratio (pot/initial-pot) maps to a tier
-  //     within the YJ stroke-cap progressive unlock (25/50/75/100%)
+  //   • Cap the projected honey pot at the YJ Main Event finals legacy
+  //     per-tier cap (18 honey) — a deliberately tight projection so a
+  //     single replayed WSOP hand can't dominate a 72-hole event score
+  //   • Divide by the 72-hole final honey cap (36) → max ±0.5 strokes per hand
+  //   • The hand's AGGRESSION ratio (pot/initial-pot) maps onto a bet tier
+  //     (Probe / Press / Pot / Polarize / Shove)
   // This is what the YJ rules actually do — bound contribution per hand
   // so no single hand can dominate a 72-hole event score.
   const initialPot = (h.blinds && h.blinds.sb || 0) + (h.blinds && h.blinds.bb || 0)
@@ -20397,23 +20416,30 @@ const DEFAULT_SIM_CONFIG = {
   // v49 seasons bumped 30 → 100 for skill-edge accumulation (Approach 3).
   // Per-hand skill edge in heads-up Hold'em is small (1-3%); compounding it
   // into observable rank correlation requires sample sizes in the thousands
-  // of events. 100 seasons × 30 events = 3,000 events per run, ~30k decisions
-  // per metric, ~2-4 minute runtime — sufficient signal for elite-dominance
-  // and skillSpearman to stabilize without making sims painful.
+  // of events. v69.54 PGA+WSOP schedule: 100 seasons × 45 events = 4,500
+  // events per run, ~45k decisions per metric, ~4-6 minute runtime — enough
+  // signal for elite-dominance and skillSpearman to stabilize.
   poolSize: 1000, seasons: 100,
-  majors: 4, regulars: 25, mains: 1,
-  // v47 field sizes — quarter of Tour-Standard for ~16× faster sims:
+  // v69.54 — PGA + WSOP schedule. 4 majors (the four classics ⊕ poker's
+  // marquee bracelets) + 40 regular tour events + 1 World Championship.
+  // 45 events/season is the real PGA Tour count; the 4-major / 1-in-10 ratio
+  // is the textbook golf cadence and keeps a major title rare enough to mean
+  // something (12/season inflated repeat-major-winner clustering badly).
+  majors: 4, regulars: 40, mains: 1,
+  // Field sizes — fractions of Tour-Standard for fast sims, but ordered so the
+  // Main is the biggest, hardest field (WSOP-style championship):
   //   Major: 256 — competitive prestige (top quartile of pool faces each other)
   //   Regular: 512 — open grind (half pool, weekly accessibility)
-  //   Main: 128 — annual championship (Players-Championship invitational scale)
-  majorField: 256, regularField: 512, mainField: 128,
+  //   Main: 768 — World Championship (most of the tour shows up; biggest field
+  //     on the calendar; capped under poolSize=1000)
+  majorField: 256, regularField: 512, mainField: 768,
   exemptionYears: 3,
-  // v55: mainQualifiersPerMajor reduced from 64 → 28 to align with smaller
-  // satellite seat count. With mainField=128 and mainDirectEntryShare=0.65,
-  // there are ~45 satellite seats per main. 4 majors × 28 = 112 qualifier
-  // paths feeding 45 seats = ~2.5× over-supply (healthy, lets best
-  // qualifiers compete for limited seats).
-  mainQualifiersPerMajor: 28,
+  // mainQualifiersPerMajor — top-N finishers in each major earn a Main berth
+  // credential. v69.54: 64 (restores the pre-v55 value, scaled to the bigger
+  // Main field). With mainField=768 and mainDirectEntryShare=0.65 there are
+  // ~269 qualifier seats; 4 majors × 64 = 256 credentials ≈ 1:1 — a major
+  // top-64 finish is a reliable championship path (the FedEx-Cup-points logic).
+  mainQualifiersPerMajor: 64,
   // TOURNAMENT FORMAT — switches between two structurally different event types:
   //   'aggregate' (default, PGA Masters feel): regulars and majors play 4 rounds
   //     × 18 holes = 72 holes total, with rotating-partner pairings each round.
@@ -20508,14 +20534,17 @@ const DEFAULT_SIM_CONFIG = {
   // rule except decisive-showdown loser scoring.
   //   'yellowjacket' (default, COMPETITIVE):  loserBogey = true.
   //          Decisive-showdown losers post a fixed +1 bogey. Mirrors the
-  //          fold rule for any non-winning resolution. Sharper per-event
-  //          skill differentiation; champions score in the +12 to +28
-  //          range. The canonical Yellow Jacket Tour scoring law.
+  //          fold rule for any non-winning resolution. Sharper skill
+  //          expression. Under the calibrated honey cap + the v69.54
+  //          schedule, champion totals run ~5–8 strokes under par on 9-
+  //          and 18-hole rounds and ~par (±~dozen, season-dependent) on
+  //          the 72-hole Main. The canonical Yellow Jacket Tour scoring law.
   //   'bumblebee' (CASUAL):                    loserBogey = false.
   //          Decisive-showdown losers score their own hand's golf value
   //          (-5..+2). Preserves the "your hand always counts even when
   //          you lose" texture; a flush-loser still posts -1 birdie.
-  //          Champions score in the -10 to -18 range (golf-realistic).
+  //          With no fixed bogey on a loss, champion totals run a few
+  //          strokes lower than yellowjacket at every event length.
   //          The casual / social Bumblebee League scoring law.
   // gameVariant is the user-facing handle; loserBogey is the underlying
   // mechanical flag. Setting gameVariant resolves loserBogey automatically
@@ -20525,6 +20554,21 @@ const DEFAULT_SIM_CONFIG = {
   // players still score 0 par on a tie, folder still posts +1 bogey.
   gameVariant: 'yellowjacket',
   loserBogey: true,
+  // v69.58 — MAIN-FINALS SCORING OVERRIDE. The Main Event's 72-hole final round
+  // can use a different decisive-showdown-loser rule than the rest of the Tour:
+  //   null  — inherit (the 72-hole final uses the same rule as everything else,
+  //           i.e. gameVariant/loserBogey). Canonical default; nothing changes.
+  //   true  — force Yellow Jacket (loser +1 bogey) on the Main final — keeps the
+  //           champion total tough/over-par, even if the rest of the Tour is
+  //           Bumblebee. "The Main is a gauntlet; going under par there is rare."
+  //   false — force Bumblebee (loser scores own hand, -5..+2) on the Main final
+  //           only — pulls the champion total deep under par like a real golf
+  //           major, while the bracket rounds leading to the final stay
+  //           competitive (Yellow Jacket). "The Main final is golf's Masters
+  //           sitting on top of poker's grind."
+  // Affects ONLY the 72-hole aggregate final; the Main's bracket-cut rounds
+  // (cut to 16) always use the global rule. Exposed in the Simulator.
+  mainFinalsLoserBogey: null,
   // DECISION DIVISOR (v39) — per-decision EV math divisor for decideFor.
   // INDEPENDENT of the round-end honey-normalization divisor (which still
   // matches round length: 72/18/9/1). Lower values → folding becomes cheaper
@@ -20632,14 +20676,15 @@ const DEFAULT_SIM_CONFIG = {
   // 1.031, so Elite's natural skill premium produces clear positive ROI. Real WSOP
   // Main rake is ~6%, real PGA tour is effectively 0% (sponsor-funded). 3% is the
   // calibrated midpoint that makes skill expression visible at typical run lengths.
-  rakePercent: 0.03,                         // legacy flat-rate fallback (cash tables + pre-v69.8 configs)
-  // v69.8 TIERED RAKE — different rake per event tier. Calibrated so elite
-  // skill expression produces neutral-to-positive ROI on regulars and majors,
-  // while the marquee Main keeps full 3% to fund the elite tier's career
-  // upside via sponsor purse + lottery payouts. Lab sliders expose all three.
-  rakePercentRegular: 0.015,
-  rakePercentMajor:   0.020,
-  rakePercentMain:    0.030,
+  // v69.57 — NO RAKE on tour events. Entry fees per event, full stop: the
+  // entire entry-fee pool (plus any configured sponsor purse) becomes the
+  // prize pool. The Tour takes no house cut. These knobs stay (Lab sliders
+  // can re-enable rake for experiments), but the canonical default is 0.
+  // (Cash-table rake — a separate cash-poker mechanic — is unaffected.)
+  rakePercent: 0,
+  rakePercentRegular: 0,
+  rakePercentMajor:   0,
+  rakePercentMain:    0,
   // v69.8 — multi-way variant default. 'bumblebee' (Honored Loss) is canonical
   // at multi-way because YJ's Bogey Loss + 8 losers/pot pulls Major champion
   // scores to ~+12 above par (golf-implausible). 'yellowjacket' explicitly
@@ -20946,7 +20991,7 @@ const BackgroundSim = {
 };
 
 const LAB_PRESETS = {
-  honeyStroke: { name: 'Honey-Stroke (Tour Standard)', desc: 'Default Yellow Jacket Tour configuration: Honey-Stroke scoring, three-season run, calibrated rake and payouts.', patch: {} },
+  honeyStroke: { name: 'Honey-Stroke (Tour Standard)', desc: 'Default Yellow Jacket Tour configuration: Honey-Stroke scoring, three-season run, no rake on tour events, calibrated payouts.', patch: {} },
   wide:        { name: 'Wide skill spread', desc: 'All profile axes ±50% wider — exaggerated tail outcomes for stress-testing.', patch: { noiseSpread: 0.35, betSpread: 0.40, foldSpread: 0.35, raiseSpread: 0.40 } },
   bimodal:     { name: 'Bimodal aggression', desc: 'Half passive, half aggressive population.', patch: { raiseCenter: 0.70, raiseSpread: 0.50 } },
   'narrow-elite': { name: 'Narrow elite', desc: 'Compressed skill range — homogeneous tour for upper-bound testing.', patch: { noiseSpread: 0.10, betSpread: 0.10, foldSpread: 0.08, raiseSpread: 0.08 } },
@@ -21138,6 +21183,7 @@ function selectFieldLab(eventType, pool, year, cfg, eventName) {
 
 function runTourEventLab(eventType, year, eventName, pool, cfg) {
   const priorStrokeCap = CurrentStrokeCap;
+  const priorLoserBogey = CurrentLoserBogey; // restored in finally; the Main 72-hole final may flip it
   const capPlan = resolveEventStrokeCaps(eventType, cfg);
   const field = selectFieldLab(eventType, pool, year, cfg, eventName);
   // Lazy-init counters on any pool player missing them (classic buildPool() didn't add them).
@@ -21292,9 +21338,24 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
         remaining.forEach(p => p.poolRef.reaches.r2++);
         remaining.forEach(p => p.poolRef.reaches.finals++);
         setStrokeCap(capPlan.finals);
+        // v69.58 — MAIN-FINALS SCORING OVERRIDE. If cfg.mainFinalsLoserBogey is a
+        // boolean, the 72-hole final uses that decisive-loser rule (true = Yellow
+        // Jacket +1 bogey; false = Bumblebee own-hand) regardless of the global
+        // variant; null = inherit. Flip both CurrentLoserBogey (scoring path) and
+        // the cfg passed to runStrokePlayEvent (decideFor gameContext); restore in
+        // the outer finally. Bracket-cut rounds above always used the global rule.
+        const finalsLB = (cfg.mainFinalsLoserBogey != null) ? !!cfg.mainFinalsLoserBogey : CurrentLoserBogey;
+        // Always hand runStrokePlayEvent a fresh cfg copy here so a finals
+        // override (or any incidental mutation) can't leak back into the cfg the
+        // rest of the season uses; when not overriding, the copy is value-identical.
+        const finalsCfg = (cfg.mainFinalsLoserBogey != null)
+          ? Object.assign({}, cfg, { loserBogey: finalsLB, gameVariant: finalsLB ? 'yellowjacket' : 'bumblebee' })
+          : Object.assign({}, cfg);
+        setLoserBogey(finalsLB);
         // v46: hybrid Main aggregate uses random pairing to preserve
         // WSOP-Main lottery variance even post-cuts.
-        const aggResult = runStrokePlayEvent(remaining, 18, 4, cfg, 'main');
+        const aggResult = runStrokePlayEvent(remaining, 18, 4, finalsCfg, 'main');
+        setLoserBogey(priorLoserBogey);
         const sorted = aggResult.sortedFinishers;
         for (const plc of aggResult.placements) placements.push(plc);
         const champWrap = sorted[0];
@@ -21327,6 +21388,7 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     }
   } finally {
     setStrokeCap(priorStrokeCap);
+    setLoserBogey(priorLoserBogey);
   }
   const champ = finals.winner.poolRef;
   const ru = finals.loser.poolRef;
@@ -21405,7 +21467,13 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
     });
   }
 
-  // --- Economics: prize pool, rake, payouts ---
+  // --- Economics: prize pool, payouts ---
+  // NO RAKE on tour events: the cfg.rakePercent* knobs default to 0, so
+  // revenue from events is 0 and the full entry-fee pool (plus any sponsor
+  // purse) becomes the prize pool. The rake arithmetic below is retained so
+  // an experimenter can re-enable a house cut by setting the knobs > 0, but
+  // the canonical default is no rake. (Cash-table rake is a separate code
+  // path and is unaffected.)
   const baseBuyIn = eventType === 'major' ? (cfg.buyInMajor || 0)
                : eventType === 'regular' ? (cfg.buyInRegular || 0)
                : (cfg.buyInMain || 0);
@@ -21456,55 +21524,44 @@ function runTourEventLab(eventType, year, eventName, pool, cfg) {
   // exemptSeats = count of waived buy-ins this event. Flows through to the
   // CSV economics block (totalExemptSeats) so the waiver volume is visible.
   const exemptSeats = perPlayerBuyIns.filter(v => v === 0).length;
-  // v48 R2 REVERT — flat 3% rake across all tiers.
-  // The v45 tier-progressive rake (Reg 1%, Major 2%, Main 4%) was intended
-  // to fix Bottom-tier ROI inversion, but combined with v46's skill-bracket
-  // pairing it AMPLIFIED the inversion: Bottom played mostly cheap Regulars
-  // (1% rake) where skill was already neutralized by woven pairing, so they
-  // earned positive variance with light tax. Elite played expensive Majors
-  // (2% rake) where skill-bracket pairing eliminated edge — they paid more
-  // rake without skill recoupment. v48 reverts to flat rake; the F revert
-  // (R1) is what actually fixes the underlying skill-edge problem.
-  // v69.8 TIERED RAKE BY EVENT TIER. Calibration goal: keep elite nonMain ROI
-  // close to neutral by reducing the per-event rake friction on regulars and
-  // majors (where skill edge is small per event). Main keeps full 3% — its
-  // sponsor purse + lottery payouts fund the elite tier's career upside.
-  //   regular: 1.5% (was 3%)   — high volume, thin edges, low rake
-  //   major:   2.0% (was 3%)   — medium volume, prestige events, mid rake
-  //   main:    3.0% (unchanged) — annual marquee, heavy sponsor purse, high rake
-  // Per-tier sliders live in Lab → Economy section. cfg.rakePercent is
-  // retained as a legacy fallback used only if a tier-specific value is
-  // missing AND for cash tables (separate code path).
+  // v69.57 — NO RAKE on tour events. The per-tier knobs (rakePercentRegular /
+  // rakePercentMajor / rakePercentMain) and the legacy flat cfg.rakePercent
+  // all default to 0, so rakeBase is 0 and revenue below is 0. The tier-lookup
+  // and fallback chain is kept only so an experimenter who sets a knob > 0 in
+  // the Lab still gets coherent behavior; in the shipped config every tier is
+  // rake-free and the full entry-fee pool flows to the prize pool. (History:
+  // earlier builds ran a flat 3% rake, then a v69.8 tiered rake of Reg 1.5% /
+  // Major 2.0% / Main 3.0%; v69.57 zeroed all of them — entry fees per event,
+  // nothing skimmed.) cfg.rakePercent is still used for cash tables (a
+  // separate code path).
   const rakeFromTier = eventType === 'main' ? cfg.rakePercentMain
                      : eventType === 'major' ? cfg.rakePercentMajor
                      : cfg.rakePercentRegular;
   const rakeBase = (rakeFromTier != null) ? rakeFromTier
                  : (cfg.rakePercent != null ? cfg.rakePercent
                  : (eventType === 'main' ? 0.03 : eventType === 'major' ? 0.02 : 0.015));
-  // Multi-way rake scaling. At HU (tableSize 2) the configured rake stands.
-  // At larger tables, per-event Elite skill edge thins roughly as 1/(N−1)
-  // because the elite player must beat N−1 opponents instead of one. The
-  // non-Main rake scales down with table size to keep Elite ROI positive on
-  // non-Main events: 6-handed runs at 60% of base, 9-handed at 40% of base.
-  // (Initial v69.20 calibration of 0.55 at 9-handed left Elite at −0.9% non-Main
-  // ROI on a Tour-Standard run — short of the target. 0.40 puts Elite clearly
-  // positive while keeping aggregate non-Main rake meaningful.) Main is left
-  // untouched — its rake funds the elite-tier upside via the sponsor purse
-  // + lottery payouts.
+  // Multi-way rake scaling. With no rake (rakeBase 0) this is a no-op — it
+  // stays here only so a re-enabled experimental rake still scales sanely at
+  // larger table sizes: at HU (tableSize 2) the configured rake stands; at
+  // 6-handed it runs at 60% of base, at 9-handed 40% (per-event Elite skill
+  // edge thins roughly as 1/(N−1) since the elite player must beat N−1
+  // opponents instead of one). Main is left unscaled. In the shipped config
+  // rake is 0 everywhere, so multiwayRakeScale never matters.
   const tableSize = +cfg.tableSize || 2;
   const multiwayRakeScale = (eventType === 'main' || tableSize <= 2) ? 1
                           : tableSize <= 6 ? 0.60
                           : 0.40;
   const rake = rakeBase * multiwayRakeScale;
-  const revenue = grossPool * rake;
-  // Sponsor purse: fixed prize-pool contribution from sponsors/TV (PGA Tour model). Rake does
-  // not apply to sponsor money — it goes directly to the purse.
+  const revenue = grossPool * rake;  // 0 in the shipped config (no rake on tour events)
+  // Sponsor purse: fixed prize-pool contribution from sponsors/TV (PGA Tour
+  // model) — paid out in full (and, like the entry-fee pool, never raked).
   // For the MAIN, the announced purse is fixed at the full-field × buy-in
   // value (Players-Championship model: sponsor + tour underwrite waived seats
   // so the headline purse stays at ~$1.24M regardless of how many champion-
   // exempt / satellite-qualifier seats waive in any given year). The implicit
-  // sponsor-coverage = exemptSeats × baseBuyIn × (1 − rake), mirroring what
-  // those seats would have contributed had they paid.
+  // sponsor-coverage = exemptSeats × baseBuyIn × (1 − rake) — and with rake 0
+  // that is simply exemptSeats × baseBuyIn, exactly what those seats would
+  // have contributed had they paid.
   const baseSponsor = eventType === 'major' ? (cfg.sponsorPurseMajor || 0)
                     : eventType === 'regular' ? (cfg.sponsorPurseRegular || 0)
                     : (cfg.sponsorPurseMain || 0);
@@ -23067,6 +23124,13 @@ function _exportRunToCSVImpl(snap) {
   // Honored Loss. loserBogey is the underlying mechanical flag the engine reads.
   cfgRow('gameVariant', snapCfg.gameVariant || (snapCfg.loserBogey ? 'yellowjacket' : 'bumblebee'));
   cfgRow('scoring.loserBogey', !!(snapCfg.loserBogey));
+  // v69.58 — Main 72-hole-final decisive-loser override. null/inherit = same as
+  // the variant; true = force Yellow Jacket (+1 bogey) on the final; false =
+  // force Bumblebee (own-hand loss) on the final. Bracket rounds use the variant.
+  cfgRow('scoring.mainFinalsLoserBogey',
+    snapCfg.mainFinalsLoserBogey === true ? 'yellowjacket (+1 bogey)'
+    : snapCfg.mainFinalsLoserBogey === false ? 'bumblebee (own-hand loss)'
+    : 'inherit');
   // Per-decision divisor used by decideFor's EV math. Independent of the
   // round-end honey-normalisation divisor.
   cfgRow('scoring.decisionDivisor',
@@ -23130,24 +23194,26 @@ function _exportRunToCSVImpl(snap) {
     cfgRow('ai.profileOpt.fold.active',  _opts.fold);
     cfgRow('ai.profileOpt.raise.active', _opts.raise);
   }
-  cfgRow('rakePercent', snapCfg.rakePercent != null ? snapCfg.rakePercent : 0.03);
-  cfgRow('rakePercentRegular', snapCfg.rakePercentRegular != null ? snapCfg.rakePercentRegular : 0.015);
-  cfgRow('rakePercentMajor',   snapCfg.rakePercentMajor   != null ? snapCfg.rakePercentMajor   : 0.020);
-  cfgRow('rakePercentMain',    snapCfg.rakePercentMain    != null ? snapCfg.rakePercentMain    : 0.030);
-  // Effective non-Main rake scaling at multi-way tables. Per-event Elite skill
-  // edge thins roughly as 1/(N−1) at table size N, so non-Main rake is scaled
-  // down to keep Elite ROI neutral-to-positive: 1.00× at HU, 0.70× at 6-handed,
-  // 0.55× at 9-handed. Main rake is left untouched.
+  // Tour-event rake — 0 in the shipped config (no rake; the knobs remain only
+  // for experiments). cfg.rakePercent is also the cash-table fallback.
+  cfgRow('rakePercent', snapCfg.rakePercent != null ? snapCfg.rakePercent : 0);
+  cfgRow('rakePercentRegular', snapCfg.rakePercentRegular != null ? snapCfg.rakePercentRegular : 0);
+  cfgRow('rakePercentMajor',   snapCfg.rakePercentMajor   != null ? snapCfg.rakePercentMajor   : 0);
+  cfgRow('rakePercentMain',    snapCfg.rakePercentMain    != null ? snapCfg.rakePercentMain    : 0);
+  // Effective non-Main rake scaling at multi-way tables. A no-op when rake is 0
+  // (the shipped default); retained so an experimentally re-enabled rake still
+  // scales sanely: 1.00× at HU, 0.70× at 6-handed, 0.55× at 9-handed; Main
+  // left untouched.
   const _tableSizeForRake = +snapCfg.tableSize || 2;
   const _rakeScaleNonMain = _tableSizeForRake <= 2 ? 1
                           : _tableSizeForRake <= 6 ? 0.70 : 0.55;
   cfgRow('rakeMultiwayScaleNonMain', _rakeScaleNonMain);
   cfgRow('rakeEffectiveRegular',
-    ((snapCfg.rakePercentRegular != null ? snapCfg.rakePercentRegular : 0.015) * _rakeScaleNonMain).toFixed(4));
+    ((snapCfg.rakePercentRegular != null ? snapCfg.rakePercentRegular : 0) * _rakeScaleNonMain).toFixed(4));
   cfgRow('rakeEffectiveMajor',
-    ((snapCfg.rakePercentMajor   != null ? snapCfg.rakePercentMajor   : 0.020) * _rakeScaleNonMain).toFixed(4));
+    ((snapCfg.rakePercentMajor   != null ? snapCfg.rakePercentMajor   : 0) * _rakeScaleNonMain).toFixed(4));
   cfgRow('rakeEffectiveMain',
-    ((snapCfg.rakePercentMain    != null ? snapCfg.rakePercentMain    : 0.030)).toFixed(4));
+    ((snapCfg.rakePercentMain    != null ? snapCfg.rakePercentMain    : 0)).toFixed(4));
   cfgRow('multiwayVariant',    snapCfg.multiwayVariant || 'bumblebee');
   cfgRow('payoutDecay', snapCfg.payoutDecay);
   cfgRow('poolSize', snapCfg.poolSize);
@@ -23793,7 +23859,7 @@ function renderConfigPanel(panel, mode) {
   if (mode === 'advanced') {
     const ecoSec = el('div', { class: 'lab-section' });
     ecoSec.appendChild(el('h4', { text: 'Economics · Yellow Jacket Inc' }));
-    ecoSec.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 8px; font-style: italic;', text: 'Rake = % of every buy-in diverted to YJ Inc. Remainder becomes the prize pool.' }));
+    ecoSec.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 8px; font-style: italic;', text: 'Tour events take no rake — the full entry-fee pool, plus any sponsor purse, becomes the prize pool. The per-tier rake sliders below default to 0 and exist only for experiments; the Cash rake % slider is a separate cash-table control.' }));
     const moneyCfg = [
       ['buyInMajor', 'Major $', 0, 50000, 100],
       ['buyInRegular', 'Regular $', 0, 10000, 50],
@@ -23802,10 +23868,12 @@ function renderConfigPanel(panel, mode) {
     for (const [key, label, min, max, step] of moneyCfg) {
       appendSliderControl(ecoSec, { key, label, min, max, step });
     }
-    // v69.8 TIERED RAKE — three sliders, one per event tier. The legacy flat
-    // rakePercent slider is preserved as a cash-table / fallback control.
+    // Per-tier tour-event rake sliders — default 0 (no rake on tour events).
+    // Retained only so an experimenter can re-enable a house cut per tier; the
+    // shipped config leaves all three at 0. The flat rakePercent slider is the
+    // separate cash-table rake control.
     ecoSec.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 10px; color: var(--text-secondary); margin-top: 8px; font-style: italic;',
-      text: 'Tiered rake (v69.8). Regulars: small edge per event, low rake. Majors: prestige, mid rake. Main: marquee + sponsor-funded, high rake.' }));
+      text: 'Experimental per-tier rake (default 0 — tour events take no rake). Leave at 0 for the canonical entry-fee model.' }));
     appendSliderControl(ecoSec, { key: 'rakePercentRegular', label: 'Reg rake %',  min: 0, max: 0.10, step: 0.001 });
     appendSliderControl(ecoSec, { key: 'rakePercentMajor',   label: 'Major rake %', min: 0, max: 0.10, step: 0.001 });
     appendSliderControl(ecoSec, { key: 'rakePercentMain',    label: 'Main rake %',  min: 0, max: 0.10, step: 0.001 });
@@ -23865,22 +23933,23 @@ function renderConfigPanel(panel, mode) {
 
   evSec.appendChild(el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px;' },
     el('label', { text: 'Honey norm', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }),
-    el('div', { class: 'ui-sans', style: 'font-size: 12px; color: var(--text-primary); padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elevated);', text: 'net honey / 18' })
+    el('div', { class: 'ui-sans', style: 'font-size: 12px; color: var(--text-primary); padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elevated);', text: 'net honey ÷ honey cap, per round — see Honey cap ↓' })
   ));
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'Production scoring is fixed: total net honey credits are divided by 18 before being subtracted from the golf scorecard. The old aggregate honey scale slider is retired; manual dampening values like 0.12 or 0.25 are no longer used because the division handles scaling.'
+    text: 'At each round\'s end, net honey is divided by the honey cap and subtracted from that round\'s golf scorecard. Default mode "calibrated": ÷9 for 18-hole rounds, ÷36 for the 72-hole finals, ÷4 for 9-hole bracket matches, ÷1 for single-hole. Mode "spec" divides by the round\'s hole count N instead. Set the mode in the Honey cap control below. (The retired aggregate-honey-scale slider — values like 0.12 / 0.25 — is gone; the divisor handles all scaling.)'
   }));
 
   // === GAME VARIANT TOGGLE (v32) ===========================================
   // Yellow Jacket ships as TWO variants that share every rule except
   // decisive-showdown loser scoring:
   //   'yellowjacket' (competitive): loser posts fixed +1 bogey. Sharper
-  //          skill differentiation; champions score in the +12 to +28 range.
+  //          skill expression; champion totals ~5–8 under par on 9-/18-hole
+  //          rounds, ~par on the 72-hole Main (calibrated cap, v69.54 schedule).
   //   'bumblebee' (casual):  loser scores own hand's golf value (-5..+2).
-  //          Preserves "your hand always counts" texture; champions score
-  //          in the -10 to -18 range (golf-realistic below-par).
+  //          Preserves "your hand always counts" texture; champion totals
+  //          run a few strokes lower than yellowjacket at every length.
   // Internally cfg.loserBogey is the boolean that the engine reads; the
   // dropdown sets BOTH cfg.gameVariant (string) and cfg.loserBogey (boolean)
   // so legacy code paths and audit CSVs stay unambiguous.
@@ -23912,7 +23981,45 @@ function renderConfigPanel(panel, mode) {
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'YELLOW JACKET (default): the competitive tour. Decisive-showdown losers post +1 bogey regardless of hand. Sharper per-event skill; champions in the +12 to +28 range. BUMBLEBEE: the casual league. Decisive-showdown losers score their own hand (-5..+2) — flush-loser still posts -1 birdie. Gentler scoring; champions in the -10 to -18 range. Both share the same engine, mandatory pot, agreed-total wagering, fold rule, and divisor. Folds and ties are NOT affected by this choice.'
+    text: 'YELLOW JACKET (default): the competitive tour. Decisive-showdown losers post +1 bogey regardless of hand. Sharper skill expression; under the calibrated honey cap, champion totals run ~5–8 strokes under par on 9- and 18-hole rounds and close to par on the 72-hole Main. BUMBLEBEE: the casual league. Decisive-showdown losers score their own hand (-5..+2) — flush-loser still posts -1 birdie. Gentler scoring — champion totals run a few strokes lower than Yellow Jacket at every length. Both share the same engine, mandatory pot, agreed-total wagering, hole-envelope + pot-elastic-K caps, fold rule, and honey cap. Folds and ties are NOT affected by this choice.'
+  }));
+
+  // === MAIN-FINALS SCORING OVERRIDE (v69.58) ===============================
+  // The Main Event's 72-hole final round can run a different decisive-loser
+  // rule than the rest of the Tour. Inherit (default) = same as the variant
+  // above. "Yellow Jacket" forces the +1-bogey rule on the final only — the
+  // champion total stays tough/over-par, a gauntlet where under-par is rare.
+  // "Bumblebee" forces own-hand-loss on the final only — the champion total
+  // runs deep under par like a real golf major, while the bracket-cut rounds
+  // leading to it stay competitive. Affects ONLY the 72-hole aggregate final.
+  const mfRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  mfRow.appendChild(el('label', { text: 'Main final', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const mfSel = el('select', { style: 'width: 100%;' });
+  const mfCur = (LabState.config.mainFinalsLoserBogey === true) ? 'yellowjacket'
+              : (LabState.config.mainFinalsLoserBogey === false) ? 'bumblebee' : 'inherit';
+  [
+    { v: 'inherit',      label: '↳ Inherit — same rule as the variant above (default)' },
+    { v: 'yellowjacket', label: '🐝 Yellow Jacket on the final — +1 bogey loss · tough, over-par champion' },
+    { v: 'bumblebee',    label: '🐝 Bumblebee on the final — own-hand loss · deep sub-par champion (golf-major feel)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if (mfCur === o.v) opt.selected = true;
+    mfSel.appendChild(opt);
+  });
+  mfSel.onchange = () => {
+    LabState.config.mainFinalsLoserBogey = mfSel.value === 'yellowjacket' ? true
+      : mfSel.value === 'bumblebee' ? false : null;
+    saveLabState();
+    toast('Main final scoring: ' + (mfSel.value === 'inherit' ? 'inherit (same as variant)'
+      : mfSel.value === 'yellowjacket' ? 'Yellow Jacket (+1 bogey loss — tough)'
+      : 'Bumblebee (own-hand loss — deep sub-par)'));
+  };
+  mfRow.appendChild(mfSel);
+  evSec.appendChild(mfRow);
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Only the 72-hole aggregate final is affected; the Main\'s bracket-cut rounds (down to 16) always use the variant rule. Inherit keeps the Main consistent with the rest of the Tour. Pick "Bumblebee on the final" to test the golf-major feel (champion typically deep under par); pick "Yellow Jacket on the final" to keep it a gauntlet even if you run the rest of the Tour as Bumblebee.'
   }));
 
   // === HONEY DIVISOR MODE (v69.49) =========================================
@@ -24234,7 +24341,7 @@ function renderConfigPanel(panel, mode) {
       regularStrokeCap: 6, majorStrokeCap: 9, mainStrokeCap: 8, mainFinalsStrokeCap: 18,
       buyInMajor: 2500, buyInRegular: 333, buyInMain: 1000,
       sponsorPurseMajor: 0, sponsorPurseRegular: 0, sponsorPurseMain: 0,
-      rakePercent: 0.03, payoutDecay: 0.70,
+      rakePercent: 0, rakePercentRegular: 0, rakePercentMajor: 0, rakePercentMain: 0, payoutDecay: 0.70,
       noiseSpread: 0.20, betSpread: 0.20, foldSpread: 0.18, raiseSpread: 0.15,
       skillSpread: 0.18,
       // Audit preset locks the Bumblebee variant (Honored Loss) for
@@ -24767,16 +24874,16 @@ function renderLabResults(root) {
   // Yellow Jacket Inc Foundation card — cumulative across the career
   if (hasCareer) {
     const foundation = computeFoundationCareer();
-    if (foundation.totalRevenue > 0) {
+    if (foundation.totalPrizePool > 0 || foundation.eventCount > 0) {
       const foundCard = el('div', { class: 'card', style: 'margin-top: 14px; border-top: 3px solid var(--gold);' });
       foundCard.appendChild(el('h2', { text: 'Yellow Jacket Inc · Foundation Ledger' }));
-      foundCard.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 11px; color: var(--text-secondary); margin-bottom: 10px; letter-spacing: 0.3px;', text: 'Career-cumulative: rake collected across every event ever run, plus player ROI by tier.' }));
+      foundCard.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 11px; color: var(--text-secondary); margin-bottom: 10px; letter-spacing: 0.3px;', text: 'Career-cumulative: total entry fees collected and prize pool paid across every event ever run (tour events take no rake, so foundation revenue is 0 and the two match aside from sponsor purse), plus player ROI by tier.' }));
       foundCard.appendChild(el('div', { class: 'kpi-strip' },
-        kpiBox('Career revenue', fmtMoney(foundation.totalRevenue)),
+        kpiBox('Foundation revenue', fmtMoney(foundation.totalRevenue)),
         kpiBox('Prize pool paid', fmtMoney(foundation.totalPrizePool)),
         kpiBox('Total entries', foundation.totalEntries.toLocaleString()),
         kpiBox('ITM rate', (foundation.itmRate * 100).toFixed(1) + '%'),
-        kpiBox('Avg rake/event', fmtMoney(foundation.totalRevenue / Math.max(1, foundation.eventCount)))
+        kpiBox('Avg prize/event', fmtMoney(foundation.totalPrizePool / Math.max(1, foundation.eventCount)))
       ));
     }
   }
@@ -26231,9 +26338,12 @@ function init() {
   if (savedVersion && savedVersion !== APP_VERSION && LabState.config) {
     const productionDefaults = {
       poolSize: 25000, seasons: 3,
-      majors: 12, regulars: 40, mains: 1,
-      majorField: 256, regularField: 512, mainField: 128,
-      mainQualifiersPerMajor: 28,
+      // v69.54 — PGA + WSOP schedule (see DEFAULT_SIM_CONFIG): 4 majors,
+      // 40 regulars, 1 World Championship; Main is the biggest field; major
+      // top-64 ≈ a championship berth.
+      majors: 4, regulars: 40, mains: 1,
+      majorField: 256, regularField: 512, mainField: 768,
+      mainQualifiersPerMajor: 64,
       mainDirectEntryShare: 0.65,
       // v66 caps anchored to divisor 9: Major Putt = divisor = 1 stroke per max pot.
       regularStrokeCap: 6,
@@ -26250,7 +26360,8 @@ function init() {
       lateRegMaxEntries: 0,                   // v69.2 max late entrants per event
       payoutDecay: 0.74,
       buyInRegular: 100, buyInMajor: 1000, buyInMain: 10000,
-      rakePercent: 0.03,
+      // v69.57 — no rake on tour events; full entry-fee pool to prizes.
+      rakePercent: 0, rakePercentRegular: 0, rakePercentMajor: 0, rakePercentMain: 0,
       satelliteTierRegular: 15,
       satelliteTierMajor: 150,
       satelliteTierMain: [500, 1500, 4000, 5000],
