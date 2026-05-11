@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.11-v69.59-pool-config-coherence";
+const APP_VERSION = "2026.05.11-v69.63-interactive-envelope-and-mp-settings";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -7310,6 +7310,49 @@ Views.codex = function() {
   view.appendChild(close);
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Interactive-game per-hole cap (v69.63) — the Single Player / Multiplayer engine
+// now uses the same cap model as the simulator: the HOLE ENVELOPE E (each player
+// may wager up to E strokes' worth of honey per hole, so the per-hole pot ceiling
+// anchor is E × honeyDivisorFor(roundLength)), with the legacy per-tier strokeCaps
+// available as explicit fallbacks. The selector value is a short spec string —
+// "E2" / "E3" / "E4" for envelope modes, "L6" / "L9" / "L18" for legacy caps —
+// and interactiveHoleCapAnchor() resolves it (given the match's hole count) to the
+// integer cap anchor that streetCapFor() / mpStreetCap() / advanceMPRound() use.
+function interactiveHoleCapAnchor(spec, totalHoles) {
+  const s = String(spec || 'E3').trim().toUpperCase();
+  const n = +totalHoles > 0 ? +totalHoles : 18;
+  if (s[0] === 'E') {
+    const E = Math.max(0, Math.round(+s.slice(1)) || 0);
+    if (E > 0 && typeof honeyDivisorFor === 'function') {
+      return clampStrokeCap(Math.round(E * honeyDivisorFor(n)), 3);
+    }
+    // E0 (or a malformed "E…") → legacy Regular cap.
+    return clampStrokeCap(6, 6);
+  }
+  // "L<num>" legacy cap, or a bare number for backward-compat with old call sites.
+  const cap = +s.replace(/^L/, '');
+  return clampStrokeCap(Number.isFinite(cap) && cap > 0 ? cap : 6, 6);
+}
+// Build the shared "Per-hole cap" <select>. Default spec "E3" mirrors the
+// simulator's validated ship default (envelope E=3).
+function buildHoleCapSelect(id, selectedSpec) {
+  const sel = el('select', { id: id });
+  [
+    ['E2',  'Envelope E=2 — tighter pots (≈18 honey/hole · 18-hole rounds)'],
+    ['E3',  'Envelope E=3 — standard ★ (≈27 honey/hole · matches the sim)'],
+    ['E4',  'Envelope E=4 — looser pots (≈36 honey/hole · widest variance)'],
+    ['L6',  'Legacy: Regular cap (6 honey/hole)'],
+    ['L9',  'Legacy: Major cap (9 honey/hole)'],
+    ['L18', 'Legacy: Main-finals cap (18 honey/hole)'],
+  ].forEach(([v, label]) => {
+    const opt = el('option', { value: v, text: label });
+    if (v === String(selectedSpec || 'E3').toUpperCase()) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  return sel;
+}
+
 Views.solo = function() {
   const view = $('[data-view="solo"]'); clear(view);
   view.appendChild(el('div', { class: 'crumb', text: 'Tour Home · Single Player' }));
@@ -7323,7 +7366,7 @@ Views.solo = function() {
   const soloCard = el('div', { class: 'card', style: 'border-top: 3px solid var(--gold);' });
   soloCard.appendChild(el('h2', { text: '🐝 Solo vs AI' }));
   soloCard.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 13px; color: var(--fairway); margin-bottom: 14px;' },
-    'Heads-up match against a Yellow Jacket AI of your chosen skill. The AI decides via the same threshold-coupled honey-EV logic the simulator uses — every opponent plays from a real pool profile, not a script.'
+    'Heads-up match against a Yellow Jacket AI of your chosen skill. The AI plays from a real pool profile (not a script), using the same board-aware honey-EV decision kernel as the simulator: the mandatory opener (doubled on the back 9), agreed-total wagering under the hole-envelope + pot-elastic-K cap, and the round-end honey cap converting net honey to strokes. The Per-hole cap control sets the envelope E (default E=3 — the same default the simulator ships) or a legacy fixed cap. The match inherits the Simulator’s scoring variant (Yellow Jacket / Bumblebee).'
   ));
 
   // Tier preset buttons. Selected skill stored on the card via dataset for the
@@ -7363,14 +7406,8 @@ Views.solo = function() {
     holesSel.appendChild(opt);
   });
   optsRow.appendChild(holesSel);
-  optsRow.appendChild(el('label', { class: 'ui-sans', style: 'font-size: 12px; margin-left: 12px;', text: 'Cap:' }));
-  const capSel = el('select', { id: 'soloCap' });
-  [['3', '3 (regular)'], ['6', '6 (regular tour)'], ['10', '10 (major / finals)']].forEach(([v, label]) => {
-    const opt = el('option', { value: v, text: label });
-    if (v === '6') opt.selected = true;
-    capSel.appendChild(opt);
-  });
-  optsRow.appendChild(capSel);
+  optsRow.appendChild(el('label', { class: 'ui-sans', style: 'font-size: 12px; margin-left: 12px;', text: 'Per-hole cap:' }));
+  optsRow.appendChild(buildHoleCapSelect('soloCap', 'E3'));
   soloCard.appendChild(optsRow);
 
   soloCard.appendChild(el('input', { type: 'text', id: 'soloName', placeholder: 'Your name (optional)', style: 'width: 100%; margin-bottom: 10px;' }));
@@ -7378,9 +7415,9 @@ Views.solo = function() {
     const skill = +soloCard.dataset.skill || 0.40;
     const tier = soloCard.dataset.tier || 'casual';
     const holes = +($('#soloHoles').value) || 18;
-    const cap = +($('#soloCap').value) || 6;
+    const capSpec = ($('#soloCap').value) || 'E3';
     const playerName = ($('#soloName').value || 'You').slice(0, 24);
-    startSolo(playerName, skill, tier, holes, cap);
+    startSolo(playerName, skill, tier, holes, capSpec);
   } }, 'Start Solo Match'));
   view.appendChild(soloCard);
 
@@ -7396,6 +7433,35 @@ Views.multiplayer = function() {
       el('h1', { text: 'Multiplayer' }),
       el('div', { class: 'sub', text: 'Play against a friend — pass-the-device or async share-link' }))
   ));
+
+  // === SHARED MATCH SETTINGS (v69.63) ===
+  // Hot-Seat and Share-Link both read this row at Start time. Defaults: 18 holes,
+  // hole-envelope E=3 (the simulator's ship default), Yellow Jacket variant.
+  const setCard = el('div', { class: 'card', style: 'border-top: 3px solid var(--gold); margin-bottom: 16px;' });
+  setCard.appendChild(el('h2', { text: '⚙️ Match settings' }));
+  setCard.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; font-style: italic;' },
+    'Applies to whichever game you start below. Per-hole cap = the hole-envelope E (E × honeyDivisorFor(round length); E=3 ≈ 27 honey/hole on an 18-hole match) or a legacy fixed cap. The variant only changes the decisive-showdown loser score — folds and ties are identical either way.'
+  ));
+  const setRow = el('div', { style: 'display: flex; gap: 12px; align-items: center; flex-wrap: wrap;' });
+  setRow.appendChild(el('label', { class: 'ui-sans', style: 'font-size: 12px;', text: 'Holes:' }));
+  const mpHolesSel = el('select', { id: 'mpHoles' });
+  [['9', '9 (quick)'], ['18', '18 (round)'], ['36', '36 (double round)'], ['72', '72 (full finals)']].forEach(([v, label]) => {
+    const opt = el('option', { value: v, text: label });
+    if (v === '18') opt.selected = true;
+    mpHolesSel.appendChild(opt);
+  });
+  setRow.appendChild(mpHolesSel);
+  setRow.appendChild(el('label', { class: 'ui-sans', style: 'font-size: 12px; margin-left: 8px;', text: 'Per-hole cap:' }));
+  setRow.appendChild(buildHoleCapSelect('mpCap', 'E3'));
+  setRow.appendChild(el('label', { class: 'ui-sans', style: 'font-size: 12px; margin-left: 8px;', text: 'Variant:' }));
+  const mpVariantSel = el('select', { id: 'mpVariant' });
+  [['yellowjacket', 'Yellow Jacket — Bogey Loss (loser posts +1)'], ['bumblebee', 'Bumblebee — Honored Loss (loser scores own hand)']].forEach(([v, label]) => {
+    const opt = el('option', { value: v, text: label });
+    mpVariantSel.appendChild(opt);
+  });
+  setRow.appendChild(mpVariantSel);
+  setCard.appendChild(setRow);
+  view.appendChild(setCard);
 
   const cols = el('div', { class: 'grid-2' });
 
@@ -7430,19 +7496,59 @@ Views.multiplayer = function() {
   renderActiveMP();
 };
 
+// Read the Multiplayer "Match settings" row (Holes / Per-hole cap / Variant).
+// Falls back to sensible defaults when the controls aren't present (e.g. a
+// share-link load path that bypasses the lobby).
+function readMPMatchSettings() {
+  const holesEl = $('#mpHoles'), capEl = $('#mpCap'), varEl = $('#mpVariant');
+  const holes = Math.max(1, Math.min(144, (holesEl && +holesEl.value) || 18));
+  const capSpec = (capEl && capEl.value) || 'E3';
+  const variant = (varEl && varEl.value === 'bumblebee') ? 'bumblebee' : 'yellowjacket';
+  return { holes, capSpec, variant };
+}
+// Sync the per-run scoring globals (decideFor / resolveMPHole / mpRecomputeTotals
+// all read these) from the Simulator config, overriding loser-bogey from the
+// variant the player picked for this match. Honey-cap mode defaults to calibrated.
+function applyInteractiveScoringGlobals(loserBogey) {
+  const c = (typeof LabState !== 'undefined' && LabState.config) ? LabState.config : {};
+  setLoserBogey(!!loserBogey);
+  if (Number.isFinite(+c.decisionDivisor)) setDecisionDivisor(+c.decisionDivisor);
+  if (Number.isFinite(+c.honeyMagnitude)) setHoneyMagnitude(+c.honeyMagnitude);
+  if (Number.isFinite(+c.potElasticK)) setPotElasticK(+c.potElasticK);
+  if (Number.isFinite(+c.backNineOpenerMultiplier)) setBackNineMultiplier(+c.backNineOpenerMultiplier);
+  setHoneyCapMode(c.honeyCapMode === 'spec' ? 'spec' : 'calibrated');
+}
+// Build a local (hot-seat / share-link) game with explicit match settings:
+// hole count, per-hole cap spec ("E2"/"E3"/"E4"/"L6"/"L9"/"L18"), and variant.
+function newConfiguredLocalGame(p1name, p2name, mode, holes, capSpec, variant) {
+  const loserBogey = (variant === 'bumblebee') ? false : true;
+  applyInteractiveScoringGlobals(loserBogey);
+  const cap = interactiveHoleCapAnchor(capSpec, holes);
+  setStrokeCap(cap);
+  const g = createLocalGame(p1name, p2name, mode);   // snapshots CurrentLoserBogey etc.
+  g.totalHoles = Math.max(1, Math.min(144, +holes || 18));
+  g.strokeCap = cap;
+  g.holeCapSpec = String(capSpec || 'E3').toUpperCase();
+  g.gameVariant = loserBogey ? 'yellowjacket' : 'bumblebee';
+  g.loserBogey = loserBogey;
+  return g;
+}
+
 function startHotSeat() {
   const p1name = ($('#hsP1').value || 'Player 1').slice(0, 24);
   const p2name = ($('#hsP2').value || 'Player 2').slice(0, 24);
-  TourState.activeGame = createLocalGame(p1name, p2name, 'hotseat');
+  const { holes, capSpec, variant } = readMPMatchSettings();
+  TourState.activeGame = newConfiguredLocalGame(p1name, p2name, 'hotseat', holes, capSpec, variant);
   renderActiveMP();
-  toast('Hot-Seat game started — good luck!');
+  toast('Hot-Seat game started · ' + holes + ' holes · ' + (variant === 'bumblebee' ? 'Bumblebee' : 'Yellow Jacket') + ' — good luck!');
 }
 
 function startShareLink() {
-  TourState.activeGame = createLocalGame('You', 'Opponent', 'sharelink');
+  const { holes, capSpec, variant } = readMPMatchSettings();
+  TourState.activeGame = newConfiguredLocalGame('You', 'Opponent', 'sharelink', holes, capSpec, variant);
   TourState.activeGame.shareLink = encodeGameToURL(TourState.activeGame);
   renderActiveMP();
-  toast('Share-Link game started — copy the link and send to your opponent.');
+  toast('Share-Link game started · ' + holes + ' holes · ' + (variant === 'bumblebee' ? 'Bumblebee' : 'Yellow Jacket') + ' — copy the link and send to your opponent.');
 }
 
 // Themed AI opponent names by skill tier — gives each match a personality.
@@ -7457,21 +7563,23 @@ function pickAINameForTier(tier) {
   return list[Math.floor(Math.random() * list.length)];
 }
 
-function startSolo(playerName, skill, tier, holes, cap) {
+function startSolo(playerName, skill, tier, holes, capSpec) {
   const aiName = pickAINameForTier(tier);
   const aiProfile = makeProfileForSkill(Math.max(0.05, Math.min(0.95, +skill || 0.40)));
-  // Sync the global stroke cap and loser-bogey toggle so AI's decideFor and
-  // resolveMPHole's showdown path read the same scoring rules the user just
-  // configured in the simulator panel.
+  const totalHoles = Math.max(1, Math.min(144, +holes || 18));
+  // Sync the scoring toggles first (so honeyDivisorFor reads the right mode),
+  // then resolve the per-hole cap from the spec ("E2"/"E3"/"E4" envelope modes
+  // or "L6"/"L9"/"L18" legacy caps) using this match's hole count for the
+  // envelope derivation (cap = E × honeyDivisorFor(totalHoles)). Solo inherits
+  // the Simulator's loser-bogey variant (Multiplayer lets you pick per match).
+  applyInteractiveScoringGlobals(!!(LabState && LabState.config && LabState.config.loserBogey));
+  const cap = interactiveHoleCapAnchor(capSpec, totalHoles);
   setStrokeCap(cap);
-  setLoserBogey(!!(LabState && LabState.config && LabState.config.loserBogey));
-  setDecisionDivisor(LabState && LabState.config && LabState.config.decisionDivisor);
-  setHoneyMagnitude(LabState && LabState.config && LabState.config.honeyMagnitude);
-  setPotElasticK(LabState && LabState.config && LabState.config.potElasticK);
-  setBackNineMultiplier(LabState && LabState.config && LabState.config.backNineOpenerMultiplier);
   const g = createLocalGame(playerName, aiName, 'solo');
-  g.totalHoles = Math.max(1, Math.min(144, +holes || 18));
+  g.totalHoles = totalHoles;
   g.strokeCap = cap;
+  g.holeCapSpec = String(capSpec || 'E3').toUpperCase();
+  g.gameVariant = CurrentLoserBogey ? 'yellowjacket' : 'bumblebee';
   g.aiSkill = skill;
   g.aiTier = tier;
   g.aiProfile = aiProfile;
@@ -7563,7 +7671,7 @@ function createLocalGame(p1name, p2name, mode) {
     p1: { name: p1name, golfTotal: 0, honeyTotal: 0, total: 0 },
     p2: { name: p2name, golfTotal: 0, honeyTotal: 0, total: 0 },
     holeNum: 1, totalHoles: 18, scores: [],
-    current: newHoleState('p1', 0),
+    current: newHoleState('p1', 0, 1),
     turnFor: 'p1',
     carryPot: 0,
     started: Date.now(), ended: false,
@@ -7578,10 +7686,14 @@ function createLocalGame(p1name, p2name, mode) {
   };
 }
 
-function newHoleState(dealer, carryPot) {
+function newHoleState(dealer, carryPot, holeNum) {
   // YJ agreed-total semantics — replaces the classic-poker matched/currentBet model:
   //   agreedTotal     = the pot level both players have ALREADY accepted. Opens at
-  //                     2 (mandatory pot) plus any tied-hole carry.
+  //                     the mandatory opener (2 honey on holes 1–9 of a round, ×
+  //                     CurrentBackNineMultiplier on holes 10–18 — v69.62: the
+  //                     interactive game now applies the back-9 doubling, matching
+  //                     playMatch's `baseOpener * (h>=9 ? back9Mult : 1)` and the
+  //                     rulebook) plus any tied-hole carry.
   //   currentProposal = a pending proposal to RAISE the agreed total. null when
   //                     no proposal is on the table (both players have either
   //                     checked or accepted the current agreedTotal).
@@ -7589,7 +7701,13 @@ function newHoleState(dealer, carryPot) {
   //                     no proposal is pending).
   // The non-dealer acts first preflop (heads-up convention).
   const deck = shuffle(makeDeck());
-  const opener = (carryPot || 0) + 2;
+  // Round-internal hole index (0-based): holes 10–18 of each 18-hole stretch are
+  // the "back 9" and post the doubled opener. A 9-hole match never reaches it; a
+  // 36/72-hole match repeats the front-9/back-9 pattern every 18 holes.
+  const hIdx = (Number.isFinite(holeNum) && holeNum > 0) ? ((holeNum - 1) % 18) : 0;
+  const back9Mult = (+CurrentBackNineMultiplier > 0) ? +CurrentBackNineMultiplier : 1;
+  const baseOpener = 2 * (hIdx >= 9 ? back9Mult : 1);
+  const opener = (carryPot || 0) + baseOpener;
   return {
     deck, street: 'preflop',
     agreedTotal: opener,
@@ -7605,11 +7723,17 @@ function newHoleState(dealer, carryPot) {
 }
 
 // Compute the maximum agreed-total a player may propose this street. Routes
-// through streetCapFor (v69.52: cap = min(3 × envelopeCap, ceil(K × agreedTotal)),
-// short-circuit at envelopeCap ≤ 3) — no per-street percentage unlock.
+// through streetCapFor (v69.52: cap = min(3 × totalCap, ceil(K × agreedTotal)),
+// short-circuit at totalCap ≤ 3) — no per-street percentage unlock. v69.61: now
+// passes the current accepted level (g.current.agreedTotal) so the interactive
+// cap is pot-elastic exactly like decideFor's, instead of always returning the
+// flat 3×totalCap ceiling. (Note: the interactive match still uses g.strokeCap as
+// the per-hole cap anchor — the simulator's hole-envelope E model isn't wired
+// into the SP/MP path yet; see the Cap selector.)
 function mpStreetCap(g, street) {
   const totalCap = g.strokeCap || CurrentStrokeCap || 3;
-  return streetCapFor(street, totalCap);
+  const agreed = (g.current && Number.isFinite(g.current.agreedTotal)) ? g.current.agreedTotal : undefined;
+  return streetCapFor(street, totalCap, agreed);
 }
 
 // Display total = golfTotal − honeyTotal / honeyCap. The honey cap matches the
@@ -7642,9 +7766,14 @@ function renderActiveMP() {
   const wrap = el('div', { class: 'game-wrap' });
   const header = el('div', { class: 'card', style: 'background: var(--cream-soft);' });
   const headerInner = el('div', { style: 'display: flex; justify-content: space-between; align-items: center;' });
+  const variantLabel = (g.loserBogey === false) ? 'Bumblebee · Honored Loss' : 'Yellow Jacket · Bogey Loss';
+  const capLabel = /^E\d/i.test(g.holeCapSpec || '')
+    ? ('hole envelope ' + String(g.holeCapSpec).toUpperCase().replace('E', 'E=') + ' → ' + g.strokeCap + ' honey/hole')
+    : ('legacy cap ' + g.strokeCap + ' honey/hole');
   headerInner.appendChild(el('div', null,
     el('h2', { text: g.mode === 'hotseat' ? 'Hot-Seat Match' : g.mode === 'solo' ? 'Solo Match · vs ' + g.p2.name : 'Share-Link Match' }),
-    el('div', { class: 'ui-sans', style: 'font-size: 12px; color: var(--fairway);', text: g.p1.name + ' (' + formatScore(g.p1.total) + ')  vs  ' + g.p2.name + ' (' + formatScore(g.p2.total) + ')  ·  Hole ' + g.holeNum + '/' + g.totalHoles })
+    el('div', { class: 'ui-sans', style: 'font-size: 12px; color: var(--fairway);', text: g.p1.name + ' (' + formatScore(g.p1.total) + ')  vs  ' + g.p2.name + ' (' + formatScore(g.p2.total) + ')  ·  Hole ' + g.holeNum + '/' + g.totalHoles }),
+    el('div', { class: 'ui-sans', style: 'font-size: 10.5px; color: var(--text-secondary); margin-top: 2px;', text: variantLabel + '  ·  ' + capLabel + '  ·  honey ÷' + (honeyDivisorFor(g.totalHoles) || 1) + ' at round-end' })
   ));
   headerInner.appendChild(el('button', { class: 'btn ghost small', onclick: () => { if (confirm('End game?')) { TourState.activeGame = null; renderActiveMP(); } } }, 'End game'));
   header.appendChild(headerInner);
@@ -8674,10 +8803,15 @@ function advanceMPRound(g) {
   else if (c.street === 'flop') { c.community.push(c.deck.pop()); c.street = 'turn'; }
   else if (c.street === 'turn') { c.community.push(c.deck.pop()); c.street = 'river'; }
   else if (c.street === 'river') { c.street = 'showdown'; resolveMPHole(g); return; }
-  // If the agreed total has already reached the per-event stroke cap, no more
-  // proposals are possible — fast-forward to showdown with the remaining board.
-  const totalCap = g.strokeCap || CurrentStrokeCap;
-  if (c.agreedTotal >= totalCap) {
+  // If the agreed total has already reached the per-hole pot ceiling, no further
+  // proposal is legal — fast-forward to showdown with the remaining board. v69.62:
+  // the ceiling is streetCapFor's max (3 × strokeCap, or just strokeCap when
+  // strokeCap ≤ 3), NOT strokeCap itself — pre-v69.52 strokeCap WAS the per-hole
+  // ceiling, but the pot-elastic K model lets the agreed total grow to 3× that,
+  // so stopping at 1× was cutting hands short before the pot had actually maxed.
+  const capAnchor = g.strokeCap || CurrentStrokeCap || 3;
+  const potCeiling = capAnchor <= 3 ? capAnchor : capAnchor * 3;
+  if (c.agreedTotal >= potCeiling) {
     while (c.community.length < 5) c.community.push(c.deck.pop());
     c.street = 'showdown';
     resolveMPHole(g); return;
@@ -8748,8 +8882,11 @@ function resolveMPHole(g) {
       const pot = c.agreedTotal;
       if (p1Wins) { p1Golf = winnerGolf; p1Honey = pot; p2Golf = loserGolf; }
       else        { p2Golf = winnerGolf; p2Honey = pot; p1Golf = loserGolf; }
+      // v69.62: don't hard-code "+1 bogey" under loserBogey — the showdown matrix
+      // grants a *respected loss* (loser scores own hand, not the flat bogey) when
+      // the loser held a straight or better. Print what actually got scored.
       const loserDescGolf = g.loserBogey
-        ? '+1 bogey (Bogey Loss rule)'
+        ? (loserGolf === 1 ? '+1 bogey (Bogey Loss rule)' : formatScore(loserGolf) + ' golf (respected loss)')
         : formatScore(loserGolf) + ' golf';
       desc = winName + ' wins with ' + CATEGORY_NAMES[winnerHand >>> 24]
            + ' and takes the ' + pot + '-honey pot. '
@@ -8788,9 +8925,10 @@ function mpNextHole(g) {
   }
   g.holeNum++;
   const dealer = g.current.dealer === 'p1' ? 'p2' : 'p1';
-  // Pass the accumulated carry into the new hole's opening pot so tied-hole
-  // honey rolls forward correctly. newHoleState seeds agreedTotal = 2 + carry.
-  g.current = newHoleState(dealer, g.carryPot || 0);
+  // Pass the accumulated carry and the hole number into the new hole's opener so
+  // tied-hole honey rolls forward AND holes 10–18 of the round post the doubled
+  // back-9 opener. newHoleState seeds agreedTotal = back9-aware base + carry.
+  g.current = newHoleState(dealer, g.carryPot || 0, g.holeNum);
   // The carry has been consumed by the new hole's opener; clear it so it
   // doesn't double-add on the next resolve.
   g.carryPot = 0;
@@ -12766,16 +12904,16 @@ function renderCashTableView(tableId) {
         text: (chipPL >= 0 ? '+' : '') + Math.round(chipPL).toLocaleString() })
     ));
     if (t.variant !== 'pure') {
-      sess.appendChild(el('div', { class: 'cash-stat' },
+      sess.appendChild(el('div', { class: 'cash-stat', title: 'Cumulative stroke-credit banked this session (higher is better — strong showdowns bank more; a Bogey Loss banks −1).' },
         el('div', { class: 'lbl', text: 'Stroke ledger (Σ)' }),
         el('div', { class: 'val', style: 'color:' + (me.strokeLedger >= 0 ? '#7ED6A0' : '#F3A889') + ';',
           text: (me.strokeLedger >= 0 ? '+' : '') + me.strokeLedger.toFixed(1) })
       ));
       const projected = (me.strokeLedger) * NectarState.config.nectarPerStrokePoint;
-      sess.appendChild(el('div', { class: 'cash-stat' },
-        el('div', { class: 'lbl', text: 'Projected stroke ◈' }),
+      sess.appendChild(el('div', { class: 'cash-stat', title: 'What the stroke ledger adds to (or subtracts from) your cashout: +◈' + NectarState.config.nectarPerStrokePoint + ' per net credit.' },
+        el('div', { class: 'lbl', text: 'Ledger → ◈' }),
         el('div', { class: 'val', style: 'color:' + (projected >= 0 ? '#7ED6A0' : '#F3A889') + ';',
-          text: (projected >= 0 ? '+' : '') + Math.round(projected) })
+          text: (projected >= 0 ? '+' : '') + Math.round(projected) + ' ◈' })
       ));
     }
     card.appendChild(sess);
@@ -15038,7 +15176,9 @@ function renderCashView(gameMode) {
   clear(view);
   ensureCashLobby();
   const isBB = gameMode === 'bb';
-  const variantFilter = isBB ? ['bb'] : ['pure', 'yj'];
+  // Pure NLHE is variant-agnostic (no honey, no stroke ledger — just chips), so it
+  // belongs in both lobbies; the stroke variant is the one that's lobby-specific.
+  const variantFilter = isBB ? ['bb', 'pure'] : ['pure', 'yj'];
   const filteredTables = CashLobby.tables.filter(t => variantFilter.indexOf(t.variant) !== -1);
   const labelTitle = isBB ? '🌼 Bumblebee Cash' : '🐝 Yellow Jacket Cash';
   const labelSub = isBB
@@ -15206,9 +15346,9 @@ function renderCashView(gameMode) {
 
     const hint = el('div', { class: 'ui-sans', style: 'font-size:11px; opacity:0.65; margin-top:14px; line-height:1.5;' });
     if (isBB) {
-      hint.innerHTML = '<strong>Bumblebee Cash — the Tour at the cash table, gentler side.</strong> You\'re still on the Tour; you\'re just playing a cash format inside it. Showdown losers score their own hand class (-5..+2) — flush-loser still posts -1 birdie. Gentler ledger, golf-realistic scoring band. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Dual ledger: Nectar P/L (chip stack) + per-hand stroke score (integer, from hand class), settled at session end as +$0.50 per net stroke. Strokes you bank here count toward your Tour reputation.';
+      hint.innerHTML = '<strong>Bumblebee Cash — the Tour at the cash table, gentler side.</strong> You\'re still on the Tour; you\'re just playing a cash format inside it. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker inside the Tour ecosystem). <strong>Bumblebee Stroke</strong> runs the same parallel stroke ledger as YJ Stroke, but the showdown loser banks their own hand class instead of a fixed Bogey Loss — so a flush that loses the pot still banks credit, not a debit. On the ledger higher is better, like chips: a strong showdown banks more, a weak one banks less; the σ pill on each seat is that player\'s running ledger. It settles at session end at +◈0.5 per net credit and counts toward your Tour reputation.';
     } else {
-      hint.innerHTML = '<strong>Yellow Jacket Cash — the Tour at the cash table.</strong> You\'re still on the Tour; cash play is just a different format within it. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker, played inside the Tour ecosystem). <strong>YJ Stroke</strong> adds a parallel integer stroke score per hand (from hand class) with Bogey Loss (loser fixed +1) — sharper skill expression, settled at session end as +$0.50 per net stroke. Strokes earned here count toward your Tour reputation. Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a>.';
+      hint.innerHTML = '<strong>Yellow Jacket Cash — the Tour at the cash table.</strong> You\'re still on the Tour; cash play is just a different format within it. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker inside the Tour ecosystem). <strong>YJ Stroke</strong> adds a parallel stroke ledger: every showdown banks stroke-credit by hand class — a strong hand banks more; the Bogey Loss (the showdown loser, fixed) banks −1. Higher is better, like chips; the σ pill on each seat is that player\'s running ledger. It settles at session end at +◈0.5 per net credit and counts toward your Tour reputation. Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a> (the loser banks their own hand instead of a fixed −1).';
     }
     lobby.appendChild(hint);
     view.appendChild(lobby);
@@ -26428,6 +26568,12 @@ function init() {
   setHoneyMagnitude(LabState.config.honeyMagnitude);
   setPotElasticK(LabState.config.potElasticK);
   setBackNineMultiplier(LabState.config.backNineOpenerMultiplier);
+  // v69.61 — lock the honey-cap mode at boot so interactive matches (SP/MP), which
+  // read CurrentHoneyCapMode via honeyDivisorFor, use the configured calibration
+  // ('calibrated' by default) instead of whatever was left over (boot previously
+  // skipped this, leaving the module default 'spec'; a prior sim run would flip it
+  // to 'calibrated' — so the same interactive match's honey divisor was nondeterministic).
+  setHoneyCapMode((LabState.config.honeyCapMode === 'spec') ? 'spec' : 'calibrated');
 
   // Unified royal-purple-honey-garden — applies trim accents to every view.
   document.body.classList.add('unified-honey-garden');

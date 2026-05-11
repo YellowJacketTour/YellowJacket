@@ -126,6 +126,8 @@ Tour events are the WSOP/PGA-style format: pay a buy-in, play a fixed-length tou
 - **Multiplayer · Share-Link** — heads-up async by URL
 - **Simulator** — mass-simulate full seasons with population AI
 
+The interactive heads-up modes (Single Player, Hot-Seat, Share-Link) run the full canonical engine — the mandatory opener (doubled on the back 9 of each 18-hole stretch), agreed-total wagering under the hole-envelope **E** + pot-elastic **K** cap (§3.6), and the round-end honey cap (§3.5). Each match lets you set the hole count (9 / 18 / 36 / 72), the per-hole cap (the envelope E, default E = 3, or a legacy fixed cap), and — in Multiplayer — the scoring variant (§3.8); Single Player inherits the Simulator's variant.
+
 ### 3.2 The three event tiers
 
 | Tier | Default buy-in | Field | Frequency |

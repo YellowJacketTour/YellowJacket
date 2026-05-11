@@ -34,14 +34,14 @@ Same engine, same wagering primitives, same caps. Only the loser score differs.
 The sidebar has 19 tabs covering four product areas:
 
 ### Play
-- **Single Player** — heads-up vs a Yellow Jacket AI. Pick a skill tier (Beginner / Casual / Pro / Elite), match length, and stroke cap.
-- **Multiplayer · Hot-Seat** — two humans, one device. Pass-the-laptop with a cover overlay so each player only sees their own cards.
-- **Multiplayer · Share-Link** — chess-by-mail. Make your move, copy the encoded URL, send it. Each state carries a checksum so tampering is detectable.
-- **Yellow Jacket Cash** — the Tour at the cash table. 6-max drop-in cash tables with three sub-variants:
-  - **Pure NLHE** — standard cash poker inside the Tour ecosystem, Nectar P/L only
-  - **YJ Stroke** — adds an integer stroke ledger per hand (Bogey Loss), settles to Nectar at cashout at +$0.50 per net stroke. Strokes earned here count toward your Tour reputation.
+- **Single Player** — heads-up vs a Yellow Jacket AI. Pick a skill tier (Beginner / Casual / Pro / Elite), match length (9 / 18 / 36 / 72 holes), and the per-hole cap — the hole envelope **E** (E × honey-cap(round length); E = 3 ≈ 27 honey/hole on an 18-hole match, the same default the simulator ships) or a legacy fixed cap (Regular 6 / Major 9 / Main-finals 18). The match uses the full canonical engine: the mandatory opener doubled on the back 9, agreed-total wagering under the hole-envelope + pot-elastic-K cap, the round-end honey cap, and the Simulator's scoring variant.
+- **Multiplayer · Hot-Seat** — two humans, one device. Pass-the-laptop with a cover overlay so each player only sees their own cards. A "Match settings" panel picks holes, per-hole cap, and variant (Yellow Jacket / Bumblebee) for the match.
+- **Multiplayer · Share-Link** — chess-by-mail. Make your move, copy the encoded URL, send it. Each state carries a checksum so tampering is detectable; the URL also carries the match's hole count, cap, and variant so the opponent loads it configured.
+- **Yellow Jacket Cash** — the Tour at the cash table. 6-max drop-in cash tables. Cash chips are Nectar 1:1 — no honey at cash. Two sub-variants:
+  - **Pure NLHE** — standard cash poker inside the Tour ecosystem, Nectar P/L only (variant-agnostic, so it's listed in both cash lobbies)
+  - **YJ Stroke** — adds a parallel stroke ledger per showdown (banked by hand class; on the ledger higher is better, like chips — a strong showdown banks more, a Bogey Loss banks −1), settles to Nectar at cashout at +◈0.5 per net credit. Credit earned here counts toward your Tour reputation.
   - Multi-table support (up to 6 tables open simultaneously), keyboard shortcuts, time bank, pre-actions, opponent HUD, four-color deck, run-it-twice, all-in confirm
-- **Bumblebee Cash** — the Tour at the cash table, gentler side. Same engine in pastel-kawaii skin, Honored Loss scoring (loser scores own hand class). Auto-toggles a particle/foley aesthetic when seated. Strokes count toward your Tour reputation here too.
+- **Bumblebee Cash** — the Tour at the cash table, gentler side. Same engine in pastel-kawaii skin; offers Pure NLHE plus **Bumblebee Stroke** (the same stroke ledger as YJ Stroke, but the showdown loser banks their own hand class instead of a fixed Bogey Loss — a flush that loses the pot still banks credit). Auto-toggles a particle/foley aesthetic when seated. Credit counts toward your Tour reputation here too.
 
 ### Simulate
 - **Simulator** — run 1 to 100 seasons over a pool of up to 100,000 players. Two modes:
