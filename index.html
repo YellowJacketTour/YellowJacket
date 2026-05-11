@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.11-v69.53-ship-envelope-default";
+const APP_VERSION = "2026.05.11-v69.53.1-expose-pot-elastic-k";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -23954,16 +23954,18 @@ function renderConfigPanel(panel, mode) {
 
   // === HOLE ENVELOPE (v69.51) ============================================
   // Each player wagers up to E strokes' worth of Honey per hole — replacing the
-  // per-tier strokeCap config with a uniform stroke-denominated rule. Default
-  // E=0 preserves legacy strokeCap behavior; E=2 is the conjectured sweet spot.
+  // per-tier strokeCap config with a uniform stroke-denominated rule.
+  // v69.53 ship default: E=3 (validated at pool=1000 / seasons=100 / seed=42).
+  // E=0 preserves legacy strokeCap behavior for A/B sweeps.
   const heRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
   heRow.appendChild(el('label', { text: 'Hole envelope', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
   const heSel = el('select', { style: 'width: 100%;' });
   [
     { v: 0, label: '0  —  Legacy per-tier strokeCaps (regular 6 / major 9 / main 8 / mainFinals 18)' },
     { v: 1, label: '1  —  1 stroke per hole  (≈ today\'s cap for majors at 18-hole rounds)' },
-    { v: 2, label: '2  —  2 strokes per hole  (conjectured sweet spot · ~3× current bet variance)' },
-    { v: 3, label: '3  —  3 strokes per hole  (aggressive · risks fluky champions)' },
+    { v: 2, label: '2  —  2 strokes per hole  (conservative · narrower bet variance)' },
+    { v: 3, label: '3  —  3 strokes per hole  ★ v69.53 ship default · validated' },
+    { v: 4, label: '4  —  4 strokes per hole  (aggressive · widest bet variance)' },
   ].forEach(o => {
     const opt = el('option', { value: String(o.v), text: o.label });
     if ((+LabState.config.holeEnvelopeStrokes || 0) === o.v) opt.selected = true;
@@ -23979,7 +23981,45 @@ function renderConfigPanel(panel, mode) {
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'When E > 0, the per-hole pot ceiling is derived uniformly as E × honeyDivisorFor(roundLength). Under calibrated honey cap: E=2 → 18 honey/player/hole at 18-hole rounds (vs current regular 6 / major 9), 72 honey/player at 72-hole Main finals (vs current 18). The wagering layer becomes expressive enough that fold cost varies meaningfully across pot sizes, and skill edges accumulate to a clearer finish-position gradient across deep fields. Loosen per-hole bets like poker without losing the per-hole golf identity — no chip stacks, no bust-out, every player plays every hole.'
+    text: 'When E > 0, the per-hole pot ceiling is derived uniformly as E × honeyDivisorFor(roundLength). Under calibrated honey cap at the v69.53 default E=3: 27 honey/player/hole at 9- and 18-hole rounds (vs legacy regular 6 / major 9), 108 honey/player at 72-hole Main finals (vs legacy 18). The wagering layer becomes expressive enough that fold cost varies meaningfully across pot sizes, and skill edges accumulate to a clearer finish-position gradient across deep fields. Loosen per-hole bets like poker without losing the per-hole golf identity — no chip stacks, no bust-out, every player plays every hole.'
+  }));
+
+  // === POT-ELASTIC K (v69.53) ============================================
+  // K controls how fast each betting street's cap grows with the pot already
+  // committed. The cap on every street is:
+  //     streetCap = min( totalCap × 3 ,  ⌈ K × agreedTotal ⌉ )
+  // where totalCap = the hole envelope ceiling (E × honeyDivisorFor(round))
+  // and agreedTotal = total Honey both players committed entering this street.
+  // K=5 (v69.53 ship default) lets the pot grow ~5× the prior street's
+  // commitment per street, hitting the envelope ceiling only late in big
+  // hands. K=3 is the conservative pre-v69.53 default. K=0 disables elastic
+  // entirely (cap = totalCap × 3 always — flat ceiling, never grows with pot).
+  const kRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  kRow.appendChild(el('label', { text: 'Pot elastic K', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const kSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 0, label: '0  —  Flat ceiling, no pot elasticity (cap = envelope × 3 always)' },
+    { v: 3, label: '3  —  Conservative pre-v69.53 default · slower escalation' },
+    { v: 5, label: '5  —  ★ v69.53 ship default · validated · ~5× pot growth per street' },
+    { v: 8, label: '8  —  Aggressive · pot snaps to envelope ceiling sooner' },
+  ].forEach(o => {
+    const opt = el('option', { value: String(o.v), text: o.label });
+    const current = Number.isFinite(+LabState.config.potElasticK) ? +LabState.config.potElasticK : 5;
+    if (current === o.v) opt.selected = true;
+    kSel.appendChild(opt);
+  });
+  kSel.onchange = () => {
+    LabState.config.potElasticK = +kSel.value;
+    setPotElasticK(+kSel.value);                          // takes effect on the next run
+    saveLabState();
+    toast('Pot elastic K: ' + kSel.value + (kSel.value === '0' ? ' (flat ceiling)' : '× pot per street'));
+  };
+  kRow.appendChild(kSel);
+  evSec.appendChild(kRow);
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Worked example for a Major round (18 holes, E=3 calibrated → envelope=27, ceiling=81): preflop pot=2 → cap=10 (K=5); flop pot=8 → cap=40; turn pot=24 → ceiling clamps at 81; river → 81. K=3 same hand: 6/24/72/81 — slower acceleration, fewer big-pot showdowns. K is the pot\'s "acceleration"; E is its "speed limit." Both knobs ride together — sweep them as a pair if you want to feel the interaction.'
   }));
 
   // === TABLE SIZE TOGGLE (v69) ============================================
