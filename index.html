@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.11-v69.65-cash-golf-scorecard";
+const APP_VERSION = "2026.05.11-v69.68-pot-gated-cap2-default";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -2687,6 +2687,76 @@ function setStrokeCap(n) { CurrentStrokeCap = Math.max(1, Math.min(10, (+n) || 3
 // changes don't alter an in-progress game.
 let CurrentLoserBogey = false;
 function setLoserBogey(b) { CurrentLoserBogey = !!b; }
+// SCORING TOGGLE (v69.66): the golf score a Yellow-Jacket showdown LOSER posts
+// when they reached the green holding only a HIGH CARD (a "brick" — no pair, no
+// draw made). Default 1 (a flat bogey, identical to every other non-straight+
+// loss — classic Yellow Jacket). Set to 2 to make it a DOUBLE bogey, which is
+// strictly worse than folding (fold = +1 bogey) — so a skilled player folds (or
+// bluffs an opponent into folding) a brick rather than showing it down. This is
+// the lever that puts pre-flop hand-selection discipline and bluff equity back
+// into the honey-stroke game: at +1, showing down a brick costs the same as
+// folding, so the AI never folds pre-flop; at +2 the bottom slice of starting
+// hands becomes a clear fold. Only affects Yellow Jacket (loserBogey=true) —
+// under Bumblebee a high-card loser already posts +2 (their own hand class).
+// playHole / golfScoresFromShowdown / playMultiWayStrokeEvent read this global;
+// decideFor's showdown-EV golf term branches on it so the AI plays accordingly.
+let CurrentHighCardShowdownLoss = 1;
+function setHighCardShowdownLoss(n) {
+  const v = Math.round(+n);
+  CurrentHighCardShowdownLoss = (Number.isFinite(v) && v >= 1) ? v : 1;
+}
+// v69.67 — BRICK PENALTY MODE. Selects the rule used to score a Yellow-Jacket
+// showdown loser who held only a high card (a "brick"):
+//   'flat'       — loser posts CurrentHighCardShowdownLoss (1 = classic bogey,
+//                  2 = anchored double-bogey from the v69.66 experiment).
+//                  Same penalty regardless of how much honey was committed.
+//   'pot-gated'  — loser posts `1 + max(0, floor((T - opener) / opener))`,
+//                  capped at CurrentBrickLossCap. So a brick at the opener
+//                  costs +1 (bogey — unchanged from today), a brick after one
+//                  opener-multiple of additional betting costs +2, then +3,
+//                  +4… capped. This mirrors the fold cost's own pot-dependence
+//                  (fold = +1 + T/divisor) and restores fold/bluff equity
+//                  proportional to pot size — small pots stay gentle, big-pot
+//                  bricks get punished hard. Only affects Yellow Jacket; under
+//                  Bumblebee a brick loser already posts their own +2.
+let CurrentBrickPenaltyMode = 'flat';
+function setBrickPenaltyMode(m) {
+  CurrentBrickPenaltyMode = (m === 'pot-gated') ? 'pot-gated' : 'flat';
+}
+let CurrentBrickLossCap = 4;
+function setBrickLossCap(n) {
+  const v = Math.round(+n);
+  CurrentBrickLossCap = (Number.isFinite(v) && v >= 1) ? Math.min(20, v) : 4;
+}
+// Mandatory-opener honey for a given hole number (1-indexed). Front 9 of each
+// 18-hole stretch = 2; back 9 (round-internal hole index ≥ 9) = 2 × the
+// back-9 opener multiplier (default 2 → 4). Mirrors playMatch's per-hole
+// `baseOpener * (h>=9 ? back9Mult : 1)` so the brick formula and the AI's
+// EV calc see the same opener.
+function openerForHoleNumber(holeNumber, backNineMultOverride) {
+  const n = (Number.isFinite(+holeNumber) && +holeNumber > 0) ? +holeNumber : 1;
+  const mult = (Number.isFinite(+backNineMultOverride) && +backNineMultOverride > 0)
+    ? +backNineMultOverride
+    : (Number.isFinite(+CurrentBackNineMultiplier) && +CurrentBackNineMultiplier > 0 ? +CurrentBackNineMultiplier : 1);
+  const hIdx = (n - 1) % 18;
+  return 2 * (hIdx >= 9 ? mult : 1);
+}
+// Resolve the brick (cat=0 showdown-loss) penalty given the agreed total T at
+// showdown and the hole's mandatory opener. Under 'flat' mode, returns the
+// global CurrentHighCardShowdownLoss; under 'pot-gated', computes the scaled
+// value `1 + max(0, floor((T - opener) / opener))` capped at the brick-loss cap.
+// Always returns ≥ 1 (the bogey floor).
+function resolveBrickLoss(T, opener) {
+  if (CurrentBrickPenaltyMode === 'pot-gated') {
+    const op = (Number.isFinite(+opener) && +opener >= 1) ? +opener : 2;
+    const t  = (Number.isFinite(+T) && +T >= op) ? +T : op;
+    const cap = (Number.isFinite(+CurrentBrickLossCap) && +CurrentBrickLossCap >= 1) ? +CurrentBrickLossCap : 4;
+    return Math.max(1, Math.min(cap, 1 + Math.max(0, Math.floor((t - op) / op))));
+  }
+  const flat = (Number.isFinite(+CurrentHighCardShowdownLoss) && +CurrentHighCardShowdownLoss >= 1)
+    ? Math.round(+CurrentHighCardShowdownLoss) : 1;
+  return flat;
+}
 // v56 BACK-9 OPENER DOUBLING. On the back 9 of any round (hole index ≥ 9),
 // the mandatory starting pot is multiplied by this factor. Default 2 doubles
 // the opener: front 9 stays at 2 honey, back 9 becomes 4 honey. Sunday-back-9
@@ -3347,20 +3417,36 @@ function golfScoreFromHandValue(hv) {
 // legacy single-arg scoring is used (preserves v59 calibration for A/B sweeps).
 //
 // Returns: { winner, loser }
-function golfScoresFromShowdown(winnerHv, loserHv, useLoserBogey) {
+// hcSpec (optional, v69.67): EITHER a number (legacy back-compat — used as the
+// flat brick-loss value, overriding the global) OR an object { T, opener } so
+// the function can compute the pot-gated penalty when the brick mode is set.
+// The interactive game passes g's snapshot so a mid-match config change can't
+// perturb an in-progress hole.
+function golfScoresFromShowdown(winnerHv, loserHv, useLoserBogey, hcSpec) {
   const wCat = winnerHv >>> 24;
   const lCat = loserHv >>> 24;
   const winnerBase = golfScoreFromHandValue(winnerHv);
   const loserBase  = golfScoreFromHandValue(loserHv);
+  let brickLoss;
+  if (typeof hcSpec === 'number' && Number.isFinite(hcSpec) && hcSpec >= 1) {
+    brickLoss = Math.round(hcSpec);                                 // explicit flat override
+  } else if (hcSpec && typeof hcSpec === 'object' && Number.isFinite(+hcSpec.T) && Number.isFinite(+hcSpec.opener)) {
+    brickLoss = resolveBrickLoss(+hcSpec.T, +hcSpec.opener);         // pot-gated (if mode says so) or flat fallback
+  } else {
+    brickLoss = resolveBrickLoss(NaN, NaN);                          // flat fallback (NaN routes through the flat branch)
+  }
 
   let winner = winnerBase;
   let loser;
 
   if (useLoserBogey) {
-    // Yellow Jacket variant default: loser posts +1 bogey UNLESS they had a
-    // respected hand (straight or better, category 4+). Respected losses
-    // post the loser's own hand-class score — softer than the flat bogey.
-    loser = (lCat >= 4) ? loserBase : 1;
+    // Yellow Jacket variant: loser posts +1 bogey UNLESS (a) they had a
+    // respected hand (straight or better, category 4+) → post their own
+    // hand-class score, softer than the flat bogey; or (b) v69.66 — they
+    // reached the green holding only a high card (category 0, a "brick") →
+    // post the brick-loss value (1 = flat bogey/classic; 2 = double bogey,
+    // restores fold/bluff equity).
+    loser = (lCat >= 4) ? loserBase : (lCat === 0 ? brickLoss : 1);
   } else {
     // Bumblebee variant: each player posts own hand-class score, always.
     loser = loserBase;
@@ -3737,17 +3823,43 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   // term branches on variant.
   const loserBogey = (gameContext && typeof gameContext.loserBogey === 'boolean')
     ? gameContext.loserBogey : CurrentLoserBogey;
+  // v69.66/67 — the brick-loss machinery. The penalty for a cat=0 showdown loss
+  // can be flat (v69.66) or pot-gated (v69.67). For decideFor's EV calc we need
+  // the opener so we can compute the pot-gated penalty *at the level under
+  // consideration* — bricks at a small pot cost +1 (bogey), bricks at a pot
+  // grown several opener-multiples cost +2/+3/+4… (cap). The sim's
+  // buildGameContext stamps gameContext.openerHoney; the interactive solo path
+  // doesn't, so we fall back to deriving it from the hole number.
+  const opener = (gameContext && Number.isFinite(+gameContext.openerHoney) && +gameContext.openerHoney >= 1)
+    ? +gameContext.openerHoney
+    : openerForHoleNumber(gameContext && gameContext.holeNumber);
   function showEV(adjVal, level) {
     // Honey term (zero-sum at level): unchanged by variant.
     const honeyTerm = (2 * adjVal - 1) * level;
     // Golf term — expected own-golf at showdown, in honey-equivalent units:
     //   Bumblebee (loserBogey=false): both score own hand. Linear fit ≈ 1.5 − 4a
     //     across the equity range; matches v23 behavior.
-    //   Yellow Jacket (loserBogey=true): winner scores own hand, loser +1 fixed.
-    //     E[g_YJ] = a·w(a) + (1−a)·1 with winner-conditional fit w(a) ≈ −1−2a
-    //            ≈ 1 − 2a − 2a²
+    //   Yellow Jacket (loserBogey=true): winner scores own hand; loser posts +1
+    //     bogey UNLESS they bricked (cat=0 high card), in which case they post
+    //     the brick penalty (flat or pot-gated; see resolveBrickLoss). The v23
+    //     baseline `1 − 2a − 2a²` linear-fits E[own golf] under the original
+    //     "+1 flat loser" rule. v69.67 — when the brick penalty at THIS level
+    //     exceeds 1, the (you-lose AND you-bricked) slice adds (penalty − 1)
+    //     per occurrence. Modeling P(brick | you lose at equity a) as
+    //     max(0, 0.55 − 0.8·a) — a smooth decay from ~0.5 at a→0 (very low
+    //     equity → you whiffed) to ~0 by a≈0.7 (strong hand → doesn't brick)
+    //     — gives the probability-grounded delta. At penalty=1 this reduces
+    //     EXACTLY to the legacy formula (delta = 0). Under pot-gated mode the
+    //     AI sees the penalty climb as `level` grows, so it folds bricks to
+    //     big bets — exactly the fold/bluff equity the flat-mode lever
+    //     couldn't manufacture.
+    const brickPenaltyAtLevel = loserBogey
+      ? resolveBrickLoss(level, opener)
+      : 1;
+    const brickProb = Math.max(0, 0.55 - 0.8 * adjVal);
+    const brickDelta = (brickPenaltyAtLevel - 1) * (1 - adjVal) * brickProb;
     const golfTerm = loserBogey
-      ? (1 - 2 * adjVal - 2 * adjVal * adjVal)
+      ? (1 - 2 * adjVal - 2 * adjVal * adjVal) + brickDelta
       : (1.5 - 4 * adjVal);
     return honeyTerm - golfTerm * divisor;
   }
@@ -3755,7 +3867,20 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     // Larger relative raise → more fold equity. Capped at 0.5 so AI can't price
     // opponents out unrealistically. raiseAmount/newLevel, bounded.
     const raiseAmount = Math.max(0, newLevel - agreedTotal);
-    return Math.max(0, Math.min(0.5, raiseAmount / Math.max(1, newLevel)));
+    let fe = Math.max(0, Math.min(0.5, raiseAmount / Math.max(1, newLevel)));
+    // v69.68 — under pot-gated brick mode, a raise that pushes the agreed total
+    // past an opener-multiple turns a defender's brick from +k into +(k+1),
+    // which is strictly worse for them than folding (fold = +1 + T/divisor).
+    // So a bet that crosses a brick-penalty step generates extra fold equity
+    // against the ~15-25% of hands that are bricks. Small, conservative bump
+    // (~+5% per step crossed) so the AI's bluffing is *aware* of the new rule
+    // — both the live decision and the EV metric use this, so the metric stays
+    // consistent with the game theory.
+    if (loserBogey && CurrentBrickPenaltyMode === 'pot-gated') {
+      const stepUp = resolveBrickLoss(newLevel, opener) - resolveBrickLoss(agreedTotal, opener);
+      if (stepUp > 0) fe = Math.min(0.55, fe + 0.05 * stepUp);
+    }
+    return fe;
   }
   function betEV(adjVal, newLevel) {
     const fe = foldEqFor(newLevel);
@@ -4554,12 +4679,15 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
   let aScore, bScore;
   const scoringCfg = (typeof LabState !== 'undefined' && LabState.config && LabState.config.scoring) || {};
   const useMatrix = scoringCfg.useShowdownMatrix !== false;
+  // v69.67 — pass the agreed total + hole opener so the brick penalty can
+  // pot-gate if the mode is enabled (flat mode ignores T/opener).
+  const sdCtx = { T: strokes, opener: (gameContext && +gameContext.openerHoney >= 1) ? +gameContext.openerHoney : 2 };
   if (useMatrix) {
     if (cmp > 0) {
-      const r = golfScoresFromShowdown(aH, bH, CurrentLoserBogey);
+      const r = golfScoresFromShowdown(aH, bH, CurrentLoserBogey, sdCtx);
       aScore = r.winner; bScore = r.loser;
     } else {
-      const r = golfScoresFromShowdown(bH, aH, CurrentLoserBogey);
+      const r = golfScoresFromShowdown(bH, aH, CurrentLoserBogey, sdCtx);
       bScore = r.winner; aScore = r.loser;
     }
   } else {
@@ -5396,21 +5524,34 @@ function playMultiwayHole(players, opts) {
   }
 
   // Score. Winner posts hand-class score (or matrix-adjusted vs best loser).
-  // All non-winner active players (showdown losers) post +1 bogey under YJ
-  // variant, or own hand-class under Bumblebee. Folders post +1 bogey under
-  // both variants (uniform fold rule).
+  // All non-winner active players (showdown losers) post under YJ: their own
+  // hand class if it's a straight or better ("respected loss"), CurrentHigh-
+  // CardShowdownLoss if it's a brick (high card — 1 = flat bogey, 2 = double
+  // bogey), else +1 bogey. Under Bumblebee they always post their own hand
+  // class. Folders post +1 bogey under both variants (uniform fold rule).
+  // (v69.66 — multi-way now mirrors golfScoresFromShowdown's per-frame logic,
+  // which it previously didn't: it used to give every YJ loser a flat +1.)
   if (winnerIdx >= 0) {
     perPlayerGolfScore[winnerIdx] = golfScoreFromHandValue(winnerHandValue);
     // Honey: winner takes the pot minus their own contribution; each loser
     // loses their contribution. Per-player honey delta:
     perPlayerHoneyDelta[winnerIdx] = pot - contributions[winnerIdx];
+    // v69.67 — brick (cat=0 loss) uses the resolveBrickLoss helper so the
+    // pot-gated mode applies here too. Pass the agreed total `pot` and the
+    // hole's opener (from opts; falls back to deriving from holeNumber).
+    const mwOpener = (Number.isFinite(+opts.openerPerPlayer) && +opts.openerPerPlayer >= 1 && N === 2)
+      ? +opts.openerPerPlayer                                    // HU multi-way passthrough
+      : openerForHoleNumber(opts.holeNumber || 1);
     for (let i = 0; i < N; i++) {
       if (i === winnerIdx) continue;
       perPlayerHoneyDelta[i] = -contributions[i];
       if (folded[i]) {
         perPlayerGolfScore[i] = 1; // fold bogey
       } else if (useLoserBogey) {
-        perPlayerGolfScore[i] = 1; // YJ-variant loser bogey
+        const lCat = handValues[i] >>> 24;
+        perPlayerGolfScore[i] = (lCat >= 4)
+          ? golfScoreFromHandValue(handValues[i])               // respected loss
+          : (lCat === 0 ? resolveBrickLoss(pot, mwOpener) : 1);  // pot-gated brick / bogey
       } else {
         perPlayerGolfScore[i] = golfScoreFromHandValue(handValues[i]);
       }
@@ -7517,6 +7658,9 @@ function applyInteractiveScoringGlobals(loserBogey) {
   if (Number.isFinite(+c.potElasticK)) setPotElasticK(+c.potElasticK);
   if (Number.isFinite(+c.backNineOpenerMultiplier)) setBackNineMultiplier(+c.backNineOpenerMultiplier);
   setHoneyCapMode(c.honeyCapMode === 'spec' ? 'spec' : 'calibrated');
+  setHighCardShowdownLoss((c.scoring && c.scoring.highCardShowdownLoss) || 1);
+  setBrickPenaltyMode((c.scoring && c.scoring.brickPenaltyMode) || 'flat');
+  setBrickLossCap((c.scoring && c.scoring.brickLossCap) || 4);
 }
 // Build a local (hot-seat / share-link) game with explicit match settings:
 // hole count, per-hole cap spec ("E2"/"E3"/"E4"/"L6"/"L9"/"L18"), and variant.
@@ -7619,6 +7763,9 @@ function aiTakeTurn(g) {
   if (Number.isFinite(g.decisionDivisor)) setDecisionDivisor(g.decisionDivisor);
   if (Number.isFinite(g.honeyMagnitude)) setHoneyMagnitude(g.honeyMagnitude);
   if (Number.isFinite(g.potElasticK)) setPotElasticK(g.potElasticK);
+  if (Number.isFinite(g.highCardShowdownLoss)) setHighCardShowdownLoss(g.highCardShowdownLoss);
+  if (g.brickPenaltyMode) setBrickPenaltyMode(g.brickPenaltyMode);
+  if (Number.isFinite(g.brickLossCap)) setBrickLossCap(g.brickLossCap);
   const profile = g.aiProfile || makeProfileForSkill(0.40);
   // v23 decideFor signature:
   //   (cards, community, currentProposal, agreedTotal, isPending,
@@ -7683,6 +7830,9 @@ function createLocalGame(p1name, p2name, mode) {
     decisionDivisor: CurrentDecisionDivisor,
     honeyMagnitude: CurrentHoneyMagnitude,
     potElasticK: CurrentPotElasticK,
+    highCardShowdownLoss: CurrentHighCardShowdownLoss,   // v69.66 — flat brick-loss
+    brickPenaltyMode: CurrentBrickPenaltyMode,           // v69.67 — 'flat' | 'pot-gated'
+    brickLossCap: CurrentBrickLossCap,                   // v69.67 — pot-gated cap
   };
 }
 
@@ -8871,7 +9021,13 @@ function resolveMPHole(g) {
         && LabState.config.scoring && LabState.config.scoring.useShowdownMatrix !== false);
       let winnerGolf, loserGolf;
       if (useMatrix) {
-        const r = golfScoresFromShowdown(winnerHand, loserHand, !!g.loserBogey);
+        // v69.67 — pass {T, opener} so the brick penalty can pot-gate if the
+        // snapshot mode is set. Falls back to g.highCardShowdownLoss (flat) if
+        // the game pre-dates this snapshot field.
+        const sdCtx = (g.brickPenaltyMode === 'pot-gated')
+          ? { T: c.agreedTotal, opener: openerForHoleNumber(g.holeNum) }
+          : (Number.isFinite(+g.highCardShowdownLoss) ? +g.highCardShowdownLoss : undefined);
+        const r = golfScoresFromShowdown(winnerHand, loserHand, !!g.loserBogey, sdCtx);
         winnerGolf = r.winner; loserGolf = r.loser;
       } else {
         winnerGolf = golfScoreFromHandValue(winnerHand);
@@ -20745,6 +20901,40 @@ const DEFAULT_SIM_CONFIG = {
   // calibration for A/B sweeps).
   scoring: {
     useShowdownMatrix: true,
+    // v69.66 BRICK DOUBLE-BOGEY. Under Yellow Jacket, the golf score a showdown
+    // loser posts when they hold only a HIGH CARD ("brick" — nothing made).
+    //   1 — flat bogey, same as any other non-straight+ loss. Classic Yellow
+    //       Jacket. Side effect: showing down a brick costs exactly what folding
+    //       costs, so the AI never folds pre-flop and bluffing barely matters.
+    //   2 — DOUBLE bogey, strictly worse than folding (+1). A skilled player
+    //       folds (or bluffs into folding) a brick instead of showing it down →
+    //       pre-flop hand selection and bluff equity come back. Bumblebee is
+    //       unaffected (a high-card loser already posts +2 there).
+    // Exposed in the Simulator → Advanced as the "Brick loss" control.
+    highCardShowdownLoss: 1,
+    // v69.67/68 BRICK PENALTY MODE — selects how a cat=0 high-card showdown
+    // loss is scored under Yellow Jacket.
+    //   'flat'      — uses highCardShowdownLoss directly (1 = classic bogey,
+    //                 2 = anchored double bogey). brickLossCap ignored.
+    //   'pot-gated' — `1 + max(0, floor((T - opener)/opener))` capped at
+    //                 brickLossCap. T = agreed total at showdown; opener =
+    //                 the hole's mandatory pot (2 front-9, 4 back-9). So a
+    //                 brick that checked through to the opener still costs +1
+    //                 (no change); a brick that BET into the pot costs +2
+    //                 (with cap 2). This mirrors the fold cost's own
+    //                 pot-dependence (fold = +1 + T/divisor) — folding a brick
+    //                 to a bet becomes strictly correct and bluffs threaten
+    //                 a double bogey. Bumblebee is unaffected either way.
+    // v69.68 SHIP DEFAULT: 'pot-gated', cap 2. Validated at pool=1000 /
+    // seasons=100 / seed=42 — preserves authoredVsMeasured (−14%), skillSpearman
+    // (−2%), eliteMajorDominance (+4%) vs the flat-+1 baseline, while lifting
+    // event-level skill expression ~5× and shifting regular champions ~2.5
+    // strokes shallower (−5 → −7.5 → −4.9) without breaking the deep-sub-par
+    // texture (84% of regular champions still below par). Cap 4 overshoots
+    // (skill metrics −25..−82%, Main goes anti-skill); flat +2 is a milder
+    // trade. 'pot-gated'/2 sits at the knee of the fold-equity ↔ skill curve.
+    brickPenaltyMode: 'pot-gated',
+    brickLossCap: 2,
   },
   // v56 BACK-9 OPENER DOUBLING. On the back 9 of any 18-hole round (hole
   // index ≥ 9 within the round), the mandatory opening pot multiplies by
@@ -21957,6 +22147,9 @@ async function runLabSession(cfg, onProgress) {
   setHoneyMagnitude(cfg.honeyMagnitude);
   setPotElasticK(cfg.potElasticK);
   setBackNineMultiplier(cfg.backNineOpenerMultiplier);
+  setHighCardShowdownLoss((cfg.scoring && cfg.scoring.highCardShowdownLoss) || 1);
+  setBrickPenaltyMode((cfg.scoring && cfg.scoring.brickPenaltyMode) || 'flat');
+  setBrickLossCap((cfg.scoring && cfg.scoring.brickLossCap) || 4);
   // v69.49 — lock the Honey divisor mode for this run. honeyDivisorFor() reads
   // CurrentHoneyCapMode; setting it here so every gameContext built
   // downstream uses the active calibration consistently. Snapshotted into the
@@ -23323,6 +23516,20 @@ function _exportRunToCSVImpl(snap) {
   // (respected loss + cooler bonus) layer on top of the base hand-class scores.
   cfgRow('scoring.useShowdownMatrix',
     snapCfg.scoring && snapCfg.scoring.useShowdownMatrix !== false);
+  // v69.66/67 — brick loss control.
+  const _brickMode = (snapCfg.scoring && snapCfg.scoring.brickPenaltyMode === 'pot-gated') ? 'pot-gated' : 'flat';
+  cfgRow('scoring.brickPenaltyMode', _brickMode + (_brickMode === 'pot-gated'
+    ? ' (1 + floor((T − opener)/opener), capped — EV-balanced)'
+    : ' (highCardShowdownLoss is flat)'));
+  cfgRow('scoring.highCardShowdownLoss',
+    (snapCfg.scoring && Number.isFinite(+snapCfg.scoring.highCardShowdownLoss)
+      ? +snapCfg.scoring.highCardShowdownLoss : 1)
+      + (_brickMode === 'pot-gated' ? ' (unused — pot-gated mode active)'
+        : (snapCfg.scoring && +snapCfg.scoring.highCardShowdownLoss >= 2) ? ' (flat brick double-bogey)' : ' (flat bogey)'));
+  if (_brickMode === 'pot-gated') {
+    cfgRow('scoring.brickLossCap',
+      (snapCfg.scoring && Number.isFinite(+snapCfg.scoring.brickLossCap) ? +snapCfg.scoring.brickLossCap : 4));
+  }
   // Fold decision math.
   cfgRow('decision.foldRule', 'pot-odds + EV (Honey-Stroke polarity)');
   cfgRow('decision.foldOptSlack', 0.20);
@@ -24298,6 +24505,72 @@ function renderConfigPanel(panel, mode) {
     text: 'Worked example for a Major round (18 holes, E=3 calibrated → envelope=27, ceiling=81): preflop pot=2 → cap=10 (K=5); flop pot=8 → cap=40; turn pot=24 → ceiling clamps at 81; river → 81. K=3 same hand: 6/24/72/81 — slower acceleration, fewer big-pot showdowns. K is the pot\'s "acceleration"; E is its "speed limit." Both knobs ride together — sweep them as a pair if you want to feel the interaction.'
   }));
 
+  // === BRICK LOSS (v69.66 / v69.67) ======================================
+  // Under Yellow Jacket, the golf a showdown LOSER posts holding only a high
+  // card ("brick" — no pair, no draw made). Three modes:
+  //   flat-1     — Classic Yellow Jacket. Flat +1 bogey, same as fold. AI never
+  //                folds pre-flop and bluffing barely bites (fold cost = loss
+  //                cost when nothing else changes); this is the v23 baseline.
+  //   flat-2     — Anchored double bogey. Strictly worse than folding (+1), so
+  //                the worst-equity starting hands flip to folds. Tested at
+  //                v69.66 / v69.67 — moves fold rate a hair (~0.2%) but the
+  //                penalty doesn't scale with pot size, so big-pot bluffs
+  //                don't bite either. Mild bump in event-level skill (~2.5×).
+  //   pot-gated  — EV-balanced. brick = 1 + max(0, floor((T - opener)/opener))
+  //                capped at +4. A brick at the opener stays at +1 (no change);
+  //                a brick after 1 opener-multiple of bets posts +2; +3, +4…
+  //                The cost MIRRORS the fold cost's own pot-dependence
+  //                (fold = +1 + T/divisor), so folding bricks to big bets
+  //                becomes strictly correct AND bluffs threaten progressively
+  //                worse bogeys — fold/bluff equity returns proportional to
+  //                pot size. Bumblebee is unaffected.
+  const hcRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  hcRow.appendChild(el('label', { text: 'Brick loss', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const hcSel = el('select', { style: 'width: 100%;' });
+  // key encodes mode + (for pot-gated) cap. Picking one writes both the mode
+  // and the cap into LabState.config.scoring AND syncs the live globals.
+  [
+    { key: 'flat-1',   mode: 'flat',      cap: null, hc: 1, label: 'Flat +1 bogey  (classic — fold cost = loss cost, no fold/bluff equity)' },
+    { key: 'flat-2',   mode: 'flat',      cap: null, hc: 2, label: 'Flat +2 double bogey  (anchored — small lift in event skill, no pot-gating)' },
+    { key: 'pg-2',     mode: 'pot-gated', cap: 2,    hc: 1, label: 'Pot-gated · cap +2 ★  +1 at the opener, +2 if you bet into the pot  (EV-balanced — SHIP DEFAULT)' },
+    { key: 'pg-4',     mode: 'pot-gated', cap: 4,    hc: 1, label: 'Pot-gated · cap +4  +1 / +2 / +3 / +4 with the pot  (aggressive — bigger fold gain, but skill metrics degrade)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.key, text: o.label });
+    const sc = LabState.config.scoring || {};
+    const curKey = sc.brickPenaltyMode === 'pot-gated'
+      ? ((Number.isFinite(+sc.brickLossCap) && +sc.brickLossCap > 2) ? 'pg-4' : 'pg-2')
+      : ((Number.isFinite(+sc.highCardShowdownLoss) && +sc.highCardShowdownLoss >= 2) ? 'flat-2' : 'flat-1');
+    if (curKey === o.key) opt.selected = true;
+    opt.dataset.mode = o.mode; if (o.cap != null) opt.dataset.cap = String(o.cap); opt.dataset.hc = String(o.hc);
+    hcSel.appendChild(opt);
+  });
+  hcSel.onchange = () => {
+    if (!LabState.config.scoring) LabState.config.scoring = {};
+    const opt = hcSel.options[hcSel.selectedIndex];
+    const mode = opt.dataset.mode === 'pot-gated' ? 'pot-gated' : 'flat';
+    const hc = +opt.dataset.hc || 1;
+    LabState.config.scoring.brickPenaltyMode = mode;
+    LabState.config.scoring.highCardShowdownLoss = hc;
+    setBrickPenaltyMode(mode);
+    setHighCardShowdownLoss(hc);
+    if (mode === 'pot-gated') {
+      const cap = +opt.dataset.cap || 2;
+      LabState.config.scoring.brickLossCap = cap;
+      setBrickLossCap(cap);
+      toast('Brick loss: pot-gated, cap +' + cap + ' (EV-balanced)');
+    } else {
+      toast('Brick loss: flat +' + hc + (hc === 2 ? ' (anchored double bogey)' : ' (classic bogey)'));
+    }
+    saveLabState();
+  };
+  hcRow.appendChild(hcSel);
+  evSec.appendChild(hcRow);
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Yellow Jacket only — under Bumblebee a high-card loser already posts their own +2. This is the lever that puts pre-flop hand selection and bluff equity into the honey-stroke game. The classic flat +1 makes folding a brick cost the same as showing it down, so neither matters. Pot-gated cap +2 (ship default, validated at pool=1000 / 100 seasons): a brick that checked through to the opener still scores +1, but a brick you BET into scores +2 — so folding a brick to a bet is strictly correct and bluffs threaten a double bogey. The AI\'s showdown-EV math is fully aware of the pot-gated penalty at each level, so it plays accordingly. Cap +4 escalates further (+3/+4 at big pots) — bigger fold gain but the high-variance big-pot bricks degrade the career-skill metrics; flat +2 is a milder middle. Sweep any of them against the same config to see fold rates, bluff frequency, event-level skill signal, and champion-score depth move.'
+  }));
+
   // === TABLE SIZE TOGGLE (v69) ============================================
   // HU (2) is the canonical engine; 6 and 9 route aggregate stroke-play events
   // through the multi-way matched-contribution runner. Per-player honey caps
@@ -24643,6 +24916,9 @@ async function runSimulator(cfg, onProgress) {
   setHoneyMagnitude(cfg.honeyMagnitude);
   setPotElasticK(cfg.potElasticK);
   setBackNineMultiplier(cfg.backNineOpenerMultiplier);
+  setHighCardShowdownLoss((cfg.scoring && cfg.scoring.highCardShowdownLoss) || 1);
+  setBrickPenaltyMode((cfg.scoring && cfg.scoring.brickPenaltyMode) || 'flat');
+  setBrickLossCap((cfg.scoring && cfg.scoring.brickLossCap) || 4);
   // v69.49 — lock the Honey divisor mode for this run. honeyDivisorFor() reads
   // CurrentHoneyCapMode; setting it here so every gameContext built
   // downstream uses the active calibration consistently. Snapshotted into the
@@ -26535,7 +26811,7 @@ function init() {
       mainFinalsStrokeCap: 18,
       // honeyMagnitude removed in v66 (flat divisor table is canonical)
       backNineOpenerMultiplier: 2,
-      scoring: { useShowdownMatrix: true },
+      scoring: { useShowdownMatrix: true, highCardShowdownLoss: 1, brickPenaltyMode: 'pot-gated', brickLossCap: 2 },
       survivalCushion: [12, 8, 5, 3],         // v69 cushion mechanic
       cutSchedule: [null, 0.50, 0.50, null],  // v69 round-boundary cuts
       tableSize: 2,                           // v69 multi-way table size: 2 (HU) | 6 | 9
@@ -26577,6 +26853,9 @@ function init() {
   setHoneyMagnitude(LabState.config.honeyMagnitude);
   setPotElasticK(LabState.config.potElasticK);
   setBackNineMultiplier(LabState.config.backNineOpenerMultiplier);
+  setHighCardShowdownLoss((LabState.config.scoring && LabState.config.scoring.highCardShowdownLoss) || 1);
+  setBrickPenaltyMode((LabState.config.scoring && LabState.config.scoring.brickPenaltyMode) || 'flat');
+  setBrickLossCap((LabState.config.scoring && LabState.config.scoring.brickLossCap) || 4);
   // v69.61 — lock the honey-cap mode at boot so interactive matches (SP/MP), which
   // read CurrentHoneyCapMode via honeyDivisorFor, use the configured calibration
   // ('calibrated' by default) instead of whatever was left over (boot previously

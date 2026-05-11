@@ -305,32 +305,48 @@ The "previously agreed total" matters: if you raise to 8 and opp folds, you gain
 
 Both players hold the same hand value: both score 0 par, the **entire pot rolls forward** to the next hole's mandatory opener. Multiple consecutive ties stack. The next decisive hole's winner sweeps the whole accumulated stack.
 
-### 3.9 Variants — the only difference
+### 3.9 The decisive-showdown loser score (variants + the brick rule)
 
-The build ships **two scoring variants** that share every rule above except one:
+When a hand goes to showdown and is **not** a tie, the winner posts their own hand-class golf value (with the rare cooler bonus — see §7). The **loser's** score is where the two scoring variants diverge:
 
 ```
-   ┌──── YELLOW JACKET (competitive) ──────┐
-   │  Decisive-showdown loser:              │
-   │    +1 bogey, FIXED                     │
-   │    (regardless of hand)                │
-   │                                        │
-   │  Mirrors the fold rule.                │
-   │  Sharper skill expression.             │
-   │  Champion scores climb above par.      │
-   └────────────────────────────────────────┘
+   ┌──── YELLOW JACKET (competitive — default) ────────────────────┐
+   │  Decisive-showdown loser scores:                              │
+   │    • straight or better (cat ≥ 4) → their own hand-class      │
+   │      score, −5..−1 — a "respected loss" (you played a real    │
+   │      hand; you don't deserve a bogey).                        │
+   │    • a pair / two pair / trips (cat 1–3) → +1 bogey.          │
+   │    • only a HIGH CARD — a "brick", nothing made (cat 0):      │
+   │        +1 bogey IF they checked through to the mandatory       │
+   │          opener (no extra honey committed);                    │
+   │        +2 DOUBLE bogey if they BET into the pot (any honey     │
+   │          committed past the opener).                           │
+   │      → the "pot-gated brick" rule: brick = 1 + ⌊(T − opener)   │
+   │        ⁄ opener⌋, where T is the agreed total at showdown and  │
+   │        `opener` is the hole's mandatory pot (2 front-9,        │
+   │        4 back-9), capped at +2.                                │
+   │                                                               │
+   │  Mirrors the fold rule (fold = +1 bogey + the honey forfeit)  │
+   │  AND its pot-dependence: a brick you bet into costs more, just │
+   │  as folding a bigger pot costs more. This is the lever that    │
+   │  makes pre-flop hand selection and bluffing matter — folding a │
+   │  brick to a bet is now strictly correct, and a big bet         │
+   │  threatens a brick with a double bogey.                        │
+   │  Sharper skill expression. Champion scores a few under par.    │
+   └───────────────────────────────────────────────────────────────┘
 
-   ┌──── BUMBLEBEE (casual) ───────────────┐
-   │  Decisive-showdown loser:              │
-   │    Their own hand-class score (-5..+2) │
-   │                                        │
-   │  Flush-loser still posts -1 birdie.    │
-   │  "Your hand always counts."            │
-   │  Champion scores closer to par.        │
-   └────────────────────────────────────────┘
+   ┌──── BUMBLEBEE (casual) ────────────────────────────────────────┐
+   │  Decisive-showdown loser scores their own hand-class score     │
+   │  (−5..+2), always. Flush-loser still posts −1 birdie; a brick  │
+   │  loser posts their own +2 regardless of pot size. "Your hand   │
+   │  always counts." Champion scores deep under par, golf-major    │
+   │  style.                                                        │
+   └────────────────────────────────────────────────────────────────┘
 ```
 
-**Folds and ties are the same in both variants.** Only the decisive-showdown loser score changes.
+**Folds and ties are the same in both variants.** Folders always post +1 bogey (§3.7); ties always carry the pot (§3.8).
+
+**Configurability (Simulator → Advanced → "Brick loss").** The brick rule has three modes. *Pot-gated, cap +2* is the ship default (validated: it lifts event-level skill expression ~5× and pulls champion totals ~2½ strokes shallower while keeping the career skill metrics — Spearman, authored-vs-measured, elite-major dominance — within a few percent of the classic baseline). *Flat +1* is the classic Yellow Jacket rule (every cat<4 loss is a flat bogey — but then folding a brick costs exactly what showing it down costs, so pre-flop folding and bluffing barely matter). *Flat +2* anchors a uniform double bogey; *Pot-gated, cap +4* escalates further (+3/+4 at big pots — a bigger fold-equity gain, but the high-variance big-pot brick losses degrade the skill metrics). Bumblebee ignores the setting. The AI's showdown-EV math, the equity model, and the skill metrics are all aware of whichever mode is active, so simulation results are authentic to the rule in force.
 
 **Main-final scoring override.** The Main Event's 72-hole *final* round can run a different decisive-loser rule than the rest of the Tour (config `mainFinalsLoserBogey`, exposed as the Simulator's "Main final" control): *inherit* (default — the final follows the variant above), *Yellow Jacket on the final* (force the +1-bogey rule there only — keeps the champion total a tough, over-par gauntlet even if the rest of the Tour is Bumblebee), or *Bumblebee on the final* (force own-hand-loss there only — pulls the champion total deep under par, golf-major style, while the bracket-cut rounds leading to it stay competitive). It affects only the 72-hole aggregate final; the Main's bracket-cut rounds (down to 16) always use the global variant. Everything else — and every regular and Major event — follows the variant chosen above.
 
@@ -555,12 +571,13 @@ This table applies to: **Tour event scorecards** AND **Cash YJ-Stroke/Bumblebee-
    Lower = better, like all golf scoring.
 ```
 
-A frame-aware **showdown matrix** can layer two adjustments on top in tour events:
+A frame-aware **showdown matrix** layers adjustments on top in tour events:
 
-- **Respected loss** (Yellow Jacket variant): a loser whose hand is a straight or better posts their own hand-class score instead of the flat +1 bogey
+- **Respected loss** (Yellow Jacket variant): a loser whose hand is a straight or better posts their own hand-class score instead of a bogey
+- **Pot-gated brick loss** (Yellow Jacket variant, default): a loser holding only a high card posts +1 if they checked through to the opener, +2 if they bet into the pot (configurable — see §3.9)
 - **Cooler bonus**: when both players have full house or better in a tight gap, the winner gets an extra −1 stroke
 
-These adjustments only fire in tour events, never at cash.
+The cooler bonus only fires in tour events, never at cash. The cash YJ-Stroke / Bumblebee-Stroke scorecards use the loser-score rules from §5 (which mirror §3.9's structure).
 
 ---
 
