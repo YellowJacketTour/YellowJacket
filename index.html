@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.11-v69.68-pot-gated-cap2-default";
+const APP_VERSION = "2026.05.11-v69.70-cash-pot-gated-brick-multiway-docs";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -7332,7 +7332,7 @@ Views.codex = function() {
         ['The Approach', 'action', 'Turn bet', 'Third-shot betting; the shot toward the green.', '⌈K × pot⌉, ≤ 3×envelope'],
         ['The Green', 'state', 'River deal', 'Fifth community card — ball is on the green.', '—'],
         ['The Putt', 'action', 'River bet', 'Final round of betting; the last shot.', '⌈K × pot⌉, ≤ 3×envelope'],
-        ['The Cup', 'resolution', 'Showdown', 'Cards revealed (only on a decisive showdown — folds never reveal cards); hole resolves; honey + scorecard credited per the variant rule (Yellow Jacket: loser +1 bogey; Bumblebee: loser scores own hand). The ball drops in the cup.', '—'],
+        ['The Cup', 'resolution', 'Showdown', 'Cards revealed (only on a decisive showdown — folds never reveal cards); hole resolves; honey + scorecard credited per the variant rule (Yellow Jacket: loser posts +1 bogey, or their own −5..−1 if they had a straight or better, or a pot-gated +1/+2 on a high-card brick; Bumblebee: loser scores own hand). The ball drops in the cup.', '—'],
       ]
     ),
     p('"Envelope" = the per-hole, per-player honey ceiling, E × honey-cap(round length) — default E=3, so 27 honey on 9- and 18-hole rounds, 108 on the 72-hole finals; "K" = the pot-elastic multiplier, default 5. When the per-hole envelope is 3 or less, the cap is just that envelope from Tea Box on (no headroom to scale).')
@@ -13067,7 +13067,7 @@ function renderCashTableView(tableId) {
       // convention (lower = better), independent of the chips, no Nectar
       // settlement: you wager Nectar, but your hand quality is scored on its own.
       const sl = me.strokeLedger;
-      sess.appendChild(el('div', { class: 'cash-stat', title: 'Your golf score this session — a per-showdown skill record (winner posts own hand; ' + (t.variant === 'yj' ? 'a showdown loss posts +1 bogey under Yellow Jacket' : 'a showdown loss posts your own hand under Bumblebee') + '). Lower is better, like a real scorecard. Separate from chips — it does not convert to Nectar.' },
+      sess.appendChild(el('div', { class: 'cash-stat', title: 'Your golf score this session — a per-showdown skill record (winner posts own hand; ' + (t.variant === 'yj' ? 'under Yellow Jacket a showdown loss posts the Yellow Jacket loser score — own −5..−1 if you had a straight or better, +1 bogey on a pair/two pair/trips, and a pot-gated +1/+2 on a high-card brick' : 'under Bumblebee a showdown loss posts your own hand class') + '). Lower is better, like a real scorecard. Separate from chips — it does not convert to Nectar.' },
         el('div', { class: 'lbl', text: 'Golf scorecard' }),
         el('div', { class: 'val', style: 'color:' + (sl <= 0 ? '#7ED6A0' : '#F3A889') + ';',
           text: '⛳ ' + (sl > 0 ? '+' : '') + sl.toFixed(1) })
@@ -13834,14 +13834,15 @@ function runItTwiceResolve(t, h, stillIn) {
   h.log.push('--- Run It Twice ---');
   h.log.push('Run 1 board: ' + r1.board.map(c => c.rank + c.suit).join(' ') + ' — ' + t.seats[r1.winnerIdx].name + ' wins ' + Math.round(halfPot));
   h.log.push('Run 2 board: ' + r2.board.map(c => c.rank + c.suit).join(' ') + ' — ' + t.seats[r2.winnerIdx].name + ' wins ' + Math.round(halfPot));
-  // Golf scorecard, averaged across both boards (HS variants only; v69.65 — true
-  // golf convention, lower = better; see resolveCashHand's scorecard block).
+  // Golf scorecard, averaged across both boards (HS variants only; v69.65/v69.70 —
+  // true golf convention, lower = better; see resolveCashHand's scorecard block —
+  // YJ losers get the respected-loss / pot-gated-brick / +1 rule via cashYJLoserGolfScore).
   if (t.variant !== 'pure') {
     for (const idx of stillIn) {
       const ev1 = evalSevenCard(h.hole[idx].concat(r1.board));
       const ev2 = evalSevenCard(h.hole[idx].concat(r2.board));
-      const g1 = idx === r1.winnerIdx ? cashGolfScoreFromClassName(ev1.className) : (t.variant === 'yj' ? 1 : cashGolfScoreFromClassName(ev1.className));
-      const g2 = idx === r2.winnerIdx ? cashGolfScoreFromClassName(ev2.className) : (t.variant === 'yj' ? 1 : cashGolfScoreFromClassName(ev2.className));
+      const g1 = idx === r1.winnerIdx ? cashGolfScoreFromClassName(ev1.className) : (t.variant === 'yj' ? cashYJLoserGolfScore(ev1.className, h.pot, t.smallBlind, t.bigBlind) : cashGolfScoreFromClassName(ev1.className));
+      const g2 = idx === r2.winnerIdx ? cashGolfScoreFromClassName(ev2.className) : (t.variant === 'yj' ? cashYJLoserGolfScore(ev2.className, h.pot, t.smallBlind, t.bigBlind) : cashGolfScoreFromClassName(ev2.className));
       t.seats[idx].strokeLedger += (g1 + g2) / 2;
     }
   }
@@ -14054,20 +14055,21 @@ function resolveCashHand(t) {
   // Auto-trigger a draw if the configured interval has elapsed.
   runGoldenLotteryDraw(false);
   if (t.variant !== 'pure' && isShowdown) {
-    // v69.65 — the cash golf scorecard. A separate per-hand evaluation of skill,
-    // kept in TRUE golf convention (lower = better, exactly like the tour scorecard
-    // and the dashboard champion score) and entirely independent of the chip pot —
-    // you wager Nectar, but your hand quality is scored on its own. Each showdown
-    // participant: the pot winner posts their own hand's golf value; every other
-    // showdown player posts a fixed +1 bogey under Yellow Jacket (Bogey Loss) or
-    // their own hand class under Bumblebee (Honored Loss). Multi-way: one winnerIdx,
-    // everyone else is a loser. The scorecard does not settle to Nectar.
+    // v69.65/v69.70 — the cash golf scorecard. A separate per-hand evaluation of
+    // skill, kept in TRUE golf convention (lower = better, exactly like the tour
+    // scorecard and the dashboard champion score) and entirely independent of the
+    // chip pot — you wager Nectar, but your hand quality is scored on its own. Each
+    // showdown participant: the pot winner posts their own hand's golf value; every
+    // other showdown player posts the Yellow Jacket loser score (respected loss for
+    // straight+, pot-gated brick for a high card, +1 bogey otherwise — cashYJLoserGolfScore,
+    // mirroring the tour rule) or their own hand class under Bumblebee (Honored Loss).
+    // Multi-way: one winnerIdx, everyone else is a loser. The scorecard does not settle to Nectar.
     for (const i of h.activeMask) {
       const ev = evalSevenCard(h.hole[i].concat(h.board));
       const ownGolf = cashGolfScoreFromClassName(ev.className);
       let golfDelta;
       if (i === winnerIdx) golfDelta = ownGolf;
-      else if (t.variant === 'yj') golfDelta = 1;       // Bogey Loss
+      else if (t.variant === 'yj') golfDelta = cashYJLoserGolfScore(ev.className, h.pot, t.smallBlind, t.bigBlind);
       else golfDelta = ownGolf;                          // Honored Loss
       t.seats[i].strokeLedger += golfDelta;
     }
@@ -14300,11 +14302,12 @@ function dealCashHand(t) {
     t.seats[winnerIdx].stack += rakedPot;
   }
 
-  // Golf scorecard update for HS variants (v69.65 — true golf convention, lower =
-  // better; a separate per-hand skill record, not tied to the chip pot, no Nectar
-  // settlement). Pot winner posts own hand's golf value; every other showdown
-  // player posts a fixed +1 bogey under Yellow Jacket (Bogey Loss) or their own
-  // hand class under Bumblebee (Honored Loss). Multi-way: one winnerIdx, rest lose.
+  // Golf scorecard update for HS variants (v69.65/v69.70 — true golf convention,
+  // lower = better; a separate per-hand skill record, not tied to the chip pot, no
+  // Nectar settlement). Pot winner posts own hand's golf value; every other showdown
+  // player posts the Yellow Jacket loser score (respected loss for straight+,
+  // pot-gated brick for a high card, +1 bogey otherwise — cashYJLoserGolfScore) or
+  // their own hand class under Bumblebee (Honored Loss). Multi-way: one winnerIdx, rest lose.
   if (t.variant !== 'pure' && isShowdown) {
     for (const i of activeMask) {
       const seat = t.seats[i];
@@ -14312,7 +14315,7 @@ function dealCashHand(t) {
       const ownGolf = cashGolfScoreFromClassName(ev.className);
       let golfDelta;
       if (i === winnerIdx) golfDelta = ownGolf;
-      else if (t.variant === 'yj') golfDelta = 1;       // Bogey Loss
+      else if (t.variant === 'yj') golfDelta = cashYJLoserGolfScore(ev.className, pot, t.smallBlind, t.bigBlind);
       else golfDelta = ownGolf;                          // Honored Loss
       seat.strokeLedger += golfDelta;
     }
@@ -14560,6 +14563,36 @@ function cashGolfScoreFromClassName(name) {
     case 'One Pair':       return 1;
     case 'High Card':      return 2;
     default: return 0;
+  }
+}
+
+// Cash YJ-Stroke decisive-showdown loser score — mirrors the tour Yellow Jacket
+// loser rule (RULES §3.9, v69.68 default) at the cash table:
+//   • straight or better   → "respected loss": post your own −5..−1 hand class
+//                            (a flush that loses the pot still posts a −1 birdie).
+//   • trips / two pair / pair → +1 bogey.
+//   • high card ("brick")  → pot-gated: +1 if the pot was just the blinds (you
+//                            limped/checked it down), +2 once it grew past that
+//                            — i.e. any real preflop action. Capped at +2, the
+//                            tour's ship default. "Fold the brick to a bet, or
+//                            eat the double bogey." The blinds (small + big) are
+//                            the cash analog of the tour's mandatory 2-honey
+//                            opener — the dead money in the pot before anyone acts.
+// Bumblebee-Stroke ignores this — its loser always posts their own hand class.
+function cashYJLoserGolfScore(loserClassName, potChips, smallBlind, bigBlind) {
+  switch (loserClassName) {
+    case 'Royal Flush': case 'Straight Flush': case 'Four of a Kind':
+    case 'Full House':  case 'Flush':          case 'Straight':
+      return cashGolfScoreFromClassName(loserClassName);   // respected loss
+    case 'High Card': {
+      const sb = (Number.isFinite(+smallBlind) && +smallBlind > 0) ? +smallBlind : 0;
+      const bb = (Number.isFinite(+bigBlind) && +bigBlind > 0) ? +bigBlind : 0;
+      const op = (sb + bb) >= 1 ? (sb + bb) : 2;           // opener-analog = posted blinds
+      const T  = (Number.isFinite(+potChips) && +potChips >= op) ? +potChips : op;
+      return Math.max(1, Math.min(2, 1 + Math.floor((T - op) / op)));   // pot-gated brick, cap +2
+    }
+    default:
+      return 1;   // trips / two pair / pair → flat bogey
   }
 }
 
@@ -15513,7 +15546,7 @@ function renderCashView(gameMode) {
     if (isBB) {
       hint.innerHTML = '<strong>Bumblebee Cash — the Tour at the cash table, gentler side.</strong> You\'re still on the Tour; you\'re just playing a cash format inside it. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker inside the Tour ecosystem). <strong>Bumblebee Stroke</strong> keeps a second, separate ledger: a <em>golf scorecard</em> scored per showdown — you wager Nectar, but your hand quality is graded on its own. Real golf convention (lower is better): the pot winner posts their own hand class (Royal/Straight Flush −5 … Full House −2 … Two Pair 0 … High Card +2); a showdown loss posts <em>your own hand class</em> (Honored Loss — so a flush that loses the pot still posts −1 birdie). It is purely a skill record — it does not convert to Nectar — and it counts toward your Tour reputation. The ⛳ pill on each seat is that player\'s running scorecard (green = under par, red = over).';
     } else {
-      hint.innerHTML = '<strong>Yellow Jacket Cash — the Tour at the cash table.</strong> You\'re still on the Tour; cash play is just a different format within it. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker inside the Tour ecosystem). <strong>YJ Stroke</strong> keeps a second, separate ledger: a <em>golf scorecard</em> scored per showdown — you wager Nectar, but your hand quality is graded on its own. Real golf convention (lower is better): the pot winner posts their own hand class (Royal/Straight Flush −5 … Full House −2 … Two Pair 0 … High Card +2); a showdown loss posts a fixed <em>+1 bogey</em> (Bogey Loss). It is purely a skill record — it does not convert to Nectar — and it counts toward your Tour reputation. The ⛳ pill on each seat is that player\'s running scorecard (green = under par, red = over). Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a> — there a showdown loss posts your own hand instead of a fixed bogey.';
+      hint.innerHTML = '<strong>Yellow Jacket Cash — the Tour at the cash table.</strong> You\'re still on the Tour; cash play is just a different format within it. <em>Cash chips are Nectar 1:1, no honey at cash</em> — your stack IS your bankroll. Two variants: <strong>Pure NLHE</strong> tracks Nectar P/L only (standard online poker inside the Tour ecosystem). <strong>YJ Stroke</strong> keeps a second, separate ledger: a <em>golf scorecard</em> scored per showdown — you wager Nectar, but your hand quality is graded on its own. Real golf convention (lower is better): the pot winner posts their own hand class (Royal/Straight Flush −5 … Full House −2 … Two Pair 0 … High Card +2). A showdown loss posts the Yellow Jacket loser score (same as on Tour): a <em>respected loss</em> — your own −5..−1 — if your hand was a straight or better; <em>+1 bogey</em> on trips / two pair / pair; and on a <em>brick</em> (high card only) a pot-gated penalty — +1 if the pot was just the posted blinds (you limped and checked it down), <em>+2 double bogey</em> once it grew past that (any raised pot). <em>Fold the brick to a bet, or eat the double bogey.</em> It is purely a skill record — it does not convert to Nectar — and it counts toward your Tour reputation. The ⛳ pill on each seat is that player\'s running scorecard (green = under par, red = over). Want gentler scoring? Try <a href="#bumblebee" style="color:var(--gold,#C9A857);">Bumblebee Cash →</a> — there a showdown loss always posts your own hand class.';
     }
     lobby.appendChild(hint);
     view.appendChild(lobby);
@@ -24271,15 +24304,33 @@ function renderConfigPanel(panel, mode) {
   }
 
   // Event structure
+  // ──────────────────────────────────────────────────────────────────────
+  // The config panel is split into TWO grouped sections so the controls
+  // aren't a single wall:
+  //   "Event structure"   — the SHAPE of the competition (format, table size,
+  //                         schedule sliders, late-registration window).
+  //   "Scoring & wagering" — the decisive-showdown loser rule (variant +
+  //                         Main-final override + Brick loss + multi-way
+  //                         override) and the wagering-cap knobs (honey-cap
+  //                         calibration, hole-envelope E, pot-elastic K, and
+  //                         the legacy per-tier caps that only matter when E=0).
+  // Both are created up front so the schedule-slider loop can route its
+  // cap sliders into the scoring section and everything else into structure.
+  // ──────────────────────────────────────────────────────────────────────
   const evSec = el('div', { class: 'lab-section' });
   evSec.appendChild(el('h4', { text: 'Event structure' }));
+  const scoreSec = el('div', { class: 'lab-section' });
+  scoreSec.appendChild(el('h4', { text: 'Scoring & wagering' }));
+  // Small inline sub-divider inside a section (a dashed rule + uppercase caption).
+  const subDivider = (txt) => el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 9px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--text-secondary); opacity: 0.65; margin: 16px 0 8px; border-top: 1px dashed var(--border); padding-top: 8px;',
+    text: txt
+  });
 
-  // Tournament format toggle — promoted to the very top of Event structure and
-  // shown in BOTH Simple and Advanced modes, because the bracket vs aggregate
-  // choice is a fundamental gameplay decision, not a fine-tune. Bracket = WSOP
-  // feel (single-elim → 72-hole heads-up final). Aggregate = PGA Masters feel
-  // (4 rounds × 18 holes with rotating partners; Main keeps a bracket cut down
-  // to 16 finalists, then those 16 play 72-hole aggregate).
+  // ════ EVENT STRUCTURE ═══════════════════════════════════════════════════
+
+  // --- Tournament format ---
   const fmtRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px;' });
   fmtRow.appendChild(el('label', { text: 'Format', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
   const fmtSel = el('select', { style: 'width: 100%;' });
@@ -24304,277 +24355,8 @@ function renderConfigPanel(panel, mode) {
     text: 'Bracket: single-elim, 9-hole rounds → 18-hole rounds → 72-hole heads-up final. Aggregate: every player plays 4 rounds × 18 holes with rotating partners; lowest 72-hole net total wins. The Main Event in aggregate mode uses bracket cuts down to a 16-player final, then those 16 play the 72-hole aggregate.'
   }));
 
-  evSec.appendChild(el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px;' },
-    el('label', { text: 'Honey norm', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }),
-    el('div', { class: 'ui-sans', style: 'font-size: 12px; color: var(--text-primary); padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elevated);', text: 'net honey ÷ honey cap, per round — see Honey cap ↓' })
-  ));
-  evSec.appendChild(el('div', {
-    class: 'ui-sans',
-    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'At each round\'s end, net honey is divided by the honey cap and subtracted from that round\'s golf scorecard. Default mode "calibrated": ÷9 for 18-hole rounds, ÷36 for the 72-hole finals, ÷4 for 9-hole bracket matches, ÷1 for single-hole. Mode "spec" divides by the round\'s hole count N instead. Set the mode in the Honey cap control below. (The retired aggregate-honey-scale slider — values like 0.12 / 0.25 — is gone; the divisor handles all scaling.)'
-  }));
-
-  // === GAME VARIANT TOGGLE (v32) ===========================================
-  // Yellow Jacket ships as TWO variants that share every rule except
-  // decisive-showdown loser scoring:
-  //   'yellowjacket' (competitive): loser posts fixed +1 bogey. Sharper
-  //          skill expression; champion totals ~5–8 under par on 9-/18-hole
-  //          rounds, ~par on the 72-hole Main (calibrated cap, v69.54 schedule).
-  //   'bumblebee' (casual):  loser scores own hand's golf value (-5..+2).
-  //          Preserves "your hand always counts" texture; champion totals
-  //          run a few strokes lower than yellowjacket at every length.
-  // Internally cfg.loserBogey is the boolean that the engine reads; the
-  // dropdown sets BOTH cfg.gameVariant (string) and cfg.loserBogey (boolean)
-  // so legacy code paths and audit CSVs stay unambiguous.
-  const lbRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
-  lbRow.appendChild(el('label', { text: 'Variant', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
-  const lbSel = el('select', { style: 'width: 100%;' });
-  [
-    { v: 'yellowjacket', label: '🐝 Yellow Jacket — competitive (Bogey Loss, default)' },
-    { v: 'bumblebee',    label: '🐝 Bumblebee — casual (Honored Loss)' },
-  ].forEach(o => {
-    const opt = el('option', { value: o.v, text: o.label });
-    const current = LabState.config.gameVariant || (LabState.config.loserBogey ? 'yellowjacket' : 'bumblebee');
-    if (current === o.v) opt.selected = true;
-    lbSel.appendChild(opt);
-  });
-  lbSel.onchange = () => {
-    const variant = lbSel.value;
-    const isYJ = variant === 'yellowjacket';
-    LabState.config.gameVariant = variant;
-    LabState.config.loserBogey = isYJ;
-    setLoserBogey(isYJ);  // sync runtime so SP/Solo started right after picks it up
-    saveLabState();
-    toast(isYJ
-      ? 'Variant: Yellow Jacket (competitive · Bogey Loss)'
-      : 'Variant: Bumblebee (casual · Honored Loss)');
-  };
-  lbRow.appendChild(lbSel);
-  evSec.appendChild(lbRow);
-  evSec.appendChild(el('div', {
-    class: 'ui-sans',
-    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'YELLOW JACKET (default): the competitive tour. Decisive-showdown losers post +1 bogey regardless of hand. Sharper skill expression; under the calibrated honey cap, champion totals run ~5–8 strokes under par on 9- and 18-hole rounds and close to par on the 72-hole Main. BUMBLEBEE: the casual league. Decisive-showdown losers score their own hand (-5..+2) — flush-loser still posts -1 birdie. Gentler scoring — champion totals run a few strokes lower than Yellow Jacket at every length. Both share the same engine, mandatory pot, agreed-total wagering, hole-envelope + pot-elastic-K caps, fold rule, and honey cap. Folds and ties are NOT affected by this choice.'
-  }));
-
-  // === MAIN-FINALS SCORING OVERRIDE (v69.58) ===============================
-  // The Main Event's 72-hole final round can run a different decisive-loser
-  // rule than the rest of the Tour. Inherit (default) = same as the variant
-  // above. "Yellow Jacket" forces the +1-bogey rule on the final only — the
-  // champion total stays tough/over-par, a gauntlet where under-par is rare.
-  // "Bumblebee" forces own-hand-loss on the final only — the champion total
-  // runs deep under par like a real golf major, while the bracket-cut rounds
-  // leading to it stay competitive. Affects ONLY the 72-hole aggregate final.
-  const mfRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
-  mfRow.appendChild(el('label', { text: 'Main final', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
-  const mfSel = el('select', { style: 'width: 100%;' });
-  const mfCur = (LabState.config.mainFinalsLoserBogey === true) ? 'yellowjacket'
-              : (LabState.config.mainFinalsLoserBogey === false) ? 'bumblebee' : 'inherit';
-  [
-    { v: 'inherit',      label: '↳ Inherit — same rule as the variant above (default)' },
-    { v: 'yellowjacket', label: '🐝 Yellow Jacket on the final — +1 bogey loss · tough, over-par champion' },
-    { v: 'bumblebee',    label: '🐝 Bumblebee on the final — own-hand loss · deep sub-par champion (golf-major feel)' },
-  ].forEach(o => {
-    const opt = el('option', { value: o.v, text: o.label });
-    if (mfCur === o.v) opt.selected = true;
-    mfSel.appendChild(opt);
-  });
-  mfSel.onchange = () => {
-    LabState.config.mainFinalsLoserBogey = mfSel.value === 'yellowjacket' ? true
-      : mfSel.value === 'bumblebee' ? false : null;
-    saveLabState();
-    toast('Main final scoring: ' + (mfSel.value === 'inherit' ? 'inherit (same as variant)'
-      : mfSel.value === 'yellowjacket' ? 'Yellow Jacket (+1 bogey loss — tough)'
-      : 'Bumblebee (own-hand loss — deep sub-par)'));
-  };
-  mfRow.appendChild(mfSel);
-  evSec.appendChild(mfRow);
-  evSec.appendChild(el('div', {
-    class: 'ui-sans',
-    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'Only the 72-hole aggregate final is affected; the Main\'s bracket-cut rounds (down to 16) always use the variant rule. Inherit keeps the Main consistent with the rest of the Tour. Pick "Bumblebee on the final" to test the golf-major feel (champion typically deep under par); pick "Yellow Jacket on the final" to keep it a gauntlet even if you run the rest of the Tour as Bumblebee.'
-  }));
-
-  // === HONEY DIVISOR MODE (v69.49) =========================================
-  // Two coexisting calibrations selectable per run:
-  //   'spec'        — v23 design intent: divisor = round/event hole count.
-  //                   For an 18-hole round → ÷18; 72-hole final → ÷72.
-  //                   "Average honey per hole IS your stroke effect."
-  //                   Matches SCORING_STYLES['honey-stroke'].desc text.
-  //   'calibrated'  — Deployed stepped table from honeyDivisorFor: ÷9 / ÷4 /
-  //                   ÷36 by length tier. Honey ~2× more impactful than spec.
-  // The mode locks at runLabSession() start; runs done under different modes
-  // produce different stroke totals on the same field. Both are valid;
-  // changing this control without comparing modes is fine — just be aware
-  // any saved-run comparisons should be apples-to-apples.
-  const hdmRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
-  hdmRow.appendChild(el('label', { text: 'Honey cap', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
-  const hdmSel = el('select', { style: 'width: 100%;' });
-  [
-    { v: 'spec',       label: '🪶 Spec (v23) — ÷ holes-in-round  (1 stroke per N honey · light drizzle)' },
-    { v: 'calibrated', label: '⚖ Calibrated — stepped ÷9/÷4/÷36 (1 stroke per ~½ N honey · 2× impactful)' },
-  ].forEach(o => {
-    const opt = el('option', { value: o.v, text: o.label });
-    const current = LabState.config.honeyCapMode || 'spec';
-    if (current === o.v) opt.selected = true;
-    hdmSel.appendChild(opt);
-  });
-  hdmSel.onchange = () => {
-    LabState.config.honeyCapMode = hdmSel.value;
-    setHoneyCapMode(hdmSel.value);                        // takes effect on the next run
-    saveLabState();
-    toast('Honey cap: ' + (hdmSel.value === 'spec'
-      ? 'Spec (÷N — v23 design intent)'
-      : 'Calibrated (stepped ÷table — post-v23 deployed)'));
-  };
-  hdmRow.appendChild(hdmSel);
-  evSec.appendChild(hdmRow);
-  evSec.appendChild(el('div', {
-    class: 'ui-sans',
-    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'SPEC (default): the documented design intent — net honey divided by the round/event hole count, applied at round end. Average honey per hole IS your stroke effect; honey is a light smoothing drizzle on the golf scorecard. CALIBRATED: the post-v23 stepped table (÷9 for 18-hole rounds, ÷36 for 72-hole finals). Honey is ~2× more impactful — winning roughly half a round of honey earns 1 stroke off. Both modes appear in the run CSV header (honey_cap_mode); comparing runs across modes will diverge accordingly.'
-  }));
-
-  // === HOLE ENVELOPE (v69.51) ============================================
-  // Each player wagers up to E strokes' worth of Honey per hole — replacing the
-  // per-tier strokeCap config with a uniform stroke-denominated rule.
-  // v69.53 ship default: E=3 (validated at pool=1000 / seasons=100 / seed=42).
-  // E=0 preserves legacy strokeCap behavior for A/B sweeps.
-  const heRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
-  heRow.appendChild(el('label', { text: 'Hole envelope', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
-  const heSel = el('select', { style: 'width: 100%;' });
-  [
-    { v: 0, label: '0  —  Legacy per-tier strokeCaps (regular 6 / major 9 / main 8 / mainFinals 18)' },
-    { v: 1, label: '1  —  1 stroke per hole  (≈ today\'s cap for majors at 18-hole rounds)' },
-    { v: 2, label: '2  —  2 strokes per hole  (conservative · narrower bet variance)' },
-    { v: 3, label: '3  —  3 strokes per hole  ★ v69.53 ship default · validated' },
-    { v: 4, label: '4  —  4 strokes per hole  (aggressive · widest bet variance)' },
-  ].forEach(o => {
-    const opt = el('option', { value: String(o.v), text: o.label });
-    if ((+LabState.config.holeEnvelopeStrokes || 0) === o.v) opt.selected = true;
-    heSel.appendChild(opt);
-  });
-  heSel.onchange = () => {
-    LabState.config.holeEnvelopeStrokes = +heSel.value;
-    saveLabState();
-    toast('Hole envelope: ' + heSel.value + (heSel.value === '0' ? ' (legacy per-tier strokeCaps)' : ' strokes per hole'));
-  };
-  heRow.appendChild(heSel);
-  evSec.appendChild(heRow);
-  evSec.appendChild(el('div', {
-    class: 'ui-sans',
-    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'When E > 0, the per-hole pot ceiling is derived uniformly as E × honeyDivisorFor(roundLength). Under calibrated honey cap at the v69.53 default E=3: 27 honey/player/hole at 9- and 18-hole rounds (vs legacy regular 6 / major 9), 108 honey/player at 72-hole Main finals (vs legacy 18). The wagering layer becomes expressive enough that fold cost varies meaningfully across pot sizes, and skill edges accumulate to a clearer finish-position gradient across deep fields. Loosen per-hole bets like poker without losing the per-hole golf identity — no chip stacks, no bust-out, every player plays every hole.'
-  }));
-
-  // === POT-ELASTIC K (v69.53) ============================================
-  // K controls how fast each betting street's cap grows with the pot already
-  // committed. The cap on every street is:
-  //     streetCap = min( totalCap × 3 ,  ⌈ K × agreedTotal ⌉ )
-  // where totalCap = the hole envelope ceiling (E × honeyDivisorFor(round))
-  // and agreedTotal = total Honey both players committed entering this street.
-  // K=5 (v69.53 ship default) lets the pot grow ~5× the prior street's
-  // commitment per street, hitting the envelope ceiling only late in big
-  // hands. K=3 is the conservative pre-v69.53 default. K=0 disables elastic
-  // entirely (cap = totalCap × 3 always — flat ceiling, never grows with pot).
-  const kRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
-  kRow.appendChild(el('label', { text: 'Pot elastic K', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
-  const kSel = el('select', { style: 'width: 100%;' });
-  [
-    { v: 0, label: '0  —  Flat ceiling, no pot elasticity (cap = envelope × 3 always)' },
-    { v: 3, label: '3  —  Conservative pre-v69.53 default · slower escalation' },
-    { v: 5, label: '5  —  ★ v69.53 ship default · validated · ~5× pot growth per street' },
-    { v: 8, label: '8  —  Aggressive · pot snaps to envelope ceiling sooner' },
-  ].forEach(o => {
-    const opt = el('option', { value: String(o.v), text: o.label });
-    const current = Number.isFinite(+LabState.config.potElasticK) ? +LabState.config.potElasticK : 5;
-    if (current === o.v) opt.selected = true;
-    kSel.appendChild(opt);
-  });
-  kSel.onchange = () => {
-    LabState.config.potElasticK = +kSel.value;
-    setPotElasticK(+kSel.value);                          // takes effect on the next run
-    saveLabState();
-    toast('Pot elastic K: ' + kSel.value + (kSel.value === '0' ? ' (flat ceiling)' : '× pot per street'));
-  };
-  kRow.appendChild(kSel);
-  evSec.appendChild(kRow);
-  evSec.appendChild(el('div', {
-    class: 'ui-sans',
-    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'Worked example for a Major round (18 holes, E=3 calibrated → envelope=27, ceiling=81): preflop pot=2 → cap=10 (K=5); flop pot=8 → cap=40; turn pot=24 → ceiling clamps at 81; river → 81. K=3 same hand: 6/24/72/81 — slower acceleration, fewer big-pot showdowns. K is the pot\'s "acceleration"; E is its "speed limit." Both knobs ride together — sweep them as a pair if you want to feel the interaction.'
-  }));
-
-  // === BRICK LOSS (v69.66 / v69.67) ======================================
-  // Under Yellow Jacket, the golf a showdown LOSER posts holding only a high
-  // card ("brick" — no pair, no draw made). Three modes:
-  //   flat-1     — Classic Yellow Jacket. Flat +1 bogey, same as fold. AI never
-  //                folds pre-flop and bluffing barely bites (fold cost = loss
-  //                cost when nothing else changes); this is the v23 baseline.
-  //   flat-2     — Anchored double bogey. Strictly worse than folding (+1), so
-  //                the worst-equity starting hands flip to folds. Tested at
-  //                v69.66 / v69.67 — moves fold rate a hair (~0.2%) but the
-  //                penalty doesn't scale with pot size, so big-pot bluffs
-  //                don't bite either. Mild bump in event-level skill (~2.5×).
-  //   pot-gated  — EV-balanced. brick = 1 + max(0, floor((T - opener)/opener))
-  //                capped at +4. A brick at the opener stays at +1 (no change);
-  //                a brick after 1 opener-multiple of bets posts +2; +3, +4…
-  //                The cost MIRRORS the fold cost's own pot-dependence
-  //                (fold = +1 + T/divisor), so folding bricks to big bets
-  //                becomes strictly correct AND bluffs threaten progressively
-  //                worse bogeys — fold/bluff equity returns proportional to
-  //                pot size. Bumblebee is unaffected.
-  const hcRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
-  hcRow.appendChild(el('label', { text: 'Brick loss', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
-  const hcSel = el('select', { style: 'width: 100%;' });
-  // key encodes mode + (for pot-gated) cap. Picking one writes both the mode
-  // and the cap into LabState.config.scoring AND syncs the live globals.
-  [
-    { key: 'flat-1',   mode: 'flat',      cap: null, hc: 1, label: 'Flat +1 bogey  (classic — fold cost = loss cost, no fold/bluff equity)' },
-    { key: 'flat-2',   mode: 'flat',      cap: null, hc: 2, label: 'Flat +2 double bogey  (anchored — small lift in event skill, no pot-gating)' },
-    { key: 'pg-2',     mode: 'pot-gated', cap: 2,    hc: 1, label: 'Pot-gated · cap +2 ★  +1 at the opener, +2 if you bet into the pot  (EV-balanced — SHIP DEFAULT)' },
-    { key: 'pg-4',     mode: 'pot-gated', cap: 4,    hc: 1, label: 'Pot-gated · cap +4  +1 / +2 / +3 / +4 with the pot  (aggressive — bigger fold gain, but skill metrics degrade)' },
-  ].forEach(o => {
-    const opt = el('option', { value: o.key, text: o.label });
-    const sc = LabState.config.scoring || {};
-    const curKey = sc.brickPenaltyMode === 'pot-gated'
-      ? ((Number.isFinite(+sc.brickLossCap) && +sc.brickLossCap > 2) ? 'pg-4' : 'pg-2')
-      : ((Number.isFinite(+sc.highCardShowdownLoss) && +sc.highCardShowdownLoss >= 2) ? 'flat-2' : 'flat-1');
-    if (curKey === o.key) opt.selected = true;
-    opt.dataset.mode = o.mode; if (o.cap != null) opt.dataset.cap = String(o.cap); opt.dataset.hc = String(o.hc);
-    hcSel.appendChild(opt);
-  });
-  hcSel.onchange = () => {
-    if (!LabState.config.scoring) LabState.config.scoring = {};
-    const opt = hcSel.options[hcSel.selectedIndex];
-    const mode = opt.dataset.mode === 'pot-gated' ? 'pot-gated' : 'flat';
-    const hc = +opt.dataset.hc || 1;
-    LabState.config.scoring.brickPenaltyMode = mode;
-    LabState.config.scoring.highCardShowdownLoss = hc;
-    setBrickPenaltyMode(mode);
-    setHighCardShowdownLoss(hc);
-    if (mode === 'pot-gated') {
-      const cap = +opt.dataset.cap || 2;
-      LabState.config.scoring.brickLossCap = cap;
-      setBrickLossCap(cap);
-      toast('Brick loss: pot-gated, cap +' + cap + ' (EV-balanced)');
-    } else {
-      toast('Brick loss: flat +' + hc + (hc === 2 ? ' (anchored double bogey)' : ' (classic bogey)'));
-    }
-    saveLabState();
-  };
-  hcRow.appendChild(hcSel);
-  evSec.appendChild(hcRow);
-  evSec.appendChild(el('div', {
-    class: 'ui-sans',
-    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'Yellow Jacket only — under Bumblebee a high-card loser already posts their own +2. This is the lever that puts pre-flop hand selection and bluff equity into the honey-stroke game. The classic flat +1 makes folding a brick cost the same as showing it down, so neither matters. Pot-gated cap +2 (ship default, validated at pool=1000 / 100 seasons): a brick that checked through to the opener still scores +1, but a brick you BET into scores +2 — so folding a brick to a bet is strictly correct and bluffs threaten a double bogey. The AI\'s showdown-EV math is fully aware of the pot-gated penalty at each level, so it plays accordingly. Cap +4 escalates further (+3/+4 at big pots) — bigger fold gain but the high-variance big-pot bricks degrade the career-skill metrics; flat +2 is a milder middle. Sweep any of them against the same config to see fold rates, bluff frequency, event-level skill signal, and champion-score depth move.'
-  }));
-
-  // === TABLE SIZE TOGGLE (v69) ============================================
-  // HU (2) is the canonical engine; 6 and 9 route aggregate stroke-play events
-  // through the multi-way matched-contribution runner. Per-player honey caps
-  // scale automatically. R4 collapses to a HU final between top-2 survivors.
+  // --- Table size --- (a SHAPE choice — how many at a table; the multi-way
+  // *scoring* rule lives in the Scoring & wagering section below.)
   const tsRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
   tsRow.appendChild(el('label', { text: 'Table size', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
   const tsSel = el('select', { style: 'width: 100%;' });
@@ -24598,68 +24380,11 @@ function renderConfigPanel(panel, mode) {
   evSec.appendChild(el('div', {
     class: 'ui-sans',
     style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'HU (2) is the canonical engine. 4 / 6 / 9 route aggregate stroke-play events through the multi-way matched-contribution runner — R1-R3 played at tables of N, then R4 collapses to a heads-up final between the top-2 survivors. v69.8 calibrations: opener 2 honey/player at N>6 (preflop pressure); Bumblebee variant default at multi-way (Honored Loss; YJ at multi-way overshoots scoring). Recommendation: 6-max for Regulars + Majors (WSOP-online SOTA), 9 for the Main Event (full ring · WSOP live), 2 for HU finals.'
+    text: 'HU (2) is the canonical engine. 4 / 6 / 9 route aggregate stroke-play events through the multi-way matched-contribution runner — R1-R3 played at tables of N, then R4 collapses to a heads-up final between the top-2 survivors (opener 2 honey/player at N>6). Which loser-score rule applies at multi-way is the "Multi-way" control in Scoring & wagering below (HU events ignore it and use the main Variant). Recommendation: 6-max for Regulars + Majors, 9 for the Main Event, 2 for HU finals.'
   }));
 
-  // === MULTI-WAY VARIANT (v69.8) ============================================
-  const mwvRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
-  mwvRow.appendChild(el('label', { text: 'Multi-way var', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
-  const mwvSel = el('select', { style: 'width: 100%;' });
-  [
-    { v: 'bumblebee',    label: '🌼 Bumblebee (Honored Loss · default · golf-realistic scoring)' },
-    { v: 'yellowjacket', label: '🐝 Yellow Jacket (Bogey Loss · harsh · scores climb to +12)' },
-  ].forEach(o => {
-    const opt = el('option', { value: o.v, text: o.label });
-    if ((LabState.config.multiwayVariant || 'bumblebee') === o.v) opt.selected = true;
-    mwvSel.appendChild(opt);
-  });
-  mwvSel.onchange = () => {
-    LabState.config.multiwayVariant = mwvSel.value;
-    saveLabState();
-    toast('Multi-way variant: ' + (mwvSel.value === 'bumblebee' ? 'Bumblebee (Honored Loss)' : 'Yellow Jacket (Bogey Loss)'));
-  };
-  mwvRow.appendChild(mwvSel);
-  evSec.appendChild(mwvRow);
-  evSec.appendChild(el('div', {
-    class: 'ui-sans',
-    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'At multi-way, every showdown loser posts a stroke. The YJ Bogey Loss rule (loser fixed +1) was calibrated for HU; at 9-way it accumulates 8×(+1) per pot, pulling Major averages well above par. Bumblebee (loser scores own hand class -5..+2) keeps Major champions closer to par. HU events ignore this setting and use the main Variant control above. v69.24: AI uses identical profile optima at multi-way regardless of variant (mw-bb numbers); the variant difference is purely in the scoring rule.'
-  }));
-
-  // === LATE REGISTRATION (v69.2) =============================================
-  const lrRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
-  lrRow.appendChild(el('label', { text: 'Late reg', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
-  const lrSel = el('select', { style: 'width: 100%;' });
-  [
-    { v: 0, label: 'Closed — field locked at R1 start' },
-    { v: 1, label: 'Open through R1' },
-    { v: 2, label: 'Open through R2 (WSOP-style Day 2)' },
-    { v: 3, label: 'Open through R3' },
-  ].forEach(o => {
-    const opt = el('option', { value: o.v, text: o.label });
-    if ((+LabState.config.lateRegLastRound || 0) === o.v) opt.selected = true;
-    lrSel.appendChild(opt);
-  });
-  lrSel.onchange = () => {
-    LabState.config.lateRegLastRound = +lrSel.value;
-    if (LabState.config.lateRegLastRound > 0 && (+LabState.config.lateRegMaxEntries || 0) === 0) LabState.config.lateRegMaxEntries = 8;
-    saveLabState();
-    toast('Late reg: ' + (lrSel.value === '0' ? 'closed' : 'open through R' + lrSel.value));
-  };
-  lrRow.appendChild(lrSel);
-  evSec.appendChild(lrRow);
-
-  const lrEntriesRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
-  lrEntriesRow.appendChild(el('label', { text: 'Max late', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
-  const lrInp = el('input', { type: 'number', min: '0', max: '256', step: '1', style: 'width: 100%; padding: 6px 8px;', value: String(LabState.config.lateRegMaxEntries || 0) });
-  lrInp.oninput = () => { LabState.config.lateRegMaxEntries = Math.max(0, +lrInp.value || 0); saveLabState(); };
-  lrEntriesRow.appendChild(lrInp);
-  evSec.appendChild(lrEntriesRow);
-  evSec.appendChild(el('div', {
-    class: 'ui-sans',
-    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
-    text: 'Late entrants are sampled from the broader pool, pay full buy-in, and start at score = leader + 1.5 × cushion[r] (clearly behind the cut threshold; v69.24 calibration). Models WSOP "register through end of Day 1" structures. Hellmuth-style: arrive late, eat the deficit, try to fire your way back. Closes after the configured round; field locks for the remaining rounds.'
-  }));
+  // --- Schedule sliders + late registration ---
+  evSec.appendChild(subDivider(mode === 'advanced' ? 'Schedule & field' : 'Run length'));
 
   const simpleCfg = [
     ['seasons', 'Seasons to run', 1, 100, 1],
@@ -24669,6 +24394,7 @@ function renderConfigPanel(panel, mode) {
   // shrinks, all field sliders re-clamp. When majorField changes, the
   // satellites slider re-clamps. baseMax stays as the absolute slider
   // ceiling; the effective max is min(baseMax, dependentValue).
+  const SCORING_CAP_KEYS = new Set(['regularStrokeCap', 'majorStrokeCap', 'mainStrokeCap', 'mainFinalsStrokeCap']);
   const advancedCfg = [
     ['poolSize', 'Pool size', 200, 100000, 100, { affects: ['majorField', 'regularField', 'mainField'] }],
     ['seasons', 'Seasons', 1, 100, 1],
@@ -24697,8 +24423,7 @@ function renderConfigPanel(panel, mode) {
   ];
   const intCfg = mode === 'advanced' ? advancedCfg : simpleCfg;
   // Pool-status indicator inserted directly below the poolSize slider so users see
-  // when their config doesn't match the existing pool. Updated each time the slider
-  // moves via the onChange callback below.
+  // when their config doesn't match the existing pool. Updated each time the slider moves.
   let poolStatus = null;
   const updatePoolStatus = () => {
     if (!poolStatus) return;
@@ -24712,10 +24437,25 @@ function renderConfigPanel(panel, mode) {
       poolStatus.textContent = '⚠ Pool will rebuild on next Run · current: ' + livePool.toLocaleString() + ' → cfg: ' + cfgPool.toLocaleString() + ' · WIPES career history';
     }
   };
+  // The legacy per-tier cap sliders are collected into this holder as the loop
+  // hits them, then appended to scoreSec AFTER the Pot-elastic K block (so they
+  // sit at the bottom of the wagering-caps group, not at the top of the section).
+  const legacyCapHolder = el('div');
+  let legacyCapHeaderInserted = false;
   for (const entry of intCfg) {
     const [key, label, min, max, step, extra] = entry;
     const constraints = extra && typeof extra === 'object' ? extra : {};
-    appendSliderControl(evSec, {
+    const isCap = SCORING_CAP_KEYS.has(key);
+    if (isCap && !legacyCapHeaderInserted) {
+      legacyCapHolder.appendChild(subDivider('Legacy per-tier caps — active only when Hole envelope E = 0'));
+      legacyCapHolder.appendChild(el('div', {
+        class: 'ui-sans',
+        style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 8px; font-style: italic; line-height: 1.5;',
+        text: 'These four sliders are the OLD per-tier wagering caps. They take effect only when Hole envelope (E) above is set to 0. With E ≥ 1 (the default E = 3) the per-hole ceiling is E × honey-cap(round) and these do nothing. If you do run E = 0: a poker-first setup is Regulars 6, Majors 10, Main 6, Main finals 10 — higher caps mean tougher scoring and more no-limit-style escalation.'
+      }));
+      legacyCapHeaderInserted = true;
+    }
+    appendSliderControl(isCap ? legacyCapHolder : evSec, {
       key, label, min, max, step,
       maxFromCfg: constraints.maxFromCfg,
       affects: constraints.affects,
@@ -24735,37 +24475,289 @@ function renderConfigPanel(panel, mode) {
     evSec.appendChild(el('div', {
       class: 'ui-sans',
       style: 'font-size: 10px; color: var(--text-secondary); margin-top: 6px; font-style: italic;',
-      text: 'Recommended poker-first setup: Regulars 6, Majors 10, Main 6, Main finals 10. Higher caps mean tougher scoring and more no-limit style escalation.'
-    }));
-    evSec.appendChild(el('div', {
-      class: 'ui-sans',
-      style: 'font-size: 10px; color: var(--text-secondary); margin-top: 4px; font-style: italic;',
-      text: 'Majors now qualify through earned buckets with a more democratic mix: fewer fixed ranking/exemption seats, more season-merit and open-qualifier access.'
-    }));
-    evSec.appendChild(el('div', {
-      class: 'ui-sans',
-      style: 'font-size: 10px; color: var(--text-secondary); margin-top: 4px; font-style: italic;',
-      text: 'CI repeats > 1 runs the whole sim N times with incrementing seeds and aggregates mean ± SD on every metric. CI mode does NOT touch your Tour career — it is pure research.'
+      text: 'Majors qualify through earned buckets with a democratic mix: fewer fixed ranking/exemption seats, more season-merit and open-qualifier access. CI repeats > 1 runs the whole sim N times with incrementing seeds and aggregates mean ± SD on every metric — CI mode does NOT touch your Tour career, it is pure research.'
     }));
   }
+
+  // --- Late registration ---
+  evSec.appendChild(subDivider('Late registration'));
+  const lrRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  lrRow.appendChild(el('label', { text: 'Late reg', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const lrSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 0, label: 'Closed — field locked at R1 start' },
+    { v: 1, label: 'Open through R1' },
+    { v: 2, label: 'Open through R2 (WSOP-style Day 2)' },
+    { v: 3, label: 'Open through R3' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if ((+LabState.config.lateRegLastRound || 0) === o.v) opt.selected = true;
+    lrSel.appendChild(opt);
+  });
+  lrSel.onchange = () => {
+    LabState.config.lateRegLastRound = +lrSel.value;
+    if (LabState.config.lateRegLastRound > 0 && (+LabState.config.lateRegMaxEntries || 0) === 0) LabState.config.lateRegMaxEntries = 8;
+    saveLabState();
+    toast('Late reg: ' + (lrSel.value === '0' ? 'closed' : 'open through R' + lrSel.value));
+  };
+  lrRow.appendChild(lrSel);
+  evSec.appendChild(lrRow);
+  const lrEntriesRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  lrEntriesRow.appendChild(el('label', { text: 'Max late', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const lrInp = el('input', { type: 'number', min: '0', max: '256', step: '1', style: 'width: 100%; padding: 6px 8px;', value: String(LabState.config.lateRegMaxEntries || 0) });
+  lrInp.oninput = () => { LabState.config.lateRegMaxEntries = Math.max(0, +lrInp.value || 0); saveLabState(); };
+  lrEntriesRow.appendChild(lrInp);
+  evSec.appendChild(lrEntriesRow);
+  evSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 4px; font-style: italic; line-height: 1.5;',
+    text: 'Late entrants are sampled from the broader pool, pay full buy-in, and start at score = leader + 1.5 × cushion[r] (clearly behind the cut threshold). Models WSOP "register through end of Day 1" structures. Closes after the configured round; field locks for the remaining rounds.'
+  }));
   panel.appendChild(evSec);
 
-  const scoreSec = el('div', { class: 'lab-section' });
-  scoreSec.appendChild(el('h4', { text: 'Scoring system' }));
+  // ════ SCORING & WAGERING ════════════════════════════════════════════════
   scoreSec.appendChild(el('div', {
     class: 'cfg-static',
     style: 'padding: 8px 10px; background: var(--card-bg, rgba(0,0,0,0.04)); border-left: 3px solid var(--gold); margin-bottom: 8px; font-size: 11px;',
-    text: 'Honey-Stroke (Tour Standard) — permanent.'
-  }));
-  scoreSec.appendChild(el('div', {
-    class: 'ui-sans',
-    style: 'font-size: 10px; color: var(--text-secondary); line-height: 1.5;',
-    text: 'Hand category sets a bounded per-hole golf score (−5..+2). Every hole opens with a mandatory 2-honey pot; bets/raises propose a new agreed total; calls accept it. The hole winner takes the agreed total in honey. Net honey is divided by the round-length divisor (36/9/4/1 for 72/18/9/<9-hole rounds) before scoring. Folder loses the previous agreed total + 1 bogey; non-folder takes 0 par. Carry-over only inside 72-hole finals.'
+    text: 'Honey-Stroke (Tour Standard) — the permanent scoring law. Hand category sets a bounded per-hole golf score (−5..+2); every hole opens with a mandatory 2-honey pot (×2 on the back 9); bets/raises propose a new agreed total, calls accept it; the hole winner takes the agreed total in honey; net honey is divided by the round-length divisor (36/9/4/1 for 72/18/9/<9-hole rounds) before scoring; folder loses the prior agreed total + 1 bogey, non-folder takes 0 par; carry-over only inside 72-hole finals. The controls below tune the wagering layer and the decisive-showdown loser rule.'
   }));
 
-  // Quick-load audit configuration: Yellow Jacket Tour Standard at clean-research
-  // settings (sponsor=0 so ROI is interpretable, n=10 CI repeats, fixed seed).
-  const auditRow = el('div', { style: 'margin-top: 10px;' });
+  // ── Decisive-showdown loser rule ──
+  scoreSec.appendChild(subDivider('Decisive-showdown loser rule'));
+
+  // --- Variant ---
+  const lbRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  lbRow.appendChild(el('label', { text: 'Variant', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const lbSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 'yellowjacket', label: '🐝 Yellow Jacket — competitive (Bogey Loss · default)' },
+    { v: 'bumblebee',    label: '🌼 Bumblebee — casual (Honored Loss · own-hand)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    const current = LabState.config.gameVariant || (LabState.config.loserBogey ? 'yellowjacket' : 'bumblebee');
+    if (current === o.v) opt.selected = true;
+    lbSel.appendChild(opt);
+  });
+  lbSel.onchange = () => {
+    const variant = lbSel.value;
+    const isYJ = variant === 'yellowjacket';
+    LabState.config.gameVariant = variant;
+    LabState.config.loserBogey = isYJ;
+    setLoserBogey(isYJ);  // sync runtime so SP/Solo started right after picks it up
+    saveLabState();
+    toast(isYJ
+      ? 'Variant: Yellow Jacket (competitive · Bogey Loss)'
+      : 'Variant: Bumblebee (casual · Honored Loss)');
+  };
+  lbRow.appendChild(lbSel);
+  scoreSec.appendChild(lbRow);
+  scoreSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'YELLOW JACKET (default): the competitive tour. A decisive-showdown loser posts +1 bogey — unless their hand was a straight or better (a "respected loss": their own −5..−1), or unless it was a brick (only a high card) they bet into the pot (a double bogey — see Brick loss below). Sharper skill expression; champion totals run a few under par. BUMBLEBEE: the casual league. The loser always scores their own hand (−5..+2) — flush-loser still posts −1 birdie; gentler, champions deep under par. Both share the same engine, mandatory pot, agreed-total wagering, the wagering-cap knobs below, and the fold rule. Folds and ties are NOT affected by this choice.'
+  }));
+
+  // --- Brick loss (Yellow Jacket only — placed next to Variant so the coupling is obvious) ---
+  const hcRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  hcRow.appendChild(el('label', { text: 'Brick loss', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const hcSel = el('select', { style: 'width: 100%;' });
+  // key encodes mode + (for pot-gated) cap. Picking one writes both the mode
+  // and the cap into LabState.config.scoring AND syncs the live globals.
+  [
+    { key: 'flat-1',   mode: 'flat',      cap: null, hc: 1, label: 'Flat +1 bogey  (classic — fold cost = loss cost, no fold/bluff equity)' },
+    { key: 'flat-2',   mode: 'flat',      cap: null, hc: 2, label: 'Flat +2 double bogey  (anchored — small lift in event skill, no pot-gating)' },
+    { key: 'pg-2',     mode: 'pot-gated', cap: 2,    hc: 1, label: 'Pot-gated · cap +2 ★  +1 at the opener, +2 if you bet into the pot  (EV-balanced — SHIP DEFAULT)' },
+    { key: 'pg-4',     mode: 'pot-gated', cap: 4,    hc: 1, label: 'Pot-gated · cap +4  +1 / +2 / +3 / +4 with the pot  (aggressive — bigger fold gain, but skill metrics degrade)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.key, text: o.label });
+    const sc = LabState.config.scoring || {};
+    const curKey = sc.brickPenaltyMode === 'pot-gated'
+      ? ((Number.isFinite(+sc.brickLossCap) && +sc.brickLossCap > 2) ? 'pg-4' : 'pg-2')
+      : ((Number.isFinite(+sc.highCardShowdownLoss) && +sc.highCardShowdownLoss >= 2) ? 'flat-2' : 'flat-1');
+    if (curKey === o.key) opt.selected = true;
+    opt.dataset.mode = o.mode; if (o.cap != null) opt.dataset.cap = String(o.cap); opt.dataset.hc = String(o.hc);
+    hcSel.appendChild(opt);
+  });
+  hcSel.onchange = () => {
+    if (!LabState.config.scoring) LabState.config.scoring = {};
+    const opt = hcSel.options[hcSel.selectedIndex];
+    const mode2 = opt.dataset.mode === 'pot-gated' ? 'pot-gated' : 'flat';
+    const hc = +opt.dataset.hc || 1;
+    LabState.config.scoring.brickPenaltyMode = mode2;
+    LabState.config.scoring.highCardShowdownLoss = hc;
+    setBrickPenaltyMode(mode2);
+    setHighCardShowdownLoss(hc);
+    if (mode2 === 'pot-gated') {
+      const cap = +opt.dataset.cap || 2;
+      LabState.config.scoring.brickLossCap = cap;
+      setBrickLossCap(cap);
+      toast('Brick loss: pot-gated, cap +' + cap + ' (EV-balanced)');
+    } else {
+      toast('Brick loss: flat +' + hc + (hc === 2 ? ' (anchored double bogey)' : ' (classic bogey)'));
+    }
+    saveLabState();
+  };
+  hcRow.appendChild(hcSel);
+  scoreSec.appendChild(hcRow);
+  scoreSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Only applies under the Yellow Jacket variant (under Bumblebee a high-card loser already posts their own +2). The classic flat +1 makes folding a brick cost the same as showing it down, so pre-flop folding and bluffing barely matter. Pot-gated cap +2 (ship default, validated at pool=1000 / 100 seasons): a brick that checked through to the opener still scores +1, but a brick you BET into scores +2 — folding a brick to a bet is then strictly correct and bluffs threaten a double bogey; the AI\'s showdown-EV math is fully aware of this. Cap +4 escalates further (+3/+4 at big pots — bigger fold gain but the high-variance big-pot bricks degrade the career-skill metrics); flat +2 is a milder middle.'
+  }));
+
+  // --- Main final (override · the 72-hole Main final only) ---
+  const mfRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  mfRow.appendChild(el('label', { text: 'Main final', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const mfSel = el('select', { style: 'width: 100%;' });
+  const mfCur = (LabState.config.mainFinalsLoserBogey === true) ? 'yellowjacket'
+              : (LabState.config.mainFinalsLoserBogey === false) ? 'bumblebee' : 'inherit';
+  [
+    { v: 'inherit',      label: '↳ Inherit — same rule as the Variant above (default)' },
+    { v: 'yellowjacket', label: '🐝 Yellow Jacket on the final — +1 bogey loss · tough, over-par champion' },
+    { v: 'bumblebee',    label: '🌼 Bumblebee on the final — own-hand loss · deep sub-par champion (golf-major feel)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if (mfCur === o.v) opt.selected = true;
+    mfSel.appendChild(opt);
+  });
+  mfSel.onchange = () => {
+    LabState.config.mainFinalsLoserBogey = mfSel.value === 'yellowjacket' ? true
+      : mfSel.value === 'bumblebee' ? false : null;
+    saveLabState();
+    toast('Main final scoring: ' + (mfSel.value === 'inherit' ? 'inherit (same as variant)'
+      : mfSel.value === 'yellowjacket' ? 'Yellow Jacket (+1 bogey loss — tough)'
+      : 'Bumblebee (own-hand loss — deep sub-par)'));
+  };
+  mfRow.appendChild(mfSel);
+  scoreSec.appendChild(mfRow);
+  scoreSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Override for the Main Event\'s 72-hole aggregate final ONLY (the Main\'s bracket-cut rounds down to 16 always use the Variant rule). Inherit keeps the Main consistent with the rest of the Tour. "Bumblebee on the final" → champion typically deep under par (golf-major feel) even on an otherwise-Yellow-Jacket Tour; "Yellow Jacket on the final" → a gauntlet champion even on an otherwise-Bumblebee Tour.'
+  }));
+
+  // --- Multi-way (override · only at tables larger than HU) ---
+  const mwvRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  mwvRow.appendChild(el('label', { text: 'Multi-way', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const mwvSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 'bumblebee',    label: '🌼 Bumblebee at multi-way (Honored Loss · default · golf-realistic)' },
+    { v: 'yellowjacket', label: '🐝 Yellow Jacket at multi-way (Bogey Loss · harsh · scores climb to +12)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if ((LabState.config.multiwayVariant || 'bumblebee') === o.v) opt.selected = true;
+    mwvSel.appendChild(opt);
+  });
+  mwvSel.onchange = () => {
+    LabState.config.multiwayVariant = mwvSel.value;
+    saveLabState();
+    toast('Multi-way variant: ' + (mwvSel.value === 'bumblebee' ? 'Bumblebee (Honored Loss)' : 'Yellow Jacket (Bogey Loss)'));
+  };
+  mwvRow.appendChild(mwvSel);
+  scoreSec.appendChild(mwvRow);
+  scoreSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Only matters when Table size > 2 (set above). At 9-way the YJ Bogey Loss rule accumulates 8×(+1) per pot and pulls Major averages well above par, so Bumblebee (loser scores own hand) is the multi-way default. HU events ignore this and use the main Variant. The AI uses identical profile optima at multi-way regardless of which rule is chosen; the difference is purely the scoring.'
+  }));
+
+  // ── Wagering caps ──
+  scoreSec.appendChild(subDivider('Wagering caps'));
+
+  // --- Honey cap (round-end divisor calibration) ---
+  const hdmRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  hdmRow.appendChild(el('label', { text: 'Honey cap', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const hdmSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 'spec',       label: '🪶 Spec (v23) — ÷ holes-in-round  (1 stroke per N honey · light drizzle)' },
+    { v: 'calibrated', label: '⚖ Calibrated — stepped ÷9/÷4/÷36 (1 stroke per ~½ N honey · 2× impactful)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    const current = LabState.config.honeyCapMode || 'spec';
+    if (current === o.v) opt.selected = true;
+    hdmSel.appendChild(opt);
+  });
+  hdmSel.onchange = () => {
+    LabState.config.honeyCapMode = hdmSel.value;
+    setHoneyCapMode(hdmSel.value);                        // takes effect on the next run
+    saveLabState();
+    toast('Honey cap: ' + (hdmSel.value === 'spec'
+      ? 'Spec (÷N — v23 design intent)'
+      : 'Calibrated (stepped ÷table — post-v23 deployed)'));
+  };
+  hdmRow.appendChild(hdmSel);
+  scoreSec.appendChild(hdmRow);
+  scoreSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'At each round\'s end, net honey is divided by this cap and subtracted from that round\'s golf scorecard. SPEC: divide by the round/event hole count — average honey per hole IS your stroke effect; honey is a light smoothing drizzle. CALIBRATED: the stepped table (÷9 for 18-hole rounds, ÷36 for 72-hole finals, ÷4 for 9-hole, ÷1 for single-hole) — honey is ~2× more impactful. Also drives the hole-envelope ceiling below (envelope = E × this divisor). The mode is stamped in the run CSV; comparing runs across modes will diverge accordingly.'
+  }));
+
+  // --- Hole envelope E (per-player per-hole honey budget, in stroke units) ---
+  const heRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  heRow.appendChild(el('label', { text: 'Hole envelope', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const heSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 0, label: '0  —  Off — use the legacy per-tier caps below instead' },
+    { v: 1, label: '1  —  1 stroke per hole  (≈ today\'s cap for majors at 18-hole rounds)' },
+    { v: 2, label: '2  —  2 strokes per hole  (conservative · narrower bet variance)' },
+    { v: 3, label: '3  —  3 strokes per hole  ★ ship default · validated' },
+    { v: 4, label: '4  —  4 strokes per hole  (aggressive · widest bet variance)' },
+  ].forEach(o => {
+    const opt = el('option', { value: String(o.v), text: o.label });
+    if ((+LabState.config.holeEnvelopeStrokes || 0) === o.v) opt.selected = true;
+    heSel.appendChild(opt);
+  });
+  heSel.onchange = () => {
+    LabState.config.holeEnvelopeStrokes = +heSel.value;
+    saveLabState();
+    toast('Hole envelope: ' + heSel.value + (heSel.value === '0' ? ' (off — using legacy per-tier caps)' : ' strokes per hole'));
+  };
+  heRow.appendChild(heSel);
+  scoreSec.appendChild(heRow);
+  scoreSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'When E ≥ 1, the per-hole pot ceiling is E × honey-cap(round) — uniform across tiers. Under the calibrated honey cap at the default E = 3 that is 27 honey/player/hole on 9- and 18-hole rounds and 108 on the 72-hole Main finals. The wagering layer becomes expressive enough that fold cost varies meaningfully across pot sizes and skill edges accumulate to a clearer finish-position gradient. E = 0 turns the envelope OFF and falls back to the four legacy per-tier caps below.'
+  }));
+
+  // --- Pot-elastic K (per-street cap growth rate) ---
+  const kRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
+  kRow.appendChild(el('label', { text: 'Pot elastic K', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const kSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 0, label: '0  —  Flat ceiling, no pot elasticity (cap = envelope × 3 always)' },
+    { v: 3, label: '3  —  Conservative · slower escalation' },
+    { v: 5, label: '5  —  ★ ship default · validated · ~5× pot growth per street' },
+    { v: 8, label: '8  —  Aggressive · pot snaps to the envelope ceiling sooner' },
+  ].forEach(o => {
+    const opt = el('option', { value: String(o.v), text: o.label });
+    const current = Number.isFinite(+LabState.config.potElasticK) ? +LabState.config.potElasticK : 5;
+    if (current === o.v) opt.selected = true;
+    kSel.appendChild(opt);
+  });
+  kSel.onchange = () => {
+    LabState.config.potElasticK = +kSel.value;
+    setPotElasticK(+kSel.value);                          // takes effect on the next run
+    saveLabState();
+    toast('Pot elastic K: ' + kSel.value + (kSel.value === '0' ? ' (flat ceiling)' : '× pot per street'));
+  };
+  kRow.appendChild(kSel);
+  scoreSec.appendChild(kRow);
+  scoreSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Each betting beat\'s cap is min(envelope × 3, ⌈K × honey-already-in-the-pot⌉). Worked example for a Major round (18 holes, E=3 calibrated → envelope 27, ceiling 81): preflop pot 2 → cap 10 (K=5); flop pot 8 → cap 40; turn pot 24 → clamps at 81; river → 81. K=3 same hand: 6/24/72/81 — slower acceleration, fewer big-pot showdowns. K is the pot\'s "acceleration"; E is its "speed limit." Sweep them as a pair to feel the interaction.'
+  }));
+
+  // The "Legacy per-tier caps" sub-header + the four cap sliders were collected
+  // into legacyCapHolder by the schedule-slider loop above; drop them in here,
+  // at the bottom of the wagering-caps group, flagged as the E = 0 fallback.
+  if (legacyCapHeaderInserted) scoreSec.appendChild(legacyCapHolder);
+
+  // --- Quick-load research config ---
+  scoreSec.appendChild(subDivider('Research preset'));
+  const auditRow = el('div', { style: 'margin-top: 2px;' });
   const auditBtn = el('button', {
     class: 'btn gold',
     text: '▸ Load Tour Standard audit config',
@@ -24784,9 +24776,11 @@ function renderConfigPanel(panel, mode) {
       noiseSpread: 0.20, betSpread: 0.20, foldSpread: 0.18, raiseSpread: 0.15,
       skillSpread: 0.18,
       // Audit preset locks the Bumblebee variant (Honored Loss) for
-      // reproducibility against historical baseline runs. Switch the
-      // Variant dropdown to Yellow Jacket if you want the competitive
-      // Bogey-Loss scoring law in your audit run.
+      // reproducibility against historical baseline runs (under Bumblebee
+      // the Brick-loss control is moot — a high-card loser always posts +2).
+      // Switch the Variant dropdown to Yellow Jacket if you want the
+      // competitive Bogey-Loss law, and set Brick loss to "Flat +1" for the
+      // pre-v69.66 baseline rule.
       gameVariant: 'bumblebee',
       loserBogey: false,
       repeatRuns: 10,
@@ -24801,7 +24795,7 @@ function renderConfigPanel(panel, mode) {
   auditRow.appendChild(auditBtn);
   scoreSec.appendChild(auditRow);
   scoreSec.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 10px; color: var(--text-secondary); margin-top: 6px; font-style: italic;',
-    text: 'Pool 2,000 · 10 seasons · n=10 CI repeats · sponsor purses $0 (so ROI is interpretable) · seeded.' }));
+    text: 'Pool 2,000 · 10 seasons · n=10 CI repeats · sponsor purses $0 (so ROI is interpretable) · seeded · Bumblebee locked for baseline reproducibility.' }));
 
   panel.appendChild(scoreSec);
 

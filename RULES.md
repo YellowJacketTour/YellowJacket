@@ -350,13 +350,15 @@ When a hand goes to showdown and is **not** a tie, the winner posts their own ha
 
 **Main-final scoring override.** The Main Event's 72-hole *final* round can run a different decisive-loser rule than the rest of the Tour (config `mainFinalsLoserBogey`, exposed as the Simulator's "Main final" control): *inherit* (default — the final follows the variant above), *Yellow Jacket on the final* (force the +1-bogey rule there only — keeps the champion total a tough, over-par gauntlet even if the rest of the Tour is Bumblebee), or *Bumblebee on the final* (force own-hand-loss there only — pulls the champion total deep under par, golf-major style, while the bracket-cut rounds leading to it stay competitive). It affects only the 72-hole aggregate final; the Main's bracket-cut rounds (down to 16) always use the global variant. Everything else — and every regular and Major event — follows the variant chosen above.
 
-### 3.10 Multi-way option (6 / 9 player tables) — designed, not yet active
+### 3.10 Multi-way option (6 / 9 player tables) — active
 
-> **Status:** not active in v69 — heads-up (`tableSize: 2`) is the only running mode. The 6- and 9-player table sizes appear in the Simulator's table-size dropdown for forward-compatibility, but the multi-way matched-contribution runner is not yet implemented; selecting a size above HU has no effect in the current build. This section documents the *designed* multi-way extension that is scaffolded for a v70+ release — it is the spec for when it ships, not a description of current behavior.
+> **Status:** live. The Simulator's table-size dropdown offers 2 (heads-up, the canonical engine and the default), 4, 6, and 9. Any size above HU routes aggregate stroke-play events through the multi-way matched-contribution runner; heads-up (`tableSize: 2`) still uses the unchanged `playMatch` / `runStrokePlayEvent` path. The bracket-knockout format is HU-only — multi-way applies to the aggregate-stroke-play format.
 
-The design: the simulator's table-size dropdown carries 6 and 9 alongside HU (the default and, today, the only mode that runs). When the multi-way runner ships, multi-way tables will use **matched-contribution wagering** (like real poker — each player contributes to a shared pot, no agreed-total) rather than the agreed-total semantics of heads-up Honey wagering. R1–R3 are to be played multi-way; R4 collapses to a heads-up final between the top-2 survivors.
+How it works: rounds R1–R3 are played at tables of `tableSize` players using **matched-contribution wagering** (like real poker — each player contributes to a shared pot, no agreed-total) rather than the agreed-total semantics of heads-up Honey wagering; R4 collapses to a **heads-up final between the top-2 survivors** (which then plays under the heads-up engine). Cushion + cut mechanics layer on identically, with a tighter `[8, 5, 3, 2]` cushion table at multi-way.
 
-The multi-way variant is designed to default to Bumblebee (Honored Loss), since YJ Bogey Loss × 8 losers per pot would pull champion scores too far above par at 9-handed.
+Multi-way calibration: per-player honey caps scale down with table size (≈ HU-cap ÷ 2.5 at 9-handed, tuned so per-pair stroke variance matches HU); AI fold discipline tightens by 0.025 of equity slack per extra seat (`slack = 0.20 − 0.025·(N−2)`) so fold discipline doesn't collapse at 9-handed; and at `tableSize > 6` the mandatory opener doubles to 2 honey to compensate for thinner per-seat equity. The decisive-loser rule still applies pairwise (winner vs each loser), including the pot-gated brick rule under Yellow Jacket.
+
+The multi-way variant defaults to **Bumblebee** (Honored Loss — config `multiwayVariant`), because YJ Bogey Loss × up to 8 losers per pot would pull champion scores too far above par at 9-handed; the Simulator's "Multi-way" control flips it to Yellow Jacket if you want the harsh version. HU events ignore `multiwayVariant` and use the main Variant.
 
 ### 3.11 Payouts
 
@@ -461,34 +463,45 @@ Bet/call/raise/fold mechanics are unchanged. Stack is Nectar. All-in is your ful
 Every **showdown** adds to your scorecard, in **true golf convention** — lower is better, exactly like a tour-event scorecard and the dashboard champion score:
 
 ```
-   ┌──── GOLF SCORECARD (cash YJ / BB Stroke) ─┐
-   │                                            │
-   │  At each SHOWDOWN, for every player still   │
-   │  in the hand:                               │
-   │                                             │
-   │    Pot winner:  card += own hand class      │
-   │       (Royal / Straight Flush −5 …          │
-   │        Full House −2 … Two Pair 0 …         │
-   │        High Card +2)                        │
-   │                                             │
-   │    Every other showdown player:             │
-   │      YJ Stroke (Bogey Loss):   card += +1   │
-   │      Bumblebee Stroke (Honored Loss):       │
-   │                  card += own hand class     │
-   │                                             │
-   │  Multi-way tables: one pot winner; every    │
-   │  other showdown player posts the loser      │
-   │  score above.                               │
-   │                                             │
-   │  Folds do NOT touch the card. Only          │
-   │  showdowns are scored.                      │
-   │                                             │
-   └─────────────────────────────────────────────┘
+   ┌──── GOLF SCORECARD (cash YJ / BB Stroke) ──────┐
+   │                                                 │
+   │  At each SHOWDOWN, for every player still        │
+   │  in the hand:                                    │
+   │                                                  │
+   │    Pot winner:  card += own hand class           │
+   │       (Royal / Straight Flush −5 …               │
+   │        Full House −2 … Two Pair 0 …              │
+   │        High Card +2)                             │
+   │                                                  │
+   │    Every other showdown player:                  │
+   │      YJ Stroke (Bogey Loss) — mirrors the tour   │
+   │        Yellow Jacket loser rule (§3.9):          │
+   │          • straight or better → own −5..−1       │
+   │            ("respected loss")                    │
+   │          • trips / two pair / pair → +1 bogey    │
+   │          • high card ("brick") → +1 if the pot   │
+   │            was just the posted blinds (you       │
+   │            limped/checked it down), +2 once it   │
+   │            grew past that — any raised pot (cap  │
+   │            +2)                                   │
+   │      Bumblebee Stroke (Honored Loss):            │
+   │          card += own hand class                  │
+   │                                                  │
+   │  Multi-way tables: one pot winner; every         │
+   │  other showdown player posts the loser score     │
+   │  above.                                          │
+   │                                                  │
+   │  Folds do NOT touch the card. Only showdowns     │
+   │  are scored.                                     │
+   │                                                  │
+   └──────────────────────────────────────────────────┘
 ```
+
+The posted blinds (small + big) are the cash analog of the tour's mandatory 2-honey opener — the dead money in the pot before anyone acts — so the brick rule reads the same way at the cash table as on Tour: *fold the brick to a bet, or eat the double bogey.*
 
 Sign convention: **a negative card = under par over the session** (good — like a real round). The ⛳ pill on each seat is that player's running card; green under par, red over.
 
-Example: you win a showdown with a flush (−1) — card goes to −1. You win another with two pair (0) — card stays −1. You then lose a showdown holding only a high card: under YJ Stroke your card goes to 0 (a +1 bogey for the loss); under Bumblebee Stroke it goes to +1 (your high card scores its own +2, so −1 + 2 = +1).
+Example: you win a showdown with a flush (−1) — card goes to −1. You win another with two pair (0) — card stays −1. You then lose a showdown holding only a high card in a raised pot: under YJ Stroke your card goes to +1 (a +2 double bogey — the pot grew past the blinds); had you limped and checked it down, it would be 0 (a +1 bogey). Under Bumblebee Stroke it goes to +1 either way (your high card scores its own +2, so −1 + 2 = +1).
 
 ### 5.4 No Nectar settlement — it's pure skill
 
@@ -641,19 +654,22 @@ The cooler bonus only fires in tour events, never at cash. The cash YJ-Stroke / 
    └──────────────────────────────────────────────────┘
 ```
 
-### 8.3 Multi-way table format (designed, not yet active)
+### 8.3 Multi-way table format (active)
 
-> **Status:** not active in v69 — heads-up (`tableSize: 2`) is the only running mode. The diagram below is the *designed* multi-way tournament shape, scaffolded for v70+; the 6- and 9-player table sizes are present in the Simulator's table-size dropdown for forward-compatibility only and have no effect in the current build. Documented here as the spec for when the multi-way runner ships.
+> **Status:** live (see §3.10). Available in the aggregate-stroke-play format only; the bracket-knockout format is heads-up. Selecting table size 4 / 6 / 9 in the Simulator runs aggregate events through the multi-way matched-contribution runner; table size 2 (the default) uses the heads-up engine.
 
 ```
-   ┌──── MULTI-WAY AGGREGATE (6 or 9 per table) ────┐
-   │              (DESIGN — not yet active)          │
+   ┌──── MULTI-WAY AGGREGATE (4, 6, or 9 per table) ─┐
    │  R1: tables of N players, matched-contribution  │
    │  R2: tables of N players                         │
    │  R3: tables of N players                         │
    │  R4: collapses to heads-up final                 │
-   │      (top-2 survivors, 18 holes)                 │
+   │      (top-2 survivors, plays the HU engine)      │
    │                                                  │
+   │  Caps scale down with N; opener doubles to 2     │
+   │  honey at N > 6; cushion table tightens to       │
+   │  [8, 5, 3, 2]. Default loser rule at multi-way:  │
+   │  Bumblebee (config multiwayVariant).             │
    └──────────────────────────────────────────────────┘
 ```
 
