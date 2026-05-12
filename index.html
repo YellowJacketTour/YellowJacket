@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.75-carry-doublecount-fix";
+const APP_VERSION = "2026.05.12-v69.76-skill-seeded-bracket";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -16005,6 +16005,12 @@ const SpectatorState = {
     // or 'calibrated' (deployed stepped table ÷9/÷4/÷36). Locks at run-start.
     // v69.53 default flipped to 'calibrated' to match DEFAULT_SIM_CONFIG.
     honeyCapMode: 'calibrated',
+    // v69.76 — Live-Tournament bracket draw. 'skill' seeds the field 1..N by
+    // authored skill (best = #1), so the top-vs-bottom HU pairing matches a
+    // real tournament bracket (the strongest player faces the weakest first,
+    // and survivors re-seed by cumulative score each round). 'random' keeps the
+    // legacy ad-hoc draw order (effectively a random bracket w.r.t. skill).
+    bracketSeed: 'skill',
   },
   stats: {
     handsPlayed: 0, biggestPot: 0, biggestPotHand: null, biggestPotTableId: null,
@@ -16174,18 +16180,31 @@ function spectatorStartLiveTourney() {
   setBrickLossCap(tourScoring.brickLossCap || 4);
   // playHole's profile generator reads Math.random for jitter — wrap in
   // withCashRng so seeded sessions get a deterministic field + profiles.
+  // v69.76 — two-phase: draw the (skill, profile) set from the seed first
+  // (so the same seed yields the same field regardless of draw mode), then
+  // ORDER the field. 'skill' → sort best-first so seed #1 = highest skill and
+  // the top-vs-bottom HU pairing is a real tournament bracket; 'random' → keep
+  // the draw order (the legacy behavior). The sort consumes no RNG, so a
+  // 'random' run reproduces ≤v69.75 bit-for-bit.
+  const bracketDraw = (SpectatorState.setup.bracketSeed === 'random') ? 'random' : 'skill';
   const players = [];
   withCashRng(() => {
+    const drafted = [];
     for (let i = 0; i < fieldCap; i++) {
       let skill;
       if (evType === 'main') skill = 0.30 + cashRng() * 0.65;
       else if (evType === 'major') skill = 0.55 + cashRng() * 0.40;
       else skill = 0.40 + cashRng() * 0.50;
+      drafted.push({ skill: skill, profile: makeProfileForSkill(skill, 'yellowjacket') });
+    }
+    if (bracketDraw === 'skill') drafted.sort((a, b) => b.skill - a.skill);
+    drafted.forEach((d, i) => {
       players.push({
         id: -1000 - i,
+        seed: i + 1,            // v69.76 — bracket seed (1 = top); meaningful when bracketDraw === 'skill'
         name: spectatorMakePlayerName(i),
-        skill: skill,
-        profile: makeProfileForSkill(skill, 'yellowjacket'),
+        skill: d.skill,
+        profile: d.profile,
         // Per-player tournament state. v69.48 — Honey reconciles AT ROUND END
         // (Augusta cumulative shape), not aggregated across the whole event.
         scorecard: [],          // [{round, hole, ...row}]   per-hole audit trail
@@ -16198,7 +16217,7 @@ function spectatorStartLiveTourney() {
         finalPlace: null,
         matchId: null, seatIdx: null,
       });
-    }
+    });
   });
   SpectatorState.tournament = {
     format: 'golf-honey',                            // v69.47 marker
@@ -16212,6 +16231,7 @@ function spectatorStartLiveTourney() {
     honeyCap: divisor,                               // v69.50 — the "honey cap": ÷N normalizer that caps Honey's per-hole power as round length grows. (Distinct from strokeCap, which limits per-hole pot growth.)
     loserBogey: tourneyLoserBogey,                    // v69.71 — Yellow Jacket (true) vs Bumblebee (false); drives playHole's showdown scoring + the bots' EV math
     variant: variant,                                // 'yj' | 'bb'
+    bracketSeed: bracketDraw,                         // v69.76 — 'skill' (1..N by skill) | 'random' (legacy draw order)
     surviving: players.slice(),
     matches: [],                                     // populated by spectatorSeatTourneyRound
     history: [],
@@ -16835,6 +16855,7 @@ function spectatorInitSession(mode) {
       skillMix: su.skillMix,
       cashTables: su.cashTables, cashSeats: su.cashSeats,
       eventType: su.eventType,
+      bracketSeed: (su.bracketSeed === 'random') ? 'random' : 'skill',   // v69.76 — Live-Tournament bracket draw
       handDelayMs: su.handDelayMs, directorIntervalSec: su.directorIntervalSec,
       directorOn: !!SpectatorState.director.on,
       honeyCapMode: honeyMode,
@@ -17076,6 +17097,12 @@ function spectatorExportCSV() {
       ['run_limit_value', sess.runLimit.value],
       ['variant', sess.settings.variant],
       ['skill_mix', sess.settings.skillMix],
+      ['bracket_seed', (sess.mode === 'liveTourney') ? (sess.settings.bracketSeed || 'skill') : ''],
+      ['bracket_seed_desc', (sess.mode === 'liveTourney')
+        ? ((sess.settings.bracketSeed === 'random')
+            ? 'random: ad-hoc draw order (bracket is effectively random w.r.t. skill)'
+            : 'skill: field seeded 1..N by authored skill (#1 = best); top-vs-bottom HU pairing, survivors re-seed by cumulative score each round')
+        : ''],
       ['hand_delay_ms', sess.settings.handDelayMs],
       ['director_interval_sec', sess.settings.directorIntervalSec],
       ['director_on', sess.settings.directorOn],
@@ -17147,7 +17174,7 @@ function spectatorExportCSV() {
       const divisor = tour.honeyCap || 9;
       const maxRound = (tour.players || []).reduce((m, p) => Math.max(m, p.eliminatedRound || 0), tour.round || 1);
       chunks.push(row(['section', 'tournament_field']));
-      chunks.push(row(['player_id', 'name', 'skill', 'final_place', 'golf_total', 'honey_won', 'honey_lost_to_opp', 'net_honey', 'honey_cap', 'honey_adjusted_strokes', 'final_score', 'holes_played', 'eliminated_round', 'finished']));
+      chunks.push(row(['player_id', 'name', 'seed', 'skill', 'final_place', 'golf_total', 'honey_won', 'honey_lost_to_opp', 'net_honey', 'honey_cap', 'honey_adjusted_strokes', 'final_score', 'holes_played', 'eliminated_round', 'finished']));
       const standings = (tour.players || []).slice().sort((a, b) => (a.finalPlace || 9999) - (b.finalPlace || 9999) || spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
       standings.forEach(p => {
         const finished = p.finalPlace === 1 ? 'CHAMPION'
@@ -17159,6 +17186,7 @@ function spectatorExportCSV() {
         const finalScore = (p.golfCum || 0) + honeyAdj;
         chunks.push(row([
           p.id, p.name,
+          (p.seed != null ? p.seed : ''),
           (typeof p.skill === 'number') ? p.skill.toFixed(4) : '',
           p.finalPlace || '',
           p.golfCum || 0,
@@ -18773,6 +18801,7 @@ function refreshSpectatorStats() {
   if (sess) {
     host.appendChild(el('div', { style: 'margin-top:6px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px; margin-bottom:2px;', text: 'Session' }));
     host.appendChild(row('Seed', String(sess.seed || '(random)')));
+    if (sess.mode === 'liveTourney') host.appendChild(row('Bracket', (sess.settings && sess.settings.bracketSeed === 'random') ? 'Random draw' : 'Skill-seeded'));
     if (sess.status !== 'running') {
       host.appendChild(row('Status', '✓ Complete (' + sess.endReason + ')'));
       host.appendChild(el('div', { style: 'margin-top:6px; font-size:10px; opacity:0.6; font-style:italic;', text: 'Report + CSV/JSON export in the featured panel →' }));
@@ -19063,6 +19092,27 @@ Views.spectator = function() {
       (SpectatorState.setup.honeyCapMode === 'calibrated')
         ? 'Calibrated: 18-hole round ⇒ ÷9, 72-hole final ⇒ ÷36. Honey ~2× more impactful.'
         : 'Spec: 18-hole round ⇒ ÷18, 72-hole final ⇒ ÷72. Average honey per hole IS your stroke effect.' }));
+
+    // v69.76 — Live-Tournament bracket draw. Skill-seeded (best = #1, real
+    // tournament bracket) vs random (legacy ad-hoc draw). Locks at run-start.
+    if (SpectatorState.mode === 'liveTourney') {
+      setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'Bracket draw' }));
+      const bracketSel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:4px; font-size:12px;' });
+      [
+        { v: 'skill',  l: 'Skill-seeded  (1..N by skill; strongest faces weakest first)' },
+        { v: 'random', l: 'Random  (ad-hoc draw — bracket is random w.r.t. skill)' },
+      ].forEach(o => {
+        const opt = el('option', { value: o.v, text: o.l });
+        if (((SpectatorState.setup.bracketSeed === 'random') ? 'random' : 'skill') === o.v) opt.selected = true;
+        bracketSel.appendChild(opt);
+      });
+      bracketSel.onchange = () => { SpectatorState.setup.bracketSeed = bracketSel.value; };
+      setupCard.appendChild(bracketSel);
+      setupCard.appendChild(el('div', { style: 'font-size:9px; opacity:0.55; margin-bottom:10px; font-style:italic; line-height:1.4;', text:
+        (SpectatorState.setup.bracketSeed === 'random')
+          ? 'Random: the field is drawn in arbitrary order, so a top player can collide with another top player in Round 1 (max upset variance).'
+          : 'Skill-seeded: #1 plays #N, #2 plays #N-1, … and survivors re-seed by cumulative score each round — the standard tournament bracket.' }));
+    }
   }
 
   // Action buttons
