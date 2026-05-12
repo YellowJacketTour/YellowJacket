@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.85-skill-curve-multiplier";
+const APP_VERSION = "2026.05.12-v69.86-holes-per-round";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -16155,7 +16155,7 @@ const SpectatorState = {
   log: [],                                 // rolling broadcast log for the UI (last ~500 lines) [{ts, tableId, line, kind}]
   feedLog: [],                             // complete broadcast log for the exported CSV/JSON (uncapped up to a memory ceiling) — v69.75
   logSeen: {},                             // tableId -> last h.log index harvested
-  bracketStudy: { n: 100, running: false, phase: null, result: null, history: [] },   // v69.79/80 — offline skill-seeded-vs-random bracket A/B (Spectator UI); history holds the last ~25 runs for pooling + CSV export
+  bracketStudy: { n: 100, holes: 18, running: false, phase: null, result: null, history: [] },   // v69.79/80/86 — offline skill-seeded-vs-random bracket A/B (Spectator UI); `holes` = holes/round for the sweep; history holds the last ~25 runs for pooling + CSV export
   scoreboard: { zoom: 1.0 },               // v69.81 — Live Scoreboard (golf-scorecard grid) view state
   scorecardOpen: false,                    // v69.46 — featured panel toggle (felt ↔ full scorecard) for liveTourney
   // Setup form state (persisted across view re-renders)
@@ -16197,6 +16197,11 @@ const SpectatorState = {
     // Locks at run-start. Read via spectatorCurveMul() (also accepts the legacy
     // 'standard'/'wide' tokens).
     skillCurve: 1,
+    // v69.86 — holes per round for Live Tournament events (default 18 = one
+    // golf round). The skill→finish studies say longer rounds are the only
+    // lever that materially separates skill; this exposes it. Clamped [9, 72]
+    // at run-start. (Total event holes = 4 rounds × this.)
+    holesPerRound: 18,
   },
   stats: {
     handsPlayed: 0, biggestPot: 0, biggestPotHand: null, biggestPotTableId: null,
@@ -16523,7 +16528,9 @@ function spectatorStartLiveTourney() {
   // simulated synchronously — at these field sizes there's no small bracket to
   // broadcast hand-by-hand; the Live Scoreboard updates round-by-round instead.
   const fieldCap = evType === 'main' ? 7000 : (evType === 'major' ? 1024 : 256);
-  const handsPerRound = 18;
+  // v69.86 — holes/round is configurable now (default 18 = one golf round).
+  // Longer rounds are the lever that actually separates skill; clamp [9, 72].
+  const handsPerRound = Math.max(9, Math.min(72, (SpectatorState.setup.holesPerRound | 0) || 18));
   const tourEnter = tourneyStructure(fieldCap);     // [R1, R2, ⌈N/2⌉, ⌈⌈N/2⌉/2⌉]
   const totalRounds = tourEnter.length;             // always 4
   const eventTotalHoles = totalRounds * handsPerRound;
@@ -19630,6 +19637,22 @@ Views.spectator = function() {
     setupCard.appendChild(evSel);
   }
 
+  if (SpectatorState.mode === 'liveTourney') {
+    // v69.86 — holes per round. 18 = one golf round (the default / golf-native
+    // anchor). Longer rounds are the only lever the skill→finish studies show
+    // materially separating skill — so it's exposed here. 4 rounds × this =
+    // the event's total holes. (Big fields × long rounds = a heavier up-front
+    // simulate; ≥36 on the Main field can take a few seconds.)
+    setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'Holes per round  (× 4 rounds)' }));
+    const hprIn = el('input', { type: 'number', class: 'form-control', style: 'width:100%; margin-bottom:3px; font-size:12px;', min: '9', max: '72', step: '9', value: String(SpectatorState.setup.holesPerRound || 18) });
+    hprIn.onchange = () => { SpectatorState.setup.holesPerRound = Math.max(9, Math.min(72, parseInt(hprIn.value, 10) || 18)); };
+    setupCard.appendChild(hprIn);
+    setupCard.appendChild(el('div', { style: 'font-size:9px; opacity:0.55; margin-bottom:10px; font-style:italic; line-height:1.4;', text:
+      ((SpectatorState.setup.holesPerRound || 18) === 18)
+        ? '18 holes × 4 rounds = a 72-hole event (one golf major). The standard.'
+        : (SpectatorState.setup.holesPerRound || 18) + ' holes × 4 rounds = a ' + ((SpectatorState.setup.holesPerRound || 18) * 4) + '-hole event — longer rounds let a skill edge compound past per-round variance (the studies say this is the real lever).' }));
+  }
+
   if (isLive) {
     setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'Hand delay (ms)' }));
     const delayIn = el('input', { type: 'number', class: 'form-control', style: 'width:100%; margin-bottom:8px; font-size:12px;', min: '500', max: '15000', step: '250', value: String(SpectatorState.setup.handDelayMs) });
@@ -19818,26 +19841,33 @@ Views.spectator = function() {
   // reports how much seeding lifts skill→finish. Uses the Event type / Honey
   // cap / AI skill curve dropdowns from the left panel.
   if (SpectatorState.mode === 'liveTourney') {
-    if (!SpectatorState.bracketStudy) SpectatorState.bracketStudy = { n: 100, running: false, phase: null, result: null, history: [] };
+    if (!SpectatorState.bracketStudy) SpectatorState.bracketStudy = { n: 100, holes: 18, running: false, phase: null, result: null, history: [] };
     if (!Array.isArray(SpectatorState.bracketStudy.history)) SpectatorState.bracketStudy.history = [];
+    if (!Number.isFinite(SpectatorState.bracketStudy.holes)) SpectatorState.bracketStudy.holes = 18;
     const bs = SpectatorState.bracketStudy;
     const evtNow = SpectatorState.setup.eventType;
     const SBOARD_STUDY_FIELD = 64;   // v69.84 — fixed (fast); not the big event-type field
     const studyCard = el('div', { class: 'card', style: 'padding:14px; margin-bottom:14px;' });
     studyCard.appendChild(el('h2', { text: '🔬 Bracket Skill Study  ·  offline A/B', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
     studyCard.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.65; line-height:1.5; margin-bottom:10px;', text:
-      'Runs N tournaments with the field skill-seeded and N with the same fields drawn in random order, then reports how much the seeding lifts skill→finish. Uses a fixed ' + SBOARD_STUDY_FIELD + '-player golf-major event (4 rounds: R1 free, ~50% cut after R2 & R3, lowest 4-round total wins) · ' + evtNow + ' skill spread · honey ' + (SpectatorState.setup.honeyCapMode === 'spec' ? '÷18 (Spec)' : '÷9 (Calibrated)') + ' · AI curve ×' + spectatorCurveMul().toFixed(1) + ' (set in the left panel). (Field size is fixed for speed — independent of the event-type field; pass fieldSize/holesPerRound/skillCurve to runBracketSkillStudy() in the console for sweeps.)' }));
+      'Runs N tournaments with the field skill-seeded and N with the same fields drawn in random order, then reports how much the seeding lifts skill→finish. Fixed ' + SBOARD_STUDY_FIELD + '-player golf-major (4 rounds: R1 free, ~50% cut after R2 & R3, lowest 4-round total wins) × ' + (bs.holes || 18) + ' holes/round = ' + ((bs.holes || 18) * 4) + '-hole event · ' + evtNow + ' skill spread · honey ' + (SpectatorState.setup.honeyCapMode === 'spec' ? '÷18 (Spec)' : '÷9 (Calibrated)') + ' · AI curve ×' + spectatorCurveMul().toFixed(1) + ' (event-type / honey / curve come from the left panel). Sweep Holes/round below — the studies say round length is the real skill lever. (Field size is fixed for speed; pass fieldSize to runBracketSkillStudy() in the console to vary it.)' }));
     if (bs.running) {
       studyCard.appendChild(el('div', { style: 'padding:10px 12px; border-radius:5px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.28); font-size:12px; color:#F0C75E;', text: '⏳ ' + (bs.phase || 'Running…') + '  (the tab is unresponsive while this runs)' }));
     } else {
       const ctrlRow = el('div', { style: 'display:flex; align-items:center; gap:8px; flex-wrap:wrap;' });
       ctrlRow.appendChild(el('span', { style: 'font-size:11px; opacity:0.75;', text: 'Events / arm:' }));
-      const nInput = el('input', { type: 'number', class: 'form-control', style: 'width:90px; font-size:12px;', value: String(bs.n || 100), min: '10', max: '5000' });
+      const nInput = el('input', { type: 'number', class: 'form-control', style: 'width:80px; font-size:12px;', value: String(bs.n || 100), min: '10', max: '5000' });
       nInput.oninput = () => { const v = parseInt(nInput.value, 10); if (Number.isFinite(v)) SpectatorState.bracketStudy.n = Math.max(10, Math.min(5000, v)); };
       ctrlRow.appendChild(nInput);
-      const runBtn = el('button', { class: 'btn gold', style: 'font-size:11px;', text: '▶ Run study' });
+      ctrlRow.appendChild(el('span', { style: 'font-size:11px; opacity:0.75;', text: 'Holes / round:' }));
+      const hInput = el('input', { type: 'number', class: 'form-control', style: 'width:80px; font-size:12px;', value: String(bs.holes || 18), min: '9', max: '144', step: '9' });
+      hInput.oninput = () => { const v = parseInt(hInput.value, 10); if (Number.isFinite(v)) SpectatorState.bracketStudy.holes = Math.max(9, Math.min(144, v)); };
+      hInput.onchange = () => { Views.spectator(); };   // repaint so the header line + run-button label reflect the new round length
+      ctrlRow.appendChild(hInput);
+      const runBtn = el('button', { class: 'btn gold', style: 'font-size:11px;', text: '▶ Run study  (' + ((bs.holes || 18) * 4) + ' holes)' });
       runBtn.onclick = () => {
         const n = Math.max(10, Math.min(5000, SpectatorState.bracketStudy.n || 100));
+        const holes = Math.max(9, Math.min(144, SpectatorState.bracketStudy.holes || 18));
         const evt = SpectatorState.setup.eventType;
         const fieldSize = 64;   // v69.84 — fixed study field (the spectator's 256/1024/7000 are too big to pool)
         const honeyCapMode = (SpectatorState.setup.honeyCapMode === 'spec') ? 'spec' : 'calibrated';
@@ -19845,17 +19875,17 @@ Views.spectator = function() {
         const baseSeed = 'ui-study-' + Date.now();
         SpectatorState.bracketStudy.running = true;
         SpectatorState.bracketStudy.result = null;
-        SpectatorState.bracketStudy.phase = 'Running skill-seeded arm (' + n + ' events)…';
+        SpectatorState.bracketStudy.phase = 'Running skill-seeded arm (' + n + ' events × ' + (holes * 4) + ' holes)…';
         Views.spectator();
         setTimeout(() => {
           let r1 = null;
-          try { r1 = runBracketSkillStudy({ n: n, fieldSize: fieldSize, eventType: evt, honeyCapMode: honeyCapMode, skillCurve: skillCurve, baseSeed: baseSeed, arms: ['skill'] }); }
+          try { r1 = runBracketSkillStudy({ n: n, fieldSize: fieldSize, holesPerRound: holes, eventType: evt, honeyCapMode: honeyCapMode, skillCurve: skillCurve, baseSeed: baseSeed, arms: ['skill'] }); }
           catch (e) { SpectatorState.bracketStudy.running = false; SpectatorState.bracketStudy.phase = 'Error: ' + (e && e.message ? e.message : e); Views.spectator(); return; }
-          SpectatorState.bracketStudy.phase = 'Running random-draw arm (' + n + ' events)…';
+          SpectatorState.bracketStudy.phase = 'Running random-draw arm (' + n + ' events × ' + (holes * 4) + ' holes)…';
           Views.spectator();
           setTimeout(() => {
             let r2 = null;
-            try { r2 = runBracketSkillStudy({ n: n, fieldSize: fieldSize, eventType: evt, honeyCapMode: honeyCapMode, skillCurve: skillCurve, baseSeed: baseSeed, arms: ['random'] }); }
+            try { r2 = runBracketSkillStudy({ n: n, fieldSize: fieldSize, holesPerRound: holes, eventType: evt, honeyCapMode: honeyCapMode, skillCurve: skillCurve, baseSeed: baseSeed, arms: ['random'] }); }
             catch (e) { SpectatorState.bracketStudy.running = false; SpectatorState.bracketStudy.phase = 'Error: ' + (e && e.message ? e.message : e); Views.spectator(); return; }
             const result = { config: (r1 && r1.config) || (r2 && r2.config), skill: r1 && r1.skill, random: r2 && r2.random };
             SpectatorState.bracketStudy.result = result;
