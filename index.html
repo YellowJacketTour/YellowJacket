@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.84-four-round-major";
+const APP_VERSION = "2026.05.12-v69.85-skill-curve-multiplier";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5008,9 +5008,10 @@ function runBracketSkillStudy(opts) {
   const holes     = (opts.holesPerRound | 0) || 18;
   const eventType = (opts.eventType === 'main' || opts.eventType === 'major') ? opts.eventType : 'regular';
   const baseSeed  = String(opts.baseSeed || 'bracket-study');
-  // v69.78 — AI skill-curve width: 'standard' | 'wide' | a raw multiplier ≥ 1.
+  // v69.78/85 — AI skill-curve width as a numeric multiplier ≥ 1 (1.0 = standard,
+  // 1.5 = the old 'wide'). Accepts a number, a numeric string, or 'standard'/'wide'.
   const skillCurve = (Number.isFinite(+opts.skillCurve)) ? Math.max(1, +opts.skillCurve)
-    : (opts.skillCurve === 'wide') ? 'wide' : 'standard';
+    : (opts.skillCurve === 'wide') ? 1.5 : 1;
   // v69.79 — which arms to run (default both). Lets the UI run one arm at a
   // time (with a repaint between) so it can show progress instead of one freeze.
   const arms = (Array.isArray(opts.arms) ? opts.arms.filter(a => a === 'skill' || a === 'random') : null);
@@ -16188,11 +16189,14 @@ const SpectatorState = {
     // and survivors re-seed by cumulative score each round). 'random' keeps the
     // legacy ad-hoc draw order (effectively a random bracket w.r.t. skill).
     bracketSeed: 'skill',
-    // v69.78 — AI skill-curve width. 'standard' = the EV-calibrated curve (the
-    // ≤v69.77 behavior). 'wide' drops the low-skill floor (rec-player leaks vs
-    // near-optimal pro) so authored skill expresses more strongly in finishes —
-    // not a scorecard fudge; it only changes how the bots PLAY. Locks at run-start.
-    skillCurve: 'standard',
+    // v69.78/85 — AI skill-curve WIDTH multiplier. 1.0 = the EV-calibrated curve
+    // (the ≤v69.77 behavior). >1 widens the curve by dropping the low-skill floor
+    // (rec-player leaks vs near-optimal pro) so authored skill expresses more
+    // strongly in finishes — not a scorecard fudge; it only changes how the bots
+    // PLAY. (1.5 = the old 'wide'; up to 3.0 ≈ low-skill plays near-random.)
+    // Locks at run-start. Read via spectatorCurveMul() (also accepts the legacy
+    // 'standard'/'wide' tokens).
+    skillCurve: 1,
   },
   stats: {
     handsPlayed: 0, biggestPot: 0, biggestPotHand: null, biggestPotTableId: null,
@@ -16498,6 +16502,17 @@ function spectatorRunTourneyRounds() {
   }, 60);
 }
 
+// v69.85 — resolve the configured AI skill-curve setting to a numeric width
+// multiplier (1.0 = standard / EV-calibrated; >1 widens the rec↔pro spread by
+// dropping the low-skill floor). Accepts a number, a numeric string, or the
+// legacy 'standard'/'wide' tokens. Clamped to [1, 3].
+function spectatorCurveMul() {
+  const v = (SpectatorState && SpectatorState.setup) ? SpectatorState.setup.skillCurve : 1;
+  if (Number.isFinite(+v)) return Math.max(1, Math.min(3, +v));
+  if (v === 'wide') return 1.5;
+  return 1.0;
+}
+
 function spectatorStartLiveTourney() {
   spectatorTeardown();
   spectatorInitSession('liveTourney');
@@ -16543,7 +16558,7 @@ function spectatorStartLiveTourney() {
   // the draw order (the legacy behavior). The sort consumes no RNG, so a
   // 'random' run reproduces ≤v69.75 bit-for-bit.
   const bracketDraw = (SpectatorState.setup.bracketSeed === 'random') ? 'random' : 'skill';
-  const skillCurveMode = (SpectatorState.setup.skillCurve === 'wide') ? 'wide' : 'standard';   // v69.78
+  const skillCurveMul = spectatorCurveMul();   // v69.85 — numeric width (1.0 = standard, up to 3.0)
   const players = [];
   withCashRng(() => {
     const drafted = [];
@@ -16552,7 +16567,7 @@ function spectatorStartLiveTourney() {
       if (evType === 'main') skill = 0.30 + cashRng() * 0.65;
       else if (evType === 'major') skill = 0.55 + cashRng() * 0.40;
       else skill = 0.40 + cashRng() * 0.50;
-      drafted.push({ skill: skill, profile: makeProfileForSkill(skill, { skillCurve: skillCurveMode }) });
+      drafted.push({ skill: skill, profile: makeProfileForSkill(skill, { skillCurve: skillCurveMul }) });
     }
     if (bracketDraw === 'skill') drafted.sort((a, b) => b.skill - a.skill);
     drafted.forEach((d, i) => {
@@ -16592,7 +16607,7 @@ function spectatorStartLiveTourney() {
     loserBogey: tourneyLoserBogey,                    // v69.71 — Yellow Jacket (true) vs Bumblebee (false); drives playHole's showdown scoring + the bots' EV math
     variant: variant,                                // 'yj' | 'bb'
     bracketSeed: bracketDraw,                         // v69.76 — 'skill' (1..N by skill) | 'random' (legacy draw order)
-    skillCurve: skillCurveMode,                       // v69.78 — 'standard' | 'wide' (AI skill-curve width used to generate this field)
+    skillCurve: skillCurveMul,                        // v69.78/85 — numeric AI skill-curve width multiplier (1.0 = standard) used to generate this field
     surviving: players.slice(),
     matches: [],                                     // populated by spectatorSeatTourneyRound
     history: [],
@@ -16603,7 +16618,8 @@ function spectatorStartLiveTourney() {
     + ' · field of ' + fieldCap + ' · ' + handsPerRound + ' holes/round × ' + totalRounds + ' rounds'
     + ' · R1 free, ~50% golf-cut after R2 & R3, lowest 4-round total wins the Yellow Jacket'
     + ' · ' + (tourneyLoserBogey ? 'Yellow Jacket (Bogey Loss)' : 'Bumblebee (Honored Loss)')
-    + ' · honey cap ÷' + divisor + ' (= 1 stroke per ' + divisor + ' net honey, applied at round end)', 'meta');
+    + ' · honey cap ÷' + divisor + ' (= 1 stroke per ' + divisor + ' net honey, applied at round end)'
+    + (skillCurveMul > 1 ? ' · AI skill curve ×' + skillCurveMul : ''), 'meta');
   try { refreshSpectatorScoreboard(); refreshSpectatorScorecardStrip(); refreshSpectatorStats(); refreshSpectatorLog(); } catch (_) {}
   setTimeout(() => spectatorRunTourneyRounds(), 60);
 }
@@ -17219,7 +17235,7 @@ function spectatorInitSession(mode) {
       cashTables: su.cashTables, cashSeats: su.cashSeats,
       eventType: su.eventType,
       bracketSeed: (su.bracketSeed === 'random') ? 'random' : 'skill',   // v69.76 — Live-Tournament bracket draw
-      skillCurve: (su.skillCurve === 'wide') ? 'wide' : 'standard',       // v69.78 — AI skill-curve width
+      skillCurve: spectatorCurveMul(),                                   // v69.78/85 — numeric AI skill-curve width multiplier (1.0 = standard)
       handDelayMs: su.handDelayMs, directorIntervalSec: su.directorIntervalSec,
       directorOn: !!SpectatorState.director.on,
       honeyCapMode: honeyMode,
@@ -17467,11 +17483,11 @@ function spectatorExportCSV() {
             ? 'random: ad-hoc draw order (bracket is effectively random w.r.t. skill)'
             : 'skill: field seeded 1..N by authored skill (#1 = best); top-vs-bottom HU pairing, survivors re-seed by cumulative score each round')
         : ''],
-      ['skill_curve', (sess.mode === 'liveTourney') ? (sess.settings.skillCurve || 'standard') : ''],
+      ['skill_curve', (sess.mode === 'liveTourney') ? (Number.isFinite(+sess.settings.skillCurve) ? +sess.settings.skillCurve : 1) : ''],
       ['skill_curve_desc', (sess.mode === 'liveTourney')
-        ? ((sess.settings.skillCurve === 'wide')
-            ? 'wide: low-skill profiles drift further from optimal (rec-player leaks vs near-optimal pro); only changes how the bots play, not the scorecard'
-            : 'standard: EV-calibrated skill curve (the ≤v69.77 behavior)')
+        ? ((+sess.settings.skillCurve > 1)
+            ? ('×' + (+sess.settings.skillCurve) + ': low-skill profiles drift ' + (+sess.settings.skillCurve) + '× further from optimal (rec-player leaks vs near-optimal pro); only changes how the bots play, not the scorecard')
+            : 'standard (×1.0): EV-calibrated skill curve (the ≤v69.77 behavior)')
         : ''],
       ['hand_delay_ms', sess.settings.handDelayMs],
       ['director_interval_sec', sess.settings.directorIntervalSec],
@@ -19276,7 +19292,7 @@ function refreshSpectatorStats() {
     host.appendChild(el('div', { style: 'margin-top:6px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px; margin-bottom:2px;', text: 'Session' }));
     host.appendChild(row('Seed', String(sess.seed || '(random)')));
     if (sess.mode === 'liveTourney') host.appendChild(row('Bracket', (sess.settings && sess.settings.bracketSeed === 'random') ? 'Random draw' : 'Skill-seeded'));
-    if (sess.mode === 'liveTourney' && sess.settings && sess.settings.skillCurve === 'wide') host.appendChild(row('AI skill curve', 'Wide'));
+    if (sess.mode === 'liveTourney' && sess.settings && +sess.settings.skillCurve > 1) host.appendChild(row('AI skill curve', '×' + (+sess.settings.skillCurve).toFixed(1)));
     if (sess.status !== 'running') {
       host.appendChild(row('Status', '✓ Complete (' + sess.endReason + ')'));
       host.appendChild(el('div', { style: 'margin-top:6px; font-size:10px; opacity:0.6; font-style:italic;', text: 'Report + CSV/JSON export in the featured panel →' }));
@@ -19384,7 +19400,7 @@ function renderBracketStudyResults(out) {
   const f2  = x => (Math.round(x * 100) / 100).toFixed(2);
   const wrap = el('div', { style: 'margin-top:12px; border-top:1px solid rgba(255,255,255,0.12); padding-top:10px;' });
   wrap.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.7; line-height:1.5; margin-bottom:8px;', text:
-    (cfg.n || 0).toLocaleString() + ' events/arm  ·  ' + N + '-player field  ·  ' + (cfg.eventType || 'regular') + ' skill spread  ·  honey ÷' + (cfg.honeyDivisor || 9) + '  ·  AI curve: ' + (cfg.skillCurve || 'standard') + '  ·  seed ' + (cfg.baseSeed || '?') }));
+    (cfg.n || 0).toLocaleString() + ' events/arm  ·  ' + N + '-player field  ·  ' + (cfg.eventType || 'regular') + ' skill spread  ·  honey ÷' + (cfg.honeyDivisor || 9) + '  ·  AI curve ×' + (Number.isFinite(+cfg.skillCurve) ? (+cfg.skillCurve).toFixed(1) : '1.0') + '  ·  seed ' + (cfg.baseSeed || '?') }));
   // table
   const cols = '1fr 52px 52px 52px';
   const tbl = el('div', { style: 'font-size:11px; line-height:1.7;' });
@@ -19684,25 +19700,30 @@ Views.spectator = function() {
           ? 'Random: the field is drawn in arbitrary order, so a top player can collide with another top player in Round 1 (max upset variance).'
           : 'Skill-seeded: #1 plays #N, #2 plays #N-1, … and survivors re-seed by cumulative score each round — the standard tournament bracket.' }));
 
-      // v69.78 — AI skill curve. 'standard' (EV-calibrated) vs 'wide' (drops the
-      // low-skill floor → rec-player leaks vs near-optimal pro). Only changes how
-      // the bots PLAY — not the scorecard. Locks at run-start.
-      setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'AI skill curve' }));
+      // v69.78/85 — AI skill-curve WIDTH multiplier. ×1.0 = the EV-calibrated
+      // curve; ×1.5 (= the old 'wide') and up drop the low-skill floor further —
+      // rec-player leaks vs near-optimal pro. Only changes how the bots PLAY —
+      // not the scorecard. Locks at run-start. Read via spectatorCurveMul().
+      const curveNow = spectatorCurveMul();
+      setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'AI skill curve (width ×)' }));
       const curveSel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:4px; font-size:12px;' });
       [
-        { v: 'standard', l: 'Standard  (EV-calibrated curve — the established behavior)' },
-        { v: 'wide',     l: 'Wide  (low-skill plays much worse → skill expresses more)' },
+        { v: 1,   l: '×1.0  Standard — EV-calibrated curve (the established behavior)' },
+        { v: 1.5, l: '×1.5  Wide — low-skill plays noticeably worse' },
+        { v: 2,   l: '×2.0  Wider — low-skill far from optimal' },
+        { v: 2.5, l: '×2.5  Wide+ — big rec↔pro gap' },
+        { v: 3,   l: '×3.0  Extreme — low-skill ≈ near-random play' },
       ].forEach(o => {
-        const opt = el('option', { value: o.v, text: o.l });
-        if (((SpectatorState.setup.skillCurve === 'wide') ? 'wide' : 'standard') === o.v) opt.selected = true;
+        const opt = el('option', { value: String(o.v), text: o.l });
+        if (Math.abs(curveNow - o.v) < 1e-9) opt.selected = true;
         curveSel.appendChild(opt);
       });
-      curveSel.onchange = () => { SpectatorState.setup.skillCurve = curveSel.value; };
+      curveSel.onchange = () => { const v = parseFloat(curveSel.value); SpectatorState.setup.skillCurve = Number.isFinite(v) ? Math.max(1, Math.min(3, v)) : 1; };
       setupCard.appendChild(curveSel);
       setupCard.appendChild(el('div', { style: 'font-size:9px; opacity:0.55; margin-bottom:10px; font-style:italic; line-height:1.4;', text:
-        (SpectatorState.setup.skillCurve === 'wide')
-          ? 'Wide: a low-authored-skill bot drifts further from optimal — loose/tight thresholds, noisier decisions, weaker reads, sloppier bluffing. The high end is unchanged (already at the optima). Authored skill should track finishes more closely.'
-          : 'Standard: the EV-calibrated skill→profile mapping used everywhere else.' }));
+        (curveNow > 1)
+          ? '×' + curveNow + ': a low-authored-skill bot drifts ' + curveNow + '× further from optimal — loose/tight thresholds, noisier decisions, weaker reads, sloppier bluffing. The high end is unchanged (already at the optima). Authored skill should track finishes more closely.'
+          : '×1.0: the EV-calibrated skill→profile mapping used everywhere else (no widening).' }));
     }
   }
 
@@ -19805,7 +19826,7 @@ Views.spectator = function() {
     const studyCard = el('div', { class: 'card', style: 'padding:14px; margin-bottom:14px;' });
     studyCard.appendChild(el('h2', { text: '🔬 Bracket Skill Study  ·  offline A/B', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
     studyCard.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.65; line-height:1.5; margin-bottom:10px;', text:
-      'Runs N tournaments with the field skill-seeded and N with the same fields drawn in random order, then reports how much the seeding lifts skill→finish. Uses a fixed ' + SBOARD_STUDY_FIELD + '-player golf-major event (4 rounds: R1 free, ~50% cut after R2 & R3, lowest 4-round total wins) · ' + evtNow + ' skill spread · honey ' + (SpectatorState.setup.honeyCapMode === 'spec' ? '÷18 (Spec)' : '÷9 (Calibrated)') + ' · AI curve ' + (SpectatorState.setup.skillCurve === 'wide' ? 'Wide' : 'Standard') + '. (Field size is fixed for speed — independent of the event-type field; pass fieldSize/skillCurve to runBracketSkillStudy() in the console for sweeps.)' }));
+      'Runs N tournaments with the field skill-seeded and N with the same fields drawn in random order, then reports how much the seeding lifts skill→finish. Uses a fixed ' + SBOARD_STUDY_FIELD + '-player golf-major event (4 rounds: R1 free, ~50% cut after R2 & R3, lowest 4-round total wins) · ' + evtNow + ' skill spread · honey ' + (SpectatorState.setup.honeyCapMode === 'spec' ? '÷18 (Spec)' : '÷9 (Calibrated)') + ' · AI curve ×' + spectatorCurveMul().toFixed(1) + ' (set in the left panel). (Field size is fixed for speed — independent of the event-type field; pass fieldSize/holesPerRound/skillCurve to runBracketSkillStudy() in the console for sweeps.)' }));
     if (bs.running) {
       studyCard.appendChild(el('div', { style: 'padding:10px 12px; border-radius:5px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.28); font-size:12px; color:#F0C75E;', text: '⏳ ' + (bs.phase || 'Running…') + '  (the tab is unresponsive while this runs)' }));
     } else {
@@ -19820,7 +19841,7 @@ Views.spectator = function() {
         const evt = SpectatorState.setup.eventType;
         const fieldSize = 64;   // v69.84 — fixed study field (the spectator's 256/1024/7000 are too big to pool)
         const honeyCapMode = (SpectatorState.setup.honeyCapMode === 'spec') ? 'spec' : 'calibrated';
-        const skillCurve = (SpectatorState.setup.skillCurve === 'wide') ? 'wide' : 'standard';
+        const skillCurve = spectatorCurveMul();
         const baseSeed = 'ui-study-' + Date.now();
         SpectatorState.bracketStudy.running = true;
         SpectatorState.bracketStudy.result = null;
