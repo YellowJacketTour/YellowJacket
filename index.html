@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.95-royal-suitor-major-stages";
+const APP_VERSION = "2026.05.12-v69.97-tour-de-bourdon-name-and-docs";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5165,9 +5165,9 @@ const Season = {
     qualifierSlotsRegular: 8, qualifierSlotsMajor: 12, qualifierSlotsMain: 28,    // outsider spots per field
     qualifierNoise: 1.4,        // z-SD of the (rating + noise) score used to pick outsider qualifiers
     prestige: { regular: 1.0, major: 1.35, main: 1.6 },                          // event-importance × on precision
-    tau0: 1.0,                  // base measurement precision per Regular-equivalent
+    tau0: 3.0,                  // base measurement precision per Regular-equivalent — higher ⇒ the rating tightens faster (steady-state precision P* ∝ √tau0/√ω); the dominant in-engine lever for ρ besides round length & the AI-curve width
     P0: 0.8,                    // prior precision (1/var) of a fresh player's skill estimate
-    omega: 0.012,               // process noise per event (skill drift / form); ↑ ⇒ shorter rating memory. Note: ω is NOT the bottleneck — per-event skill signal (round length) is.
+    omega: 0.006,               // process noise per event (skill drift / form); ↓ ⇒ longer rating memory ⇒ higher ρ (P* ∝ 1/√ω). The per-event skill signal (round length + the AI-curve width) is still the bigger lever.
     fieldStrengthLambda: 0.7,   // how much a strong field upweights your result (OWGR-style)
     marginWeight: 0.4,          // (1-w)·smooth-rank-z + w·winsorized-per-round-margin-z (both ignore the cut)
     minEventsForCrown: 8,       // # rated events required to hold the Royal Suitor / a Tour card
@@ -5521,8 +5521,8 @@ const Season = {
     // short demo calendar doesn't lock everyone out — the UI doesn't expose it.
     cfg.minEventsForCrown = Math.max(3, Math.min(cfg.nRegulars + cfg.nMajors + 1, Math.round((cfg.nRegulars + cfg.nMajors + 1) * 0.45)));
     cfg.skillCurve = Number.isFinite(+cfg.skillCurve) ? Math.max(1, Math.min(3, +cfg.skillCurve)) : 1;
-    cfg.omega = Math.max(0.0005, Math.min(0.3, +cfg.omega || 0.012));   // rating memory: ↓ = longer memory = higher ρ in a static-skill model (but slower to track real form)
-    cfg.tau0 = Math.max(0.05, Math.min(20, +cfg.tau0 || 1.0));
+    cfg.omega = Math.max(0.0005, Math.min(0.3, +cfg.omega || 0.006));   // rating memory: ↓ = longer memory = higher ρ in a static-skill model (but slower to track real form)
+    cfg.tau0 = Math.max(0.05, Math.min(20, +cfg.tau0 || 3.0));
     cfg.finaleTargetWinProb = Math.max(0.02, Math.min(0.95, +cfg.finaleTargetWinProb || 0.65));
     cfg.offSeasonGap = Math.max(0, Math.min(60, (cfg.offSeasonGap != null) ? +cfg.offSeasonGap : 2));
     cfg.crownRdCap = Math.max(0.02, Math.min(2, +cfg.crownRdCap || 0.40));
@@ -5675,16 +5675,17 @@ const Season = {
     return out;
   },
 };
-// Console aliases (for devtools sweeps): runHiveSeasonStudy(opts), runHiveCareer(cfg, seed, nSeasons)
+// Console aliases (for devtools sweeps): runBourdonStudy(opts) / runNectourStudy(opts), runBourdonCareer(cfg, seed, nSeasons) — and the legacy runHive* synonyms.
 function runHiveSeasonStudy(opts) { return Season.runStudy(opts); }
 function runHiveCareer(cfg, seed, nSeasons) { return Season.runCareer(cfg, seed, nSeasons); }
+const runBourdonStudy = runHiveSeasonStudy, runNectourStudy = runHiveSeasonStudy, runBourdonCareer = runHiveCareer, runNectourCareer = runHiveCareer;
 
 // CSV for the Season study (flat rows: run × metric × arm-holes × no-skill).
 function seasonStudyToCsv(history) {
   const rows = [];
   const esc = v => { v = (v == null ? '' : String(v)); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
   const line = arr => rows.push(arr.map(esc).join(','));
-  line(['section', 'hive_season_study_export']);
+  line(['section', 'tour_de_bourdon_study_export']);
   line(['generated_at', new Date().toISOString()]);
   line(['app_version', (typeof APP_VERSION === 'string') ? APP_VERSION : '']);
   line(['runs', history.length]);
@@ -7622,6 +7623,14 @@ function composite(p) { return p.majorWins * 10 + p.mainWins * 5 + p.regularWins
 // Buzz knowledge base
 const BuzzKnowledge = {
   faqs: [
+    { cat: 'tournament', q: 'What is Tour de Bourdon (the Nectour)?', a: 'The canonical season structure — a fixed calendar of events, one rolling skill rating (the Hive Rating), and a champion crowned at year\'s end (the Royal Suitor), all on Honey-Stroke underneath. Modeled on golf\'s major-championship season + cycling\'s grand tour. "Tour de Bourdon" = "Tour of the Bumblebee"; colloquially "the Nectour". Live engine: Spectator → the "Tour de Bourdon" card (run a season/career, or the validation study). Console: runBourdonStudy / runNectourStudy / runBourdonCareer.' },
+    { cat: 'tournament', q: 'On the Nectour, what are the three event tiers?', a: 'REGULARS — the weekly grind, retail-heavy (≈half the field is open qualifiers + casual pros, half exempt-by-rating); a classic 4-round, 72-hole tournament, lowest aggregate wins, ~50% cuts after rounds 2 & 3. MAJORS ("the stages") — the prestigious flock; 4 staged "mountain stages" with ~50% cuts between, each stage a full tournament\'s worth of golf (currently 72 holes/stage — a 288-hole championship); lowest aggregate over the surviving stages wins, no heads-up final; field is mostly the exempt elite + ~15% amateurs funding their way through qualifying. Majors carry the most weight in the rating. THE MAIN EVENT — the season finale; 4 staged legs crown a standing, then the top two play THE TOP POT (a heads-up final showdown) whose winner takes the Yellow Jacket + the Bumblebee plushie.' },
+    { cat: 'tournament', q: 'What is the Top Pot?', a: 'The Main Event\'s heads-up final. The Main\'s 4 staged legs narrow the field; the two best 4-leg totals advance to the Top Pot — a one-on-one showdown. By default it\'s a straight heads-up (lowest score wins, anyone\'s game — the underdog wins it often enough to matter); optionally the higher-rated finalist can be spotted a calibrated stroke head-start (the "favorite\'s edge"). The Top Pot winner is the Yellow Jacket champion and gets the Bumblebee plushie.' },
+    { cat: 'tournament', q: 'Who is the Royal Suitor?', a: 'The season skill title — crowned at year\'s end on the top Hive Rating among players who meet all the eligibility criteria (enough rated events; rating deviation tight enough to be trusted; ≥ a fraction of the season\'s Majors played). If no one clears the full bar, it falls to the highest lower-confidence-bound rating (μ − 1.5·RD) — a good-and-trusted pick, never a fluky-few-events spike. The Royal Suitor is the maillot jaune of the bumblebee: almost always one of the genuine best — but, like golf\'s year-end #1, never a guaranteed coronation of the literally-#1 player. The Yellow Jacket (a single-week Top Pot result) and the Royal Suitor (a season-long rating) are usually different people — by design.' },
+    { cat: 'tournament', q: 'How does the Hive Rating work?', a: 'A Kalman / Glicko-2-flavored filter on latent skill. Each rated event gives you a field-relative performance score (a normal-scores transform of your finishing rank + a winsorized stroke-margin term + an OWGR-style strength-of-field bump — beating a strong field counts more). That\'s folded into your rating with precision ∝ tier × √(holes-per-stage / 72) × √(field size) × (stages played) — so longer / bigger / more-prestigious events move you more, and weak fields move you less. Between events, process noise widens the rating slightly (form fades, old results decay — a rolling world-ranking window). Streaky players keep a wider band; the rating uses a cut-blind performance order so a strong player who got cut on a near-coin-flip cut still measures well. Shown as an Elo-style number with a ± confidence band.' },
+    { cat: 'tournament', q: 'Can a retail / amateur player make it on the Nectour?', a: 'Yes — that\'s the point. Every Regular is roughly half open qualifiers, and a slice of every Major and the Main is open too, so a nobody can play their way up within a single season. Do well in the events you scrape into, your Hive Rating climbs, and at season\'s end the rating list issues Tour cards (exempt status) — top of the list ⇒ full card, the next band ⇒ a conditional card, below ⇒ back to the qualifiers. Across seasons the rating carries forward (with a small off-season decay), so careers compound — like a two-year world ranking.' },
+    { cat: 'tournament', q: 'Why doesn\'t the literal best player always win the Royal Suitor?', a: 'Because Honey-Stroke separates an elite from a recreational player by only a stroke or so per round, so a single event barely sorts skill on its own (a Major\'s 288 holes do far better than a Regular\'s 72 — which is why Majors carry the rating). It\'s the SEASON and the CAREER — a rolling, precision-weighted average of dozens of events — that sort the field. By design: the Royal Suitor is a top-quartile-or-better player in a typical year; the literal #1 is rarely crowned; the Yellow Jacket stays a coin-flip in the Top Pot. The Tour rewards class over a season, but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card has a validation study that measures all of this — your config vs. a classic-18-everything baseline vs. a no-skill reference.)' },
+    { cat: 'tournament', q: 'What stops people gaming the Hive Rating?', a: 'Four guards: (1) a field-strength floor — a weak field is a less-trustworthy signal, so its results carry reduced weight (can\'t farm rating off soft fields); (2) Glicko-style volatility — wildly-swinging results give you a wider, more reactive band (can\'t bank one hot streak forever); (3) multi-criteria Crown eligibility — a deep run in a couple of events doesn\'t make you the Royal Suitor, you have to show up all season including the Majors; (4) a volume cap — built in, currently dormant, a guard for a future overlapping-event calendar.' },
     { cat: 'rules', q: 'What is the scoring system?', a: 'Honey-Stroke. Two layers: (1) the scorecard — your hand category sets a bounded golf score for the hole (Royal Flush −5 down to High Card +2). (2) the honey pot — every hole begins with a mandatory 2 honey; bets/raises propose a new agreed total; the hole winner takes that agreed total as honey. Net honey is divided by the round-length divisor (36 for 72-hole finals, 9 for 18-hole rounds, 4 for 9-hole bracket matches, 1 for single-hole) and subtracted from the golf scorecard. Lower wins.' },
     { cat: 'rules', q: 'What does the honey credit do?', a: 'It SUBTRACTS from your round score after normalization. Winning more honey pots than your opponent improves your golf number, but net honey is divided by the round divisor first so honey stays a light drizzle on top of the dominant golf scorecard.' },
     { cat: 'rules', q: 'How does a fold work?', a: 'When you fold to a proposal, you lose ONLY the previously agreed total in honey (the level both players had agreed to BEFORE the new proposal). You also take a +1 bogey on the scorecard. The non-folder takes 0 par AND receives that previous agreed total in honey. Same rule on every street — there is no street-based fold penalty table.' },
@@ -8354,11 +8363,45 @@ Views.codex = function() {
   );
   view.appendChild(econ);
 
+  // ---- Tour de Bourdon (the season system) ----
+  const tdb = section('Tour de Bourdon — The Season  ·  "the Nectour"',
+    p('Tour de Bourdon ("Tour of the Bumblebee" — colloquially the Nectour) is the season-long competitive circuit: a fixed calendar of events, every result feeding a single rolling skill rating, and a champion crowned at year\'s end. It borrows its shape from two great competitions — golf\'s major-championship season and cycling\'s grand tour — and runs entirely on Honey-Stroke scoring underneath. (Live engine: the Spectator screen → the "Tour de Bourdon" card. Console: runBourdonStudy(opts) / runNectourStudy(opts), runBourdonCareer(cfg, seed, nSeasons). The numbers below are the current default settings — all tunable.)'),
+    h3('The three tiers of events'),
+    ul([
+      el('span', null, el('b', null, 'Regular Tour events'), ' — the weekly grind. Retail-heavy fields: roughly half the field is open qualifiers (recreational players + any pros showing up for points or fun); the other half is exempt by rating. A Regular is a classic 4-round, 72-hole tournament (18-hole rounds), lowest aggregate wins, with cuts after rounds 2 and 3.'),
+      el('span', null, el('b', null, 'Majors — "the stages"'), ' — the prestigious flock, like the Masters and the U.S. Open. A Major is the Tour-de-France grind: 4 staged "mountain stages" with cuts between, and each stage is a full tournament\'s worth of golf (currently 72 holes per stage — a 288-hole championship). Lowest aggregate over the surviving stages wins; there is no heads-up final. The field is mostly the exempt elite (top-by-rating, past champions), with a slice — currently ~15% — for amateurs funding their way through the qualifying gauntlet. Majors carry the most weight in the rating. As cycling says: the stages separate the men from the boys.'),
+      el('span', null, el('b', null, 'The Main Event → the Top Pot'), ' — the season finale, the biggest field, the longest qualifier chain. It plays 4 staged legs to crown a standing, then the top two advance to the Top Pot — a heads-up final showdown. The Top Pot winner takes the Yellow Jacket (the Kill-Bill jumper) and the Bumblebee plushie. By default the Top Pot is a straight heads-up — lowest score wins, anyone\'s game; optionally the higher-rated finalist can be spotted a calibrated stroke head-start (the "favorite\'s edge").'),
+    ]),
+    h3('The Hive Rating — a measurement instrument for skill'),
+    p('Every rated event yields each player a field-relative performance score — the normal-scores transform of their finishing rank, plus a winsorized stroke-margin term, plus an OWGR-style strength-of-field adjustment (beating a strong field counts for more). That score is folded into the player\'s Hive Rating by a Kalman / Glicko-2-flavored filter: the measurement precision scales with the event\'s tier × √(holes per stage / 72) × √(field size) × (stages actually played) — a longer, bigger, more prestigious event is a more precise measurement; a weak field (low mean rating) is down-weighted. Between events, process noise widens the rating a touch — form fades, old results decay on their own, exactly like a rolling world-ranking window. Streaky players (whose results are volatile) keep a wider band; the rating uses a cut-blind performance order, so a strong player who got cut on a near-coin-flip cut still measures well. The rating is published as a friendly Elo-style number with a ± confidence band — and the Hive Rating leaderboard is the season\'s general classification.'),
+    h3('The two honors'),
+    ul([
+      el('span', null, el('b', null, 'The Royal Suitor'), ' — the season skill title, crowned at year\'s end. Held by the top-rated player who meets all the eligibility criteria: a minimum number of rated events, a rating deviation tight enough that the number is trusted, and at least a fraction of the season\'s Majors played. (If no one clears the full bar, the title falls to the highest lower-confidence-bound rating — μ − 1.5·RD — a good-and-trusted pick, never a fluky-few-events spike.) The Royal Suitor is the rough analog of golf\'s year-end #1 or cycling\'s yellow-jersey winner: almost always one of the genuine best, never a coronation of the literally-#1 player — that\'s not how a real ranking works either.'),
+      el('span', null, el('b', null, 'The Yellow Jacket (+ the Bumblebee plushie)'), ' — won at the Main Event\'s Top Pot heads-up final. Single-week glory; genuinely up for grabs (the underdog wins it often enough to matter). The Jacket and the Suitor are usually different people in a given season — and that is the point.'),
+    ]),
+    h3('Qualification, cards, promotion & relegation'),
+    ul([
+      'Anyone can enter — the open-qualifier slots in every Regular (and a slice of every Major and the Main) mean a nobody can play their way up within a single season.',
+      'A "Tour card" — exempt status into the events you\'re ranked for — is issued from the end-of-season Hive Rating list. Top of the list ⇒ full card; the next band ⇒ a conditional card; below that ⇒ back to the qualifiers. Climb the list, climb the tour.',
+      'Across seasons the rating carries forward (with a small off-season decay) — careers accumulate, the way a real two-year world ranking does. The Royal Suitor crown tends to settle on the same handful of names year after year; the Yellow Jacket does not.',
+    ]),
+    h3('Anti-gaming protections'),
+    ul([
+      'Field-strength floor — a weak field is a less-trustworthy skill signal, so its results carry reduced information weight (you can\'t farm rating off soft fields).',
+      'Glicko-style volatility — a player whose results swing wildly gets a wider, more responsive band; you can\'t bank one hot streak as a permanent rating.',
+      'Multi-criteria Crown eligibility — a deep run in a couple of events doesn\'t make you the Royal Suitor; you have to show up, all season, including for the Majors.',
+      'Volume cap (built in, currently dormant) — a guard for a future overlapping-event calendar so a player can\'t farm rating by registering for everything.',
+    ]),
+    h3('A note on skill vs. chaos'),
+    p('Tour de Bourdon is deliberately skill-tilted, not skill-determined. The underlying Honey-Stroke engine separates an elite player from a recreational one by only a stroke or so per round, so a single event — even a long one — barely sorts skill on its own (a Major\'s 288 holes do far better than a Regular\'s 72, which is why Majors carry the rating). It is the SEASON, and the CAREER, that sort the field — a rolling average of dozens of events, weighted by precision. The result, by design: the Royal Suitor is, in a typical year, a top-quartile-or-better player; the literal #1 is rarely crowned; the Yellow Jacket stays a coin-flip in the Top Pot. That is the brand — the Tour rewards class over a season, but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card includes the validation study that measures all of this — your configuration vs. the classic-18-everything baseline vs. a no-skill reference.)')
+  );
+  view.appendChild(tdb);
+
   // ---- Closing ----
   const close = el('div', { class: 'card green', style: 'margin-top: 16px;' });
-  close.appendChild(el('h2', { text: 'The Yellow Jacket' }));
-  close.appendChild(p('Win the Main Event in any season and you wear the Yellow Jacket — the highest honor on the Tour. Past champions enter all subsequent majors free for three years. Their names live in the Hall of Fame. Their best round numbers carry through the Codex like signatures.'));
-  close.appendChild(p('There is only one way to wear the Jacket. Earn it.'));
+  close.appendChild(el('h2', { text: 'The Yellow Jacket & The Royal Suitor' }));
+  close.appendChild(p('Two ways to be remembered. Win the Main Event\'s Top Pot — the heads-up final — and you pull on the Yellow Jacket, the Kill-Bill jumper, the Bumblebee plushie under your arm; single-week immortality, your name in the Hall of Fame. Or top the Hive Rating across a whole season and you are crowned the Royal Suitor — the year\'s proven best, the maillot jaune of the bumblebee. (Past Main champions also enter all subsequent majors free for three years.)'));
+  close.appendChild(p('One is luck rewarded. One is class confirmed. Earn either.'));
   view.appendChild(close);
 };
 
@@ -9260,13 +9303,55 @@ Views.rules = function() {
     view.appendChild(faqCard);
   }
 
+  // 3.5) Season Play — Tour de Bourdon (the Nectour)
+  {
+    const _p = t => el('p', { class: 'ui-sans', style: 'font-size:13px; line-height:1.6; color: var(--text-primary); margin-top:6px;', text: t });
+    const _h3 = t => el('h3', { style: 'margin-top:14px; color: var(--gold);', text: t });
+    const _ul = items => { const u = el('ul', { class: 'ui-sans', style: 'font-size:13px; line-height:1.7; color: var(--text-primary); margin-top:6px; padding-left:22px;' }); items.forEach(i => u.appendChild(el('li', null, typeof i === 'string' ? document.createTextNode(i) : i))); return u; };
+    const _b = (label, rest) => el('span', null, el('b', null, label), rest);
+    const sp = el('div', { class: 'card', style: 'margin-top:16px;' });
+    sp.appendChild(el('h2', { text: 'Season Play — Tour de Bourdon  ·  "the Nectour"' }));
+    sp.appendChild(el('p', { class: 'ui-sans', style: 'font-size:12px; color: var(--text-secondary); margin-bottom:6px;', text: 'The canonical season structure: a fixed calendar of events, one rolling skill rating, a champion crowned at year\'s end. Modeled on golf\'s major-championship season + cycling\'s grand tour. (Live: Spectator → "Tour de Bourdon"; console: runBourdonStudy / runNectourStudy / runBourdonCareer. Numbers below are current default settings — all tunable.)' }));
+    sp.appendChild(_h3('The calendar — three tiers of events'));
+    sp.appendChild(_ul([
+      _b('Regular Tour events ', '— the weekly grind, retail-heavy. Field ≈ half open qualifiers (recreational players + casual pros), half exempt-by-rating. Format: a classic 4-round, 72-hole tournament (18-hole rounds), lowest aggregate wins, with ~50% cuts after rounds 2 and 3.'),
+      _b('Majors — "the stages" ', '— the prestigious flock (Masters / U.S. Open vibe). Format: 4 staged "mountain stages" with ~50% cuts between, each stage a full tournament\'s worth of golf (currently 72 holes per stage — a 288-hole championship); lowest aggregate over the surviving stages wins; NO heads-up final. Field: mostly the exempt elite + a slice (~15%) for amateurs funding their way through qualifying. Majors carry the most weight in the rating — the stages separate the men from the boys.'),
+      _b('The Main Event → the Top Pot ', '— the season finale, biggest field, longest qualifier chain. Plays 4 staged legs to crown a standing, then the TOP TWO advance to the Top Pot — a heads-up final showdown. The Top Pot winner takes the Yellow Jacket (the Kill-Bill jumper) + the Bumblebee plushie. The Top Pot is a straight heads-up by default (lowest score wins, anyone\'s game); optionally the higher-rated finalist can be spotted a calibrated stroke head-start (the "favorite\'s edge").'),
+    ]));
+    sp.appendChild(_h3('The Hive Rating'));
+    sp.appendChild(_p('Every rated event gives each player a field-relative performance score (normal-scores transform of finishing rank + a winsorized stroke-margin term + an OWGR-style strength-of-field adjustment). A Kalman / Glicko-2-flavored filter folds it into the player\'s Hive Rating, with the measurement precision scaling as tier × √(holes-per-stage / 72) × √(field size) × (stages played) — longer / bigger / more-prestigious events count more, weak fields count less. Between events, process noise widens the rating slightly (form fades; old results decay on their own — a rolling world-ranking window). Streaky players keep a wider band (Glicko volatility); the rating uses a cut-blind performance order so a strong-but-cut player still measures well. Published as an Elo-style number with a ± confidence band. The Hive Rating leaderboard = the season\'s general classification.'));
+    sp.appendChild(_h3('The two honors'));
+    sp.appendChild(_ul([
+      _b('The Royal Suitor ', '— the season skill title, crowned at year\'s end: the top-rated player who meets ALL eligibility criteria (≥ a minimum number of rated events; rating deviation tight enough that the number is trusted; ≥ a fraction of the season\'s Majors played). If no one clears the full bar, the title falls to the highest lower-confidence-bound rating (μ − 1.5·RD) among those who played enough — a good-and-trusted pick, never a fluky-few-events spike. Analogous to golf\'s year-end #1 / cycling\'s maillot jaune: almost always one of the genuine best, never a coronation of the literally-#1 player.'),
+      _b('The Yellow Jacket (+ the Bumblebee plushie) ', '— won at the Main Event\'s Top Pot heads-up final. Single-week glory; genuinely up for grabs. (Past Main champions also enter all subsequent majors free for three years.) The Jacket and the Suitor are usually different people in a given season — by design.'),
+    ]));
+    sp.appendChild(_h3('Qualification · Tour cards · promotion & relegation'));
+    sp.appendChild(_ul([
+      'Open to everyone — the open-qualifier slots in every Regular (and a slice of every Major and the Main) mean a nobody can play their way up within one season.',
+      'A Tour card (exempt status into the events you\'re ranked for) is issued from the end-of-season Hive Rating list: top of the list ⇒ full card; the next band ⇒ a conditional card; below ⇒ back to the qualifiers.',
+      'Across seasons the rating carries forward with a small off-season decay — careers accumulate (a two-year-world-ranking shape). The Royal Suitor crown tends to recur on the same handful of names; the Yellow Jacket does not.',
+    ]));
+    sp.appendChild(_h3('Anti-gaming'));
+    sp.appendChild(_ul([
+      'Field-strength floor — a weak field is a less-trustworthy signal, so its results carry reduced information weight (can\'t farm rating off soft fields).',
+      'Glicko volatility — wildly-swinging results ⇒ a wider, more responsive band (can\'t bank one hot streak as a permanent rating).',
+      'Multi-criteria Crown eligibility — you have to show up all season, including for the Majors.',
+      'Volume cap — built in, currently dormant; a guard for a future overlapping-event calendar.',
+    ]));
+    sp.appendChild(_h3('Skill vs. chaos — by design'));
+    sp.appendChild(_p('Honey-Stroke separates an elite from a recreational player by only a stroke or so per round, so a single event barely sorts skill on its own (a Major\'s 288 holes do far better than a Regular\'s 72 — which is why Majors carry the rating). It is the SEASON and the CAREER that sort the field: a rolling, precision-weighted average of dozens of events. Result, intentionally: the Royal Suitor is a top-quartile-or-better player in a typical year; the literal #1 is rarely crowned; the Yellow Jacket stays a coin-flip in the Top Pot. The Tour rewards class over a season — but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card carries the validation study that measures all of this — your config vs. the classic-18-everything baseline vs. a no-skill reference.)'));
+    view.appendChild(sp);
+  }
+
   // 4) Cross-links
   const links = el('div', { class: 'card', style: 'margin-top: 16px;' });
   links.appendChild(el('p', { class: 'ui-sans', style: 'font-size: 13px; color: var(--text-primary); margin: 0;' },
     'For strategy, poker equity deep-dives, golf history, and memorable Moneymaker moments, visit ',
     el('a', { href: '#buzz', style: 'color: var(--gold); text-decoration: none; font-weight: 600;', text: "Buzz's Corner →" }),
     ' · For the live simulator and its config sliders, visit ',
-    el('a', { href: '#simulator', style: 'color: var(--gold); text-decoration: none; font-weight: 600;', text: 'Simulator →' })
+    el('a', { href: '#simulator', style: 'color: var(--gold); text-decoration: none; font-weight: 600;', text: 'Simulator →' }),
+    ' · For the live Tour de Bourdon engine + the validation study, visit ',
+    el('a', { href: '#spectator', style: 'color: var(--gold); text-decoration: none; font-weight: 600;', text: 'Spectator →' })
   ));
   view.appendChild(links);
 };
@@ -9489,6 +9574,18 @@ Views.decisiontree = function() {
     )
   );
   view.appendChild(tourCtx);
+
+  // ===== Season context — Tour de Bourdon =====
+  const seasonCtx = section('Season Context — Tour de Bourdon ("the Nectour")',
+    p('On the live season engine (Spectator → "Tour de Bourdon"), the events come in three flavors — and which one you\'re in changes how aggressive "make the cut" play should be:'),
+    el('ul', { class: 'ui-sans', style: 'font-size: 13px; line-height: 1.7; color: var(--text-primary); margin-top: 6px; padding-left: 22px;' },
+      el('li', null, '**REGULAR** — a classic 4-round tournament; ~50% cut after rounds 2 & 3; lowest aggregate wins. Retail-heavy field — a competent player who survives is usually well-placed. Standard "steady-then-press-the-bubble" play.'),
+      el('li', null, '**MAJOR — "the stages"** — 4 staged "mountain stages" with cuts between, each stage a full tournament\'s worth of golf (much longer than a Regular round). Skill matters far more here — Majors carry the most weight in your Hive Rating, and the long stages give a genuine edge time to express. Press for strokes through the stages; this is where careers are made.'),
+      el('li', null, '**THE MAIN EVENT → THE TOP POT** — the season finale: 4 staged legs to crown a standing, then the top two play the Top Pot, a heads-up final. If you reach the Top Pot, it\'s pure heads-up Honey-Stroke (with, by default, no head-start) — the lowest score over the showdown holes takes the Yellow Jacket + the Bumblebee plushie. Anyone\'s game; play it as a long HU match — value-bet made hands, fold bricks ("put me down for 1"), and only bluff when the fold equity covers the Stack-Bricks +2.'),
+      el('li', null, '**THE BIG PICTURE** — no single event crowns the season. Your Hive Rating is a rolling, precision-weighted average of every rated event; top it (with the eligibility met) and you\'re crowned the **Royal Suitor** — the year\'s proven best. The Jacket rewards a hot week; the Suitor rewards a class season. Both are worth chasing.')
+    )
+  );
+  view.appendChild(seasonCtx);
 
   // ===== The hand we'll walk =====
   // Hero: A♠ K♠ (suited Broadway, top-10% preflop). Villain: hidden.
@@ -16887,7 +16984,7 @@ const SpectatorState = {
   feedLog: [],                             // complete broadcast log for the exported CSV/JSON (uncapped up to a memory ceiling) — v69.75
   logSeen: {},                             // tableId -> last h.log index harvested
   bracketStudy: { n: 100, holes: 18, running: false, phase: null, result: null, history: [] },   // v69.79/80/86 — offline skill-seeded-vs-random bracket A/B (Spectator UI); `holes` = holes/round for the sweep; history holds the last ~25 runs for pooling + CSV export
-  seasonStudy: { holes: 18, majorHoles: 72, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', finaleM: 'none', omega: 0.012, studyS: 6, careerYrs: 1, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [] },   // v69.87+ — The Hive Tour season engine (Spectator UI)
+  seasonStudy: { holes: 18, majorHoles: 72, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 1, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [] },   // v69.87+ — Tour de Bourdon (the Nectour) season engine (Spectator UI)
   scoreboard: { zoom: 1.0 },               // v69.81 — Live Scoreboard (golf-scorecard grid) view state
   scorecardOpen: false,                    // v69.46 — featured panel toggle (felt ↔ full scorecard) for liveTourney
   // Setup form state (persisted across view re-renders)
@@ -20668,18 +20765,19 @@ Views.spectator = function() {
     center.appendChild(studyCard);
   }
 
-  // v69.87 — The Hive Tour: the season engine (Kalman-rated multi-event tour).
+  // v69.87 — Tour de Bourdon (colloq. 'the Nectour'): the season engine (Kalman-rated multi-event tour).
   if (SpectatorState.mode === 'liveTourney') {
-    if (!SpectatorState.seasonStudy) SpectatorState.seasonStudy = { holes: 18, majorHoles: 72, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', finaleM: 'none', omega: 0.012, studyS: 6, careerYrs: 1, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [] };
+    if (!SpectatorState.seasonStudy) SpectatorState.seasonStudy = { holes: 18, majorHoles: 72, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 1, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [] };
     const ss = SpectatorState.seasonStudy;
     if (!Array.isArray(ss.history)) ss.history = [];
     if (ss.careerYrs == null) ss.careerYrs = 1;
     if (ss.finaleM == null) ss.finaleM = 'none';
-    if (ss.omega == null) ss.omega = 0.012;
+    if (ss.omega == null) ss.omega = 0.006;
+    if (ss.tau0 == null) ss.tau0 = 3;
     if (ss.majorHoles == null) ss.majorHoles = 72;
     const SPREADS = [{ v: 'main', l: 'Main (0.30–0.95) — widest' }, { v: 'regular', l: 'Regular (0.40–0.90)' }, { v: 'wide', l: 'Wide (0.20–0.95)' }];
     const seasonCard = el('div', { class: 'card', style: 'padding:14px; margin-bottom:14px;' });
-    seasonCard.appendChild(el('h2', { text: '🏆 The Hive Tour  ·  season engine', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
+    seasonCard.appendChild(el('h2', { text: '🐝 Tour de Bourdon  ·  the season engine  ·  a.k.a. the Nectour', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
     seasonCard.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.65; line-height:1.5; margin-bottom:10px;', text:
       'A full season (or career) as a measurement instrument for skill. REGULARS are retail-heavy 4-round 72-hole tournaments (recreational players + casual pros); MAJORS are the prestigious flock — 4 staged "mountain stages" with cuts (Tour-de-France style, the stages that separate the men from the boys), each stage a full tournament\'s worth of golf, lowest total wins; the MAIN EVENT plays 4 such stages then narrows to the TOP POT — a heads-up final showdown whose winner takes the Yellow Jacket (the Kill-Bill jumper) + the Bumblebee plushie. A Kalman/Glicko filter folds every event\'s field-relative performance into a "Hive Rating" (precision ∝ tier × √holes × √field × rounds-played; cut-blind smoothing + Glicko volatility), with process noise between events (form fades, OWGR-style). At season\'s end the top-rated player (with the multi-criteria eligibility met) is crowned THE ROYAL SUITOR — the season skill title, distinct from the chaotic Yellow Jacket. With ~18-hole rounds the per-event skill signal is weak; the longer Major/Main stages carry it, so the Royal Suitor ends up Major-driven (push "Major/Main holes/round" up, run a multi-season career, or lengthen the Regulars too). The STUDY runs your config + the classic-18-everything baseline + a no-skill reference, chunked (responsive, with progress + Stop), with capped fields (it measures the rating mechanism — WSOP-scale fields are for "Run a season"). Uses the left-panel honey-cap + AI-curve.' }));
     const mkNum = (label, key, min, max, step, w) => {
@@ -20705,7 +20803,8 @@ Views.spectator = function() {
     cfgRow2.appendChild(mkNum('Run-career seasons', 'nSeasons', 1, 50, 1, 88));
     cfgRow2.appendChild(mkNum('Study career seasons', 'careerYrs', 1, 40, 1, 92));
     cfgRow2.appendChild(mkNum('Study seasons/arm', 'studyS', 1, 200, 1, 88));
-    cfgRow2.appendChild(mkNum('Rating memory ω  (↓ = longer)', 'omega', 0.002, 0.2, 0.002, 96));
+    cfgRow2.appendChild(mkNum('Rating memory ω  (↓ = longer)', 'omega', 0.001, 0.2, 0.001, 92));
+    cfgRow2.appendChild(mkNum('Rating responsiveness τ₀  (↑ = tighter)', 'tau0', 0.25, 12, 0.5, 92));
     const spreadBox = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
     spreadBox.appendChild(el('span', { style: 'font-size:9px; opacity:0.6;', text: 'Skill spread' }));
     const spreadSel = el('select', { class: 'form-control', style: 'font-size:11.5px;' });
@@ -20723,7 +20822,7 @@ Views.spectator = function() {
     const buildCfg = () => ({
       holesPerRound: ss.holes | 0, nRegulars: ss.nReg | 0, nMajors: ss.nMaj | 0, universeSize: ss.universe | 0,
       regularField: ss.regularField | 0, majorField: ss.majorField | 0, mainField: ss.mainField | 0,
-      finaleMode: ss.finaleM || 'none', finaleTargetWinProb: +ss.theta || 0.3, skillSpread: ss.spread, omega: +ss.omega || 0.012, majorHoles: ss.majorHoles | 0, mainHoles: ss.majorHoles | 0,
+      finaleMode: ss.finaleM || 'none', finaleTargetWinProb: +ss.theta || 0.65, skillSpread: ss.spread, omega: +ss.omega || 0.006, tau0: +ss.tau0 || 3, majorHoles: ss.majorHoles | 0, mainHoles: ss.majorHoles | 0,
       skillCurve: (typeof spectatorCurveMul === 'function') ? spectatorCurveMul() : 1,
       honeyCapMode: (SpectatorState.setup && SpectatorState.setup.honeyCapMode === 'spec') ? 'spec' : 'calibrated',
     });
@@ -20788,7 +20887,7 @@ Views.spectator = function() {
             const txt = seasonStudyToCsv(ss.history);
             const blob = new Blob(['﻿' + txt], { type: 'text/csv;charset=utf-8' });
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = 'hive_season_study_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.csv';
+            const a = document.createElement('a'); a.href = url; a.download = 'tour_de_bourdon_study_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.csv';
             document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(() => URL.revokeObjectURL(url), 1500);
           } catch (e) { alert('CSV export failed: ' + (e && e.message ? e.message : e)); }
         };
