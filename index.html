@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.88-hive-tour-careers-and-finale";
+const APP_VERSION = "2026.05.12-v69.89-hive-tour-smooth-rating";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5167,7 +5167,7 @@ const Season = {
     P0: 0.8,                    // prior precision (1/var) of a fresh player's skill estimate
     omega: 0.03,                // process noise per event (skill drift / form); ↑ ⇒ shorter rating memory
     fieldStrengthLambda: 0.7,   // how much a strong field upweights your result (OWGR-style)
-    marginWeight: 0.25,         // (1-w)·rank-z + w·winsorized-stroke-margin-z
+    marginWeight: 0.4,          // (1-w)·smooth-rank-z + w·winsorized-per-round-margin-z (both ignore the cut)
     minEventsForCrown: 8,       // # rated events required to hold the Hive Crown / a Tour card
     finaleMode: 'none',         // 'none' (Main = pure cut chaos, the real Yellow-Jacket flavor) | 'fixed' (β) | 'calibrated'
                                 // (Tour-Championship style: Main runs NO-CUT with a stroke head-start ∝ rating-above-median, β solved for the target #1-seed win prob)
@@ -5260,35 +5260,41 @@ const Season = {
         if (surviving.length <= 1) break;
       }
     }
-    // Golf-true finishing order: deeper survival first (you can't be beaten by a
-    // player who missed an earlier cut), then within a tier the lower per-round
-    // average (rounds played differ across tiers, so we compare averages).
     const roundsOf = p => (p._cutAfter > R) ? R : p._cutAfter;
     const perRdOf = p => p.cum / Math.max(1, roundsOf(p));
+    // Official standing (champion / prize money / best-finish): golf-true cut tiers
+    // — deeper survival ranks ahead of anyone who missed an earlier cut.
     const finishers = field.slice().sort((a, b) => (b._cutAfter - a._cutAfter) || (perRdOf(a) - perRdOf(b)) || (a.cum - b.cum) || (a.id - b.id));
-    // performance z = field-relative: rank-z from the (tiered) finishing order,
-    // margin-z from the winsorized per-round average, plus a strength-of-field bump.
+    // Performance order for the RATING: SMOOTH — ranked purely by per-round average,
+    // ignoring the cut, so a strong-but-cut player still measures well (the cut is
+    // a near-coin-flip at this engine's separation, so a bimodal made/missed-cut
+    // signal would be mostly noise). Measurement precision scales with rounds played.
     const perRd = field.map(perRdOf);
     const mean = perRd.reduce((s, x) => s + x, 0) / N;
     const sdAll = Math.sqrt(perRd.reduce((s, x) => s + (x - mean) * (x - mean), 0) / Math.max(1, N - 1)) || 1;
     const loC = mean - 3 * sdAll, hiC = mean + 3 * sdAll;
     const prMap = new Map(); field.forEach((p, i) => prMap.set(p.id, perRd[i]));
+    const perfRankM = new Map(); field.slice().sort((a, b) => (perRdOf(a) - perRdOf(b)) || (a.id - b.id)).forEach((p, i) => perfRankM.set(p.id, i + 1));
     // sigma for the finale stroke-conversion: spread of the full-event (R-round) totals only
     const fullCums = field.filter(p => p._cutAfter > R).map(p => p.cum);
     const fm = fullCums.length ? fullCums.reduce((s, x) => s + x, 0) / fullCums.length : 0;
     const sigmaFull = (fullCums.length > 1) ? (Math.sqrt(fullCums.reduce((s, x) => s + (x - fm) * (x - fm), 0) / (fullCums.length - 1)) || 1) : (sdAll * Math.sqrt(R));
     const fieldMeanMu = field.reduce((s, p) => s + p.rating.mu, 0) / N;
-    const tau = cfg.tau0 * (cfg.prestige[tier] || 1) * Math.sqrt(holes / 72) * Math.sqrt(Math.min(N, 400) / 64);
+    const tauEvent = cfg.tau0 * (cfg.prestige[tier] || 1) * Math.sqrt(holes / 72) * Math.sqrt(Math.min(N, 400) / 64);
     const paid = Math.max(1, Math.round(N * 0.6)); let wSum = 0;
     for (let k = 1; k <= paid; k++) wSum += (paid - k + 1) * (paid - k + 1);
-    finishers.forEach((p, idx) => {
+    finishers.forEach((p, idx) => {                                       // idx = official-standing rank → prizes / best-finish
       const rank = idx + 1;
-      const zRank = this._probit(1 - (rank - 0.5) / N);
+      if (rank < p.bestFinish) p.bestFinish = rank;
+      if (prizePool > 0 && rank <= paid && wSum > 0) p.earnings += prizePool * ((paid - rank + 1) * (paid - rank + 1)) / wSum;
+    });
+    field.forEach(p => {                                                  // the rating update — smooth performance z, τ ∝ rounds played
+      const pr = perfRankM.get(p.id);
+      const zRank = this._probit(1 - (pr - 0.5) / N);
       const zMargin = (mean - Math.max(loC, Math.min(hiC, prMap.get(p.id)))) / sdAll;
       const zStar = (1 - cfg.marginWeight) * zRank + cfg.marginWeight * zMargin + cfg.fieldStrengthLambda * fieldMeanMu;
-      this.updateRating(p.rating, zStar, tau);
-      p.eventsPlayed++; if (rank < p.bestFinish) p.bestFinish = rank;
-      if (prizePool > 0 && rank <= paid && wSum > 0) p.earnings += prizePool * ((paid - rank + 1) * (paid - rank + 1)) / wSum;
+      this.updateRating(p.rating, zStar, tauEvent * (roundsOf(p) / R));
+      p.eventsPlayed++;
     });
     const champion = finishers[0];
     if (tier === 'major') champion.majorWins++; else if (tier === 'regular') champion.regularWins++;
