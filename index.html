@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.11-v69.70-cash-pot-gated-brick-multiway-docs";
+const APP_VERSION = "2026.05.12-v69.71-spectator-tourney-variant-wiring";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -16095,7 +16095,24 @@ function spectatorStartLiveTourney() {
   // hole count of one round (default 18). honeyDivisorFor() honors the
   // active mode: 'spec' → ÷N (= 18), 'calibrated' → ÷stepped (= 9).
   const divisor = (typeof honeyDivisorFor === 'function') ? honeyDivisorFor(handsPerRound) : 9;
-  const variant = SpectatorState.setup.variant;
+  // Wire the chosen decisive-loser rule through the runtime. playHole's
+  // showdown scoring AND the bots' EV math both read CurrentLoserBogey /
+  // CurrentBrickPenaltyMode / CurrentBrickLossCap, so the dropdown choice has
+  // to land here: 'bb' → Bumblebee (Honored Loss), anything else → Yellow
+  // Jacket (Bogey Loss). The pot-gated brick sub-rule + its cap follow the Tour
+  // standard in LabState.config.scoring — the same source the Simulator, SP,
+  // and the boot path use. (Every other surface re-syncs these globals on
+  // entry, so nothing needs restoring when the spectator session ends.) "Pure
+  // NLHE" has no golf scorecard, so a stray 'pure' (e.g. resumed from a cash
+  // session) falls back to Yellow Jacket.
+  let variant = SpectatorState.setup.variant;
+  if (variant === 'pure') { variant = 'yj'; SpectatorState.setup.variant = 'yj'; }
+  const tourneyLoserBogey = (variant !== 'bb');
+  setLoserBogey(tourneyLoserBogey);
+  const tourScoring = (typeof LabState !== 'undefined' && LabState.config && LabState.config.scoring) ? LabState.config.scoring : {};
+  setHighCardShowdownLoss(tourScoring.highCardShowdownLoss || 1);
+  setBrickPenaltyMode(tourScoring.brickPenaltyMode || 'flat');
+  setBrickLossCap(tourScoring.brickLossCap || 4);
   // playHole's profile generator reads Math.random for jitter — wrap in
   // withCashRng so seeded sessions get a deterministic field + profiles.
   const players = [];
@@ -16109,7 +16126,7 @@ function spectatorStartLiveTourney() {
         id: -1000 - i,
         name: spectatorMakePlayerName(i),
         skill: skill,
-        profile: makeProfileForSkill(skill, variant === 'pure' ? 'pure' : 'yellowjacket'),
+        profile: makeProfileForSkill(skill, 'yellowjacket'),
         // Per-player tournament state. v69.48 — Honey reconciles AT ROUND END
         // (Augusta cumulative shape), not aggregated across the whole event.
         scorecard: [],          // [{round, hole, ...row}]   per-hole audit trail
@@ -16134,6 +16151,8 @@ function spectatorStartLiveTourney() {
     handsPerRound: handsPerRound,
     eventTotalHoles: eventTotalHoles,
     honeyCap: divisor,                               // v69.50 — the "honey cap": ÷N normalizer that caps Honey's per-hole power as round length grows. (Distinct from strokeCap, which limits per-hole pot growth.)
+    loserBogey: tourneyLoserBogey,                    // v69.71 — Yellow Jacket (true) vs Bumblebee (false); drives playHole's showdown scoring + the bots' EV math
+    variant: variant,                                // 'yj' | 'bb'
     surviving: players.slice(),
     matches: [],                                     // populated by spectatorSeatTourneyRound
     history: [],
@@ -16142,6 +16161,7 @@ function spectatorStartLiveTourney() {
   };
   spectatorPushLog(null, '🏆 Live Tournament — ' + evType.toUpperCase()
     + ' · field of ' + fieldCap + ' · ' + handsPerRound + ' holes/round × ' + totalRounds + ' rounds'
+    + ' · ' + (tourneyLoserBogey ? 'Yellow Jacket (Bogey Loss)' : 'Bumblebee (Honored Loss)')
     + ' · honey cap ÷' + divisor + ' (= 1 stroke per ' + divisor + ' net honey, applied at round end)', 'meta');
   spectatorSeatTourneyRound();
 }
@@ -16282,6 +16302,7 @@ function spectatorTourneyMatchTick(match) {
     honeyDivisor: tour.honeyCap,
     decisionDivisor: tour.honeyCap,
     isFinals: (tour.round === tour.totalRounds),
+    loserBogey: !!tour.loserBogey,                    // v69.71 — explicit so decideFor's EV math matches the tournament's variant even if the global drifted
     openerHoney: 2 * (hole0 >= 9 ? (+CurrentBackNineMultiplier || 1) : 1),
     oppHistory: { a: { estBluffRate: 0.05, handsRevealed: 0, bluffsRevealed: 0 },
                   b: { estBluffRate: 0.05, handsRevealed: 0, bluffsRevealed: 0 } },
@@ -18767,13 +18788,23 @@ Views.spectator = function() {
   const isLive = SpectatorState.mode !== 'broadcast';
 
   if (isLive) {
-    setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'Variant' }));
+    const isTourneyMode = SpectatorState.mode === 'liveTourney';
+    // The Live Tournament is always golf-scored (the Honey-Stroke engine), so
+    // its only meaningful "variant" is the decisive-loser rule — Yellow Jacket
+    // (Bogey Loss · competitive) vs Bumblebee (Honored Loss · casual). "Pure
+    // NLHE" has no golf scorecard, so it's offered for Live Cash only; a 'pure'
+    // selection carried over from a cash session falls back to Yellow Jacket so
+    // the tournament picker is never left blank or ambiguous.
+    if (isTourneyMode && SpectatorState.setup.variant === 'pure') SpectatorState.setup.variant = 'yj';
+    setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: isTourneyMode ? 'Decisive-loser rule' : 'Variant' }));
     const variantSel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:8px; font-size:12px;' });
-    [
-      { v: 'yj',   label: 'YJ-Stroke' },
-      { v: 'pure', label: 'Pure NLHE' },
-      { v: 'bb',   label: 'BB-Stroke' },
-    ].forEach(o => {
+    (isTourneyMode
+      ? [ { v: 'yj', label: 'Yellow Jacket — Bogey Loss (competitive)' },
+          { v: 'bb', label: 'Bumblebee — Honored Loss (casual)' } ]
+      : [ { v: 'yj',   label: 'YJ-Stroke' },
+          { v: 'pure', label: 'Pure NLHE' },
+          { v: 'bb',   label: 'BB-Stroke' } ]
+    ).forEach(o => {
       const opt = el('option', { value: o.v, text: o.label });
       if (SpectatorState.setup.variant === o.v) opt.selected = true;
       variantSel.appendChild(opt);
