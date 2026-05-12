@@ -307,44 +307,64 @@ Both players hold the same hand value: both score 0 par, the **entire pot rolls 
 
 ### 3.9 The decisive-showdown loser score (variants + the brick rule)
 
-When a hand goes to showdown and is **not** a tie, the winner posts their own hand-class golf value (with the rare cooler bonus — see §7). The **loser's** score is where the two scoring variants diverge:
+When a hand goes to showdown and is **not** a tie, the **winner** posts their own hand-class golf value (with the rare cooler bonus — see §7). The **loser's** score is where the two scoring variants diverge.
+
+**The Yellow Jacket loser ladder.** Under the competitive variant, a decisive-showdown loser climbs a single monotone ladder — golf's own scoring shape: *better than a bogey → a bogey → a worse-than-a-bogey blow-up*. Four named rungs:
+
+| Rung | Loser's hand at showdown | They post | Read it as… |
+|------|--------------------------|-----------|-------------|
+| **Next Best** *(a.k.a. respected loss / "coolered" / "a losing birdie")* | a **straight or better** (category ≥ 4) | their **own hand-class score, −5…−1** | *a birdie's a birdie, even on a hole you lost.* You had a real top-tier hand and ran into a bigger one — you keep your (negative) number. This is the loser side of the **cooler bonus** (§7): the winner gets an extra −1, the loser keeps their −5…−1 instead of any bogey. |
+| **Take a Stroke** *(a.k.a. "a two-putt bogey" / "take your medicine" / a working bogey)* | a **pair / two pair / trips** (category 1–3) | **+1 bogey** | the routine, no-drama outcome — the modal showdown loss. You had something, it wasn't enough; write the one over and move on. (Same +1 the fold costs — see below.) |
+| **Lay a Brick** *(a.k.a. "checked it down with air" / "a brick in your pocket")* | only a **high card** — a "brick", nothing made (category 0) — and the pot **never reached double the opener** (you checked it through) | **+1 bogey** | you showed down air, but the cheap way — you didn't commit to it. |
+| **Stack Bricks** *(a.k.a. "the 3-putt" / "spewed into it" / "barreled with air")* | only a **high card** — a "brick" — and you committed honey until the **agreed total reached at least double the opener** | **+2 — the blow-up** *(climbs to +3 / +4 in big pots under the cap-+4 setting)* | the card-wrecker. You bet your nothing into a grown pot — and you lose the larger honey too, so committed air gets hit on both axes. |
+
+The brick (Lay a Brick / Stack Bricks) score is `1 + ⌊(T − opener) ⁄ opener⌋`, clamped to `[1, cap]`, where **T** = the agreed total at showdown, **opener** = the hole's mandatory pot (2 honey front-9, 4 honey back-9), and **cap** = 2 by default. So T = opener → +1; T ≥ 2·opener → +2; under cap +4, T ≥ 3·opener → +3 and T ≥ 4·opener → +4. (A tiny min-raise that doesn't *double* the opener stays at +1.)
+
+Read top to bottom the rungs are non-decreasing in cost — **Next Best (−5…−1)  <  {Take a Stroke, Lay a Brick} (+1)  <  Stack Bricks (+2)** — and they're strictly increasing in *blame*: you ran into a hand (no blame, still a birdie) → took a stroke (no blame, a bogey) → laid a brick (mild — air, but cheap) → stacked bricks (real — air you committed to, the blow-up). On the card, Take a Stroke and Lay a Brick are the same +1; the difference is the honey and the story.
+
+**The fold sits off the ladder — "put me down for 1".** Whatever you'd been holding and however much was bet, the folder posts a **fixed +1 bogey** (the only part that scales is the honey forfeit, sized to the *previously-agreed* pot — see §3.7), and cards are never revealed. A fold **never** costs +2: that's the whole point of the escape hatch — *show* a brick you committed to and it's +2 (and you lose the bigger pot); *fold* it to a bet and it's +1 (and you lose only the smaller pre-bet pot). So folding a brick to a bet is strictly cheaper on both axes — which is exactly what gives folding (and therefore bluffing) its strategic weight.
+
+Under **Bumblebee** there is no ladder — the loser always posts their **own hand-class score** (−5…+2), so a flush-loser still records a −1 birdie and a brick-loser posts their own +2 regardless of pot size.
+
+The full per-hand-class outcome table (every score a hand can post — win, lose-Yellow-Jacket, lose-Bumblebee — plus folds, ties, and the honey layer) is in §7.
 
 ```
    ┌──── YELLOW JACKET (competitive — default) ────────────────────┐
-   │  Decisive-showdown loser scores:                              │
-   │    • straight or better (cat ≥ 4) → their own hand-class      │
-   │      score, −5..−1 — a "respected loss" (you played a real    │
-   │      hand; you don't deserve a bogey).                        │
-   │    • a pair / two pair / trips (cat 1–3) → +1 bogey.          │
-   │    • only a HIGH CARD — a "brick", nothing made (cat 0):      │
-   │        +1 bogey IF they checked through to the mandatory       │
-   │          opener (no extra honey committed);                    │
-   │        +2 DOUBLE bogey if they BET into the pot (any honey     │
-   │          committed past the opener).                           │
-   │      → the "pot-gated brick" rule: brick = 1 + ⌊(T − opener)   │
-   │        ⁄ opener⌋, where T is the agreed total at showdown and  │
-   │        `opener` is the hole's mandatory pot (2 front-9,        │
-   │        4 back-9), capped at +2.                                │
+   │  Decisive-showdown loser climbs the loser ladder:             │
+   │    • NEXT BEST — straight or better (cat ≥ 4) → their own      │
+   │      hand-class score, −5..−1. ("Coolered" — you played a      │
+   │      real hand, ran into a bigger one; a birdie's a birdie.)   │
+   │    • TAKE A STROKE — pair / two pair / trips (cat 1–3) → +1    │
+   │      bogey. (The routine, no-drama loss — a two-putt bogey.)   │
+   │    • LAY A BRICK — only a HIGH CARD ("a brick", cat 0) that    │
+   │      checked through to the opener (pot never doubled it)      │
+   │      → +1 bogey. (Showed down air the cheap way.)             │
+   │    • STACK BRICKS — only a HIGH CARD bet into a grown pot      │
+   │      (agreed total ≥ 2× the opener) → +2, the blow-up.        │
+   │      (The 3-putt — and you lose the bigger honey too.)        │
+   │      → the "pot-gated brick" rule: 1 + ⌊(T − opener) ⁄        │
+   │        opener⌋, T = agreed total at showdown, opener = the    │
+   │        hole's mandatory pot (2 front-9, 4 back-9), cap 2      │
+   │        (cap 4 keeps it climbing +3/+4 in big pots).           │
    │                                                               │
-   │  Mirrors the fold rule (fold = +1 bogey + the honey forfeit)  │
-   │  AND its pot-dependence: a brick you bet into costs more, just │
-   │  as folding a bigger pot costs more. This is the lever that    │
-   │  makes pre-flop hand selection and bluffing matter — folding a │
-   │  brick to a bet is now strictly correct, and a big bet         │
-   │  threatens a brick with a double bogey.                        │
-   │  Sharper skill expression. Champion scores a few under par.    │
+   │  FOLD — "put me down for 1": folder posts +1, period (+ the   │
+   │  previously-agreed honey forfeit); cards never revealed. A    │
+   │  fold never costs +2 — fold a brick to a bet and it's +1 and  │
+   │  the smaller pot; show it down and it's +2 and the bigger    │
+   │  pot. That asymmetry is the lever that makes pre-flop folding │
+   │  and bluffing matter. Sharper skill; champion a few under par.│
    └───────────────────────────────────────────────────────────────┘
 
    ┌──── BUMBLEBEE (casual) ────────────────────────────────────────┐
-   │  Decisive-showdown loser scores their own hand-class score     │
-   │  (−5..+2), always. Flush-loser still posts −1 birdie; a brick  │
-   │  loser posts their own +2 regardless of pot size. "Your hand   │
-   │  always counts." Champion scores deep under par, golf-major    │
-   │  style.                                                        │
+   │  No ladder — decisive-showdown loser posts their own hand-     │
+   │  class score (−5..+2), always. Flush-loser still posts −1      │
+   │  birdie; a brick loser posts their own +2 regardless of pot    │
+   │  size. "Your hand always counts." Champion deep under par,     │
+   │  golf-major style.                                             │
    └────────────────────────────────────────────────────────────────┘
 ```
 
-**Folds and ties are the same in both variants.** Folders always post +1 bogey (§3.7); ties always carry the pot (§3.8).
+**Folds and ties are the same in both variants.** Folders always post +1 bogey ("put me down for 1" — §3.7); ties always carry the pot (§3.8).
 
 **Configurability (Simulator → Advanced → "Brick loss").** The brick rule has three modes. *Pot-gated, cap +2* is the ship default (validated: it lifts event-level skill expression ~5× and pulls champion totals ~2½ strokes shallower while keeping the career skill metrics — Spearman, authored-vs-measured, elite-major dominance — within a few percent of the classic baseline). *Flat +1* is the classic Yellow Jacket rule (every cat<4 loss is a flat bogey — but then folding a brick costs exactly what showing it down costs, so pre-flop folding and bluffing barely matter). *Flat +2* anchors a uniform double bogey; *Pot-gated, cap +4* escalates further (+3/+4 at big pots — a bigger fold-equity gain, but the high-variance big-pot brick losses degrade the skill metrics). Bumblebee ignores the setting. The AI's showdown-EV math, the equity model, and the skill metrics are all aware of whichever mode is active, so simulation results are authentic to the rule in force.
 
@@ -474,18 +494,24 @@ Every **showdown** adds to your scorecard, in **true golf convention** — lower
    │        High Card +2)                             │
    │                                                  │
    │    Every other showdown player:                  │
-   │      YJ Stroke (Bogey Loss) — mirrors the tour   │
-   │        Yellow Jacket loser rule (§3.9):          │
-   │          • straight or better → own −5..−1       │
-   │            ("respected loss")                    │
-   │          • trips / two pair / pair → +1 bogey    │
-   │          • high card ("brick") → +1 if the pot   │
-   │            was just the posted blinds (you       │
-   │            limped/checked it down), +2 once it   │
-   │            grew past that — any raised pot (cap  │
-   │            +2)                                   │
+   │      YJ Stroke (Bogey Loss) — the tour loser     │
+   │        ladder (§3.9), with the posted blinds      │
+   │        standing in for the mandatory opener:     │
+   │          • NEXT BEST — straight or better → own  │
+   │            −5..−1 ("coolered")                   │
+   │          • TAKE A STROKE — trips / 2 pair /      │
+   │            pair → +1 bogey                       │
+   │          • LAY A BRICK — high card, pot was just │
+   │            the blinds (limped, checked down)     │
+   │            → +1 bogey                            │
+   │          • STACK BRICKS — high card, pot grew    │
+   │            to ≥ 2× the blinds (any raised pot)   │
+   │            → +2, the blow-up (cap +2 at cash)    │
+   │      FOLD — "put me down for 1": no scorecard    │
+   │        entry at all (cash folds/ties don't       │
+   │        touch the card; only showdowns score).    │
    │      Bumblebee Stroke (Honored Loss):            │
-   │          card += own hand class                  │
+   │          card += own hand class, always          │
    │                                                  │
    │  Multi-way tables: one pot winner; every         │
    │  other showdown player posts the loser score     │
@@ -554,9 +580,13 @@ Despite the brand name "Stroke," these cash variants borrow only the **scorecard
 
 ---
 
-## 7. Hand Class → Golf Score Reference
+## 7. Hand Class → Golf Score Reference (the outcome matrix)
 
-This table applies to: **Tour event scorecards** AND **Cash YJ-Stroke/Bumblebee-Stroke ledgers**.
+This is the single source of truth for **every score a hand can post**. It applies to **Tour event scorecards** AND **Cash YJ-Stroke / Bumblebee-Stroke ledgers** (with the cash caveats noted below). Lower = better, like all golf scoring.
+
+### 7.1 The base hand-class score (what the winner posts)
+
+A decisive-showdown **winner** posts the golf value of their own hand class. Each class has a *standard* value and, for several classes, a *premium-kicker* value one stroke better:
 
 ```
    ┌──────────────────────────┬──────────┬──────────────────┐
@@ -579,18 +609,48 @@ This table applies to: **Tour event scorecards** AND **Cash YJ-Stroke/Bumblebee-
    │  High Card (J+)          │   +1     │ J-high+ premium  │
    │  High Card (weak)        │   +2     │ —                │
    └──────────────────────────┴──────────┴──────────────────┘
-
-   Range: −5 (best) to +2 (worst).
-   Lower = better, like all golf scoring.
 ```
 
-A frame-aware **showdown matrix** layers adjustments on top in tour events:
+**Cooler bonus** (tour events only): when **both** players show a **full house or better** *and* they're within one hand-category of each other, the **winner** gets an extra **−1**, floored at **−6**. Frequency: well under 0.1% of showdowns; never affects the loser; never fires at cash.
 
-- **Respected loss** (Yellow Jacket variant): a loser whose hand is a straight or better posts their own hand-class score instead of a bogey
-- **Pot-gated brick loss** (Yellow Jacket variant, default): a loser holding only a high card posts +1 if they checked through to the opener, +2 if they bet into the pot (configurable — see §3.9)
-- **Cooler bonus**: when both players have full house or better in a tight gap, the winner gets an extra −1 stroke
+### 7.2 The full outcome matrix — every score, every outcome
 
-The cooler bonus only fires in tour events, never at cash. The cash YJ-Stroke / Bumblebee-Stroke scorecards use the loser-score rules from §5 (which mirror §3.9's structure).
+The **Lose — Yellow Jacket** column is the loser ladder of §3.9 — *Next Best* (straight+ keeps its own −5…−1), *Take a Stroke* (pair/2P/trips → +1 bogey), *Lay a Brick* (high card checked through → +1) and *Stack Bricks* (high card bet past 2× the opener → +2, the blow-up):
+
+| Hand at showdown | **Win** the pot¹ | **Lose** — Yellow Jacket | **Lose** — Bumblebee |
+|------------------|------------------|--------------------------|----------------------|
+| Royal / Straight Flush | −5 | **−5**  · Next Best | −5 |
+| Four of a Kind | −4 | **−4**  · Next Best | −4 |
+| Full House (J+ trips) | −3 | **−3**  · Next Best | −3 |
+| Full House (standard) | −2 | **−2**  · Next Best | −2 |
+| Flush (T-high or better) | −2 | **−2**  · Next Best | −2 |
+| Flush (standard) | −1 | **−1**  · Next Best | −1 |
+| Straight (9-high or better) | −2 | **−2**  · Next Best | −2 |
+| Straight (standard) | −1 | **−1**  · Next Best | −1 |
+| Three of a Kind | −1 | **+1**  · Take a Stroke | −1 |
+| Two Pair (J+ top pair) | −1 | **+1**  · Take a Stroke | −1 |
+| Two Pair (standard) | 0 | **+1**  · Take a Stroke | 0 |
+| Pair (TT or better) | 0 | **+1**  · Take a Stroke | 0 |
+| Pair (under tens) | +1 | **+1**  · Take a Stroke | +1 |
+| High Card (J-high+) | +1 | **+1** Lay a Brick / **+2** Stack Bricks² | +1 |
+| High Card (weak) | +2 | **+1** Lay a Brick / **+2** Stack Bricks² | +2 |
+
+¹ **Win:** add the cooler bonus (−1, floored at −6) when both players show a full house or better within one category — winner only, <0.1% of showdowns.
+² **Brick:** **Lay a Brick = +1** if the agreed total never reached double the opener (you checked it through). **Stack Bricks = +2** (the blow-up) once it did. Formula `1 + ⌊(T − opener)/opener⌋`, clamped to `[1, cap]`. `cap = 2` by default; the **"Brick loss"** control (Simulator → Advanced) offers *Flat +1* / *Flat +2* / *Pot-gated cap +2 ★* / *Pot-gated cap +4* — under cap +4 a big-pot brick can reach **+3** or **+4**. Tour `opener` = the hole's mandatory pot (2 front-9, 4 back-9). See §3.9 for the full loser ladder. A **fold** never lands on this column — the folder always posts +1 ("put me down for 1"), cards unrevealed (§7.3).
+
+### 7.3 Outcomes that don't depend on your hand
+
+| Outcome | Folder / loser | Other player |
+|---------|----------------|--------------|
+| **Fold** — *"put me down for 1"* (cards never revealed) | **+1** bogey, always (never +2) + (the previously-agreed pot ÷ round-end honey cap) honey forfeit — the only part that scales | **0** par; gains the previously-agreed pot in honey |
+| **Tie** (same hand value) | **0** par | **0** par; the *whole* pot carries to the next decisive hole, plus a consecutive-tie bonus of up to +5 honey |
+| **Honey layer** (separate, applied once at round end) | round net honey ÷ round-end honey cap, added to that round's scorecard | — |
+
+### 7.4 Cash caveats
+
+The cash **YJ-Stroke / Bumblebee-Stroke** golf scorecards use the same matrix and the same loser ladder (§5, §3.9), with three differences: (a) **class-only** scores — no premium-kicker buckets; (b) **no cooler bonus**; (c) the brick rung's **`opener` is the posted blinds (small + big)** instead of a honey opener, and the cap is fixed at **2**. Cash folds and ties don't touch the scorecard at all — only showdowns are scored. The cash scorecard is a pure skill record; it does not convert to Nectar.
+
+**Overall range:** −6 (cooler winner) … +2 (a weak high-card showdown loser under Bumblebee, or a committed brick under the default Yellow Jacket cap) — or up to +4 if the Brick-loss cap is raised to 4.
 
 ---
 
