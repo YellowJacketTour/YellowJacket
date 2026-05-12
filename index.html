@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.83-study-golfcut";
+const APP_VERSION = "2026.05.12-v69.84-four-round-major";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -4998,12 +4998,13 @@ function runKnockoutRound(players, numHoles) {
 function runBracketSkillStudy(opts) {
   opts = opts || {};
   const n         = Math.max(1, (opts.n | 0) || 50);
-  // Round the field up to a power of two so the single-elim bracket is clean.
-  // v69.82 — golf-cut structure: any field size; round count is derived (R1
-  // free, then ⌈half⌉ each round to a heads-up final). Default 64 — long enough
-  // to give skill room to express, fast enough to pool 100s of events.
+  // v69.84 — golf-major structure: a fixed 4 rounds (R1 free, ~50% cut after
+  // R2 & R3, no cut after R4) with the lowest 4-round cumulative total winning
+  // — the same shape the Live Tournament uses, just at a small field decoupled
+  // from the (huge) live event-type fields. Default 64 — long enough to give
+  // skill room to express, fast enough to pool 100s of events.
   const fieldSize = Math.max(2, (opts.fieldSize | 0) || 64);
-  const rounds    = tourneyStructure(fieldSize).length;
+  const rounds    = tourneyStructure(fieldSize).length;   // always 4
   const holes     = (opts.holesPerRound | 0) || 18;
   const eventType = (opts.eventType === 'main' || opts.eventType === 'major') ? opts.eventType : 'regular';
   const baseSeed  = String(opts.baseSeed || 'bracket-study');
@@ -5051,9 +5052,10 @@ function runBracketSkillStudy(opts) {
           const m = playMatch(pA, pB, holes, { noPlayoff: true, noMatchStats: true, gameContext: { mode: 'strokePlay', holeNumber: 1, totalHoles: holes } });
           pA.cum += m.aTotal; pB.cum += m.bTotal;
         }
-        // v69.82 golf-cut: R1 — no cut; R2+ — keep ⌈half⌉; champion when ≤1.
+        // v69.84 golf-major cut: R1 & R4 — no cut; R2 & R3 — keep ⌈half⌉.
+        // After R4 the lowest cumulative total among the survivors is champion.
         surviving.sort((a, b) => (a.cum - b.cum) || (a.seed - b.seed));
-        const target = (r === 1) ? len0 : Math.max(1, Math.ceil(len0 / 2));
+        const target = (r === 1 || r === rounds) ? len0 : Math.max(1, Math.ceil(len0 / 2));
         for (let i = target; i < len0; i++) surviving[i].eliminatedRound = r;
         surviving = surviving.slice(0, target);
         if (surviving.length <= 1) break;
@@ -16327,77 +16329,188 @@ function spectatorStartLiveCash() {
 //        honeyCumOpp     — Σ Honey credits won by opponents in this player's
 //                          matches (so netHoney = self − opp)
 //     final = golfCum − (honeyCumSelf − honeyCumOpp) / tour.honeyCap.
-// v69.82 — the field-entering count for each round of a golf-cut event:
-// Round 1 is free (no cut), Round 2 plays the full field too (the FIRST cut
-// lands after R2), then ⌈N/2⌉ each subsequent round, down to a 2-player
-// head-to-head final. Returns the per-round entrant counts (index 0 = R1).
-// 256 ⇒ [256,256,128,64,32,16,8,4,2] (9 rounds); 1024 ⇒ 11; 7000 ⇒ 14.
+// v69.84 — golf-major shape: ALWAYS 4 rounds. R1 free (no cut), R2 plays the
+// full field too (the FIRST cut lands after R2), ~50% cut after R2 and after
+// R3, then R4 (no cut) — lowest 4-round cumulative total = champion, like a
+// real major's 72-hole aggregate. Returns the per-round entrant counts
+// (index 0 = R1). 256 ⇒ [256,256,128,64]; 1024 ⇒ [1024,1024,512,256];
+// 7000 ⇒ [7000,7000,3500,1750]. (Cut size is ⌈half⌉ for now — a "performance
+// gradient" cut can replace it later.)
 function tourneyStructure(fieldCap) {
   const N = Math.max(2, Math.round(+fieldCap || 2));
-  const enter = [N, N];
-  while (enter[enter.length - 1] > 2) enter.push(Math.ceil(enter[enter.length - 1] / 2));
-  return enter;
+  const r3 = Math.ceil(N / 2), r4 = Math.ceil(r3 / 2);
+  return [N, N, r3, r4];
 }
-// v69.82 — run ONE qualifying round headlessly (no felts, no per-hole logging),
-// then cut. Used for the early rounds of big fields — you can't watch 3,500
-// matches hand-by-hand, so we resolve them in one pass and only broadcast the
-// late rounds. Mirrors the live path's accounting: per-player rounds[] entry +
-// cumulative golf/honey, then the same golf-cut (no cut after R1, else ⌈half⌉).
+// v69.84 — play one HU match's full 18 holes synchronously, recording the
+// per-hole scorecard rows AND the round summary — same accounting as the live
+// tick path (carry pot + consecutive-tie bonus, golf/honey split), just no
+// setTimeout/felts. Used for the rounds we keep hole-level detail on (the
+// final round, and any round with a small enough field).
+function spectatorSimulateMatchWithHoles(p1, p2, roundNo, matchId, divisor) {
+  const tour = SpectatorState.tournament;
+  const holes = (tour && tour.handsPerRound) || 18;
+  const isFinalRound = !!(tour && roundNo === tour.totalRounds);
+  const back9Mult = (+CurrentBackNineMultiplier > 0) ? +CurrentBackNineMultiplier : 1;
+  let dealer = 'a', carryPot = 0, consecTies = 0;
+  let golfA = 0, golfB = 0, honeyA = 0, honeyB = 0;
+  for (let h = 0; h < holes; h++) {
+    const holeNo = h + 1;
+    const gameContext = {
+      mode: 'match', holeNumber: holeNo, totalHoles: holes,
+      honeyDivisor: divisor, decisionDivisor: divisor, isFinals: isFinalRound,
+      loserBogey: !!(tour && tour.loserBogey),
+      openerHoney: 2 * (h >= 9 ? back9Mult : 1),
+      oppHistory: { a: { estBluffRate: 0.05, handsRevealed: 0, bluffsRevealed: 0 }, b: { estBluffRate: 0.05, handsRevealed: 0, bluffsRevealed: 0 } },
+    };
+    let r;
+    try { r = withCashRng(() => playHole(p1, p2, dealer, carryPot, gameContext)); } catch (_) { break; }
+    golfA += r.aScore; golfB += r.bScore;
+    let carryToNext = 0;
+    if (r.tie) { consecTies++; carryToNext = (r.strokes || 0) + Math.min(5, consecTies); }
+    else { consecTies = 0; honeyA += (r.aHoneyCredit || 0); honeyB += (r.bHoneyCredit || 0); }
+    const carryIn = carryPot;
+    const wonA = !r.tie && !r.folded && (r.aScore < r.bScore || (r.aHoneyCredit || 0) > 0);
+    const wonB = !r.tie && !r.folded && (r.bScore < r.aScore || (r.bHoneyCredit || 0) > 0);
+    const term = (typeof golfTermForStroke === 'function') ? golfTermForStroke : (() => '');
+    const pushRow = (player, oppName, ownScore, ownHoney, oppHoney, ownFolded, oppFolded, ownHand, won) => {
+      let role, t, glyph, handClass = null;
+      if (r.tie) { role = 'tied'; t = ownScore === 0 ? 'Par' : term(ownScore); glyph = '⚖'; handClass = handCategoryName(ownHand); }
+      else if (r.folded) { if (ownFolded) { role = 'folded'; t = 'Bogey'; glyph = '·'; } else { role = 'won-unc'; t = term(ownScore); glyph = '✦'; } }
+      else { handClass = handCategoryName(ownHand); role = won ? 'won-sd' : 'lost-sd'; t = term(ownScore); glyph = (typeof glyphForHandClass === 'function') ? glyphForHandClass(handClass) : '·'; }
+      player.scorecard.push({ round: roundNo, hole: holeNo, matchId: matchId, opponentName: oppName, rawScore: ownScore, honeyCredit: ownHoney, opponentHoneyCredit: oppHoney, potBefore: (r.strokes || 0), carryIn: carryIn, carryOut: r.tie ? carryToNext : 0, tie: !!r.tie, folded: !!ownFolded, foldedOpp: !!oppFolded, role: role, handClass: handClass, term: t, glyph: glyph, ts: Date.now() });
+      player.golfCum += ownScore;
+    };
+    pushRow(p1, p2.name, r.aScore, r.aHoneyCredit || 0, r.bHoneyCredit || 0, r.folded === 'a', r.folded === 'b', r.aHand, wonA);
+    pushRow(p2, p1.name, r.bScore, r.bHoneyCredit || 0, r.aHoneyCredit || 0, r.folded === 'b', r.folded === 'a', r.bHand, wonB);
+    carryPot = carryToNext;
+    dealer = dealer === 'a' ? 'b' : 'a';
+  }
+  const commit = (player, oppName, golf, honeySelf, honeyOpp) => {
+    const honeyNet = honeySelf - honeyOpp, honeyStrokes = -honeyNet / divisor;
+    player.rounds.push({ round: roundNo, matchId: matchId, opponentName: oppName, holes: holes, golf: golf, honeySelf: honeySelf, honeyOpp: honeyOpp, honeyNet: honeyNet, honeyCap: divisor, honeyStrokes: honeyStrokes, roundFinal: golf + honeyStrokes, ts: Date.now() });
+    player.honeyCumSelf += honeySelf; player.honeyCumOpp += honeyOpp;
+  };
+  commit(p1, p2.name, golfA, honeyA, honeyB);
+  commit(p2, p1.name, golfB, honeyB, honeyA);
+}
+
+// v69.84 — run ONE round of the (always-4-round) golf-major event, then cut.
+// Late rounds (the final, or any round with ≤512 entrants) keep per-hole
+// detail via spectatorSimulateMatchWithHoles; bigger rounds get a fast
+// round-summary via playMatch. Cut: none after R1 or after the final round;
+// ⌈survivors/2⌉ after R2 and R3. Champion (after R4) = lowest 4-round total —
+// crowned by spectatorRunTourneyRounds, not here.
 function spectatorSimulateOneRound() {
   const tour = SpectatorState.tournament;
   if (!tour || !Array.isArray(tour.surviving) || tour.surviving.length < 2) return;
   const roundNo = tour.round;
+  const totalRounds = tour.totalRounds || 4;
   const divisor = tour.honeyCap || 9;
+  const fieldNow = tour.surviving.length;
+  const recordHoles = (roundNo === totalRounds) || (fieldNow <= 512);
   const seeded = tour.surviving.slice().sort((a, b) => spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
+  let matchesPlayed = 0;
   for (let i = 0; i < Math.floor(seeded.length / 2); i++) {
     const p1 = seeded[i], p2 = seeded[seeded.length - 1 - i];
     const matchId = tour.nextMatchId++;
-    let m;
-    try { m = withCashRng(() => playMatch(p1, p2, tour.handsPerRound, { noPlayoff: true, noMatchStats: true, gameContext: { mode: 'strokePlay', holeNumber: 1, totalHoles: tour.handsPerRound } })); }
-    catch (_) { m = { aGolf: 0, bGolf: 0, aHoney: 0, bHoney: 0 }; }
-    const commit = (player, opp, golf, honeySelf, honeyOpp) => {
-      const honeyNet = honeySelf - honeyOpp;
-      const honeyStrokes = -honeyNet / divisor;
-      player.rounds.push({ round: roundNo, matchId: matchId, opponentName: opp.name, holes: tour.handsPerRound, golf: golf, honeySelf: honeySelf, honeyOpp: honeyOpp, honeyNet: honeyNet, honeyCap: divisor, honeyStrokes: honeyStrokes, roundFinal: golf + honeyStrokes, simulated: true, ts: Date.now() });
-      player.golfCum += golf; player.honeyCumSelf += honeySelf; player.honeyCumOpp += honeyOpp;
-    };
-    commit(p1, p2, m.aGolf || 0, m.aHoney || 0, m.bHoney || 0);
-    commit(p2, p1, m.bGolf || 0, m.bHoney || 0, m.aHoney || 0);
+    matchesPlayed++;
+    if (recordHoles) {
+      try { withCashRng(() => spectatorSimulateMatchWithHoles(p1, p2, roundNo, matchId, divisor)); }
+      catch (_) { /* a failed match leaves the players with no round entry — degrades to a 0,0 round below */ }
+      if (!(p1.rounds || []).some(rd => rd.round === roundNo)) { p1.rounds.push({ round: roundNo, matchId: matchId, opponentName: p2.name, holes: tour.handsPerRound, golf: 0, honeySelf: 0, honeyOpp: 0, honeyNet: 0, honeyCap: divisor, honeyStrokes: 0, roundFinal: 0, ts: Date.now() }); }
+      if (!(p2.rounds || []).some(rd => rd.round === roundNo)) { p2.rounds.push({ round: roundNo, matchId: matchId, opponentName: p1.name, holes: tour.handsPerRound, golf: 0, honeySelf: 0, honeyOpp: 0, honeyNet: 0, honeyCap: divisor, honeyStrokes: 0, roundFinal: 0, ts: Date.now() }); }
+    } else {
+      let m;
+      try { m = withCashRng(() => playMatch(p1, p2, tour.handsPerRound, { noPlayoff: true, noMatchStats: true, gameContext: { mode: 'strokePlay', holeNumber: 1, totalHoles: tour.handsPerRound } })); }
+      catch (_) { m = { aGolf: 0, bGolf: 0, aHoney: 0, bHoney: 0 }; }
+      const commit = (player, opp, golf, honeySelf, honeyOpp) => {
+        const honeyNet = honeySelf - honeyOpp, honeyStrokes = -honeyNet / divisor;
+        player.rounds.push({ round: roundNo, matchId: matchId, opponentName: opp.name, holes: tour.handsPerRound, golf: golf, honeySelf: honeySelf, honeyOpp: honeyOpp, honeyNet: honeyNet, honeyCap: divisor, honeyStrokes: honeyStrokes, roundFinal: golf + honeyStrokes, simulated: true, ts: Date.now() });
+        player.golfCum += golf; player.honeyCumSelf += honeySelf; player.honeyCumOpp += honeyOpp;
+      };
+      commit(p1, p2, m.aGolf || 0, m.aHoney || 0, m.bHoney || 0);
+      commit(p2, p1, m.bGolf || 0, m.bHoney || 0, m.aHoney || 0);
+    }
   }
-  // golf-cut: R1 — no cut; R2+ — keep ⌈survivors/2⌉ (the lower-scoring half).
+  try { SpectatorState.stats.handsPlayed += matchesPlayed * (tour.handsPerRound || 18); } catch (_) {}
+  // cut: no cut after R1 or after the final round; else keep ⌈survivors/2⌉.
   const sorted = tour.surviving.slice().sort((a, b) => {
     const fa = spectatorPlayerFinal(a), fb = spectatorPlayerFinal(b);
     if (fa !== fb) return fa - fb;
     if (a.golfCum !== b.golfCum) return a.golfCum - b.golfCum;
     return (b.id || 0) - (a.id || 0);
   });
-  const target = (roundNo === 1) ? sorted.length : Math.ceil(sorted.length / 2);
+  const target = (roundNo === 1 || roundNo >= totalRounds) ? sorted.length : Math.ceil(sorted.length / 2);
   const advancing = sorted.slice(0, target), cutOut = sorted.slice(target);
   cutOut.forEach(p => { p.eliminatedRound = roundNo; });
   SpectatorState.stats.eliminations += cutOut.length;
   const fmt = v => (v > 0 ? '+' : '') + v.toFixed(2);
   const leader = sorted[0];
   const cutLine = cutOut.length ? fmt(spectatorPlayerFinal(advancing[advancing.length - 1])) : null;
-  tour.history.push({ round: roundNo, simulated: true, cuts: cutOut.length, cutLineFinal: cutLine, leader: { name: leader.name, final: spectatorPlayerFinal(leader), golfCum: leader.golfCum, honeyNet: leader.honeyCumSelf - leader.honeyCumOpp } });
-  spectatorPushLog(null, '🧮 R' + roundNo + ' simulated — ' + (cutOut.length ? cutOut.length + ' cut (line ' + cutLine + ')' : 'no cut · everyone advances') + ' · leader ' + leader.name + ' ' + fmt(spectatorPlayerFinal(leader)) + ' · ' + advancing.length + ' through', cutOut.length ? 'elim' : 'meta');
+  tour.history.push({ round: roundNo, cuts: cutOut.length, cutLineFinal: cutLine, leader: { name: leader.name, final: spectatorPlayerFinal(leader), golfCum: leader.golfCum, honeyNet: leader.honeyCumSelf - leader.honeyCumOpp } });
+  spectatorPushLog(null, '🧮 R' + roundNo + (roundNo >= totalRounds ? ' (final round) complete' : ' done') + ' — '
+    + (roundNo >= totalRounds ? '' : (cutOut.length ? cutOut.length + ' cut (line ' + cutLine + ')' : 'no cut') + ' · ')
+    + 'leader ' + leader.name + ' ' + fmt(spectatorPlayerFinal(leader)) + (roundNo >= totalRounds ? '' : ' · ' + advancing.length + ' through'), cutOut.length ? 'elim' : 'meta');
   tour.surviving = advancing;
   tour.round++;
+}
+
+// v69.84 — drive the 4-round event: R1 free → R2 (cut) → R3 (cut) → R4 → crown
+// the lowest-cumulative-total champion (golf-major style). All rounds are
+// simulated (no hand-by-hand felts at these field sizes); a short pause between
+// rounds lets the Live Scoreboard show each round + its cut land.
+function spectatorRunTourneyRounds() {
+  const tour = SpectatorState.tournament;
+  if (!tour) return;                                  // teardown happened
+  const totalRounds = tour.totalRounds || 4;
+  if (tour.round > totalRounds) {
+    // crown the champion: lowest 4-round cumulative total among the survivors.
+    const sorted = tour.surviving.slice().sort((a, b) => {
+      const fa = spectatorPlayerFinal(a), fb = spectatorPlayerFinal(b);
+      if (fa !== fb) return fa - fb;
+      if (a.golfCum !== b.golfCum) return a.golfCum - b.golfCum;
+      return (b.id || 0) - (a.id || 0);
+    });
+    const champ = sorted[0] || tour.players[0];
+    champ.finalPlace = 1;
+    const others = tour.players.filter(p => p !== champ).sort((a, b) => {
+      const ar = a.eliminatedRound == null ? Infinity : a.eliminatedRound;
+      const br = b.eliminatedRound == null ? Infinity : b.eliminatedRound;
+      if (ar !== br) return br - ar;
+      return spectatorPlayerFinal(a) - spectatorPlayerFinal(b);
+    });
+    others.forEach((p, idx) => { p.finalPlace = idx + 2; });
+    tour.champion = champ;
+    SpectatorState.featuredTableId = null;
+    const fmt = v => (v > 0 ? '+' : '') + v.toFixed(2);
+    spectatorPushLog(null, '🏆 CHAMPION: ' + champ.name + ' takes the ' + tour.eventType.toUpperCase() + ' at ' + fmt(spectatorPlayerFinal(champ)) + ' — best total over ' + totalRounds + ' rounds', 'champion');
+    try { refreshSpectatorScoreboard(); refreshSpectatorScorecardStrip(); refreshSpectatorStats(); refreshSpectatorLog(); } catch (_) {}
+    try { spectatorFinishSession('champion crowned'); } catch (_) {}
+    return;
+  }
+  const roundNo = tour.round, isFinalRound = roundNo === totalRounds;
+  spectatorPushLog(null, '⛳ ' + (isFinalRound ? '🏆 Final Round' : 'Round ' + roundNo) + ' begins — ' + tour.surviving.length + ' player' + (tour.surviving.length === 1 ? '' : 's') + (roundNo === 1 ? ' · free round, no cut' : '') + ' · 18 holes · honey ÷' + (tour.honeyCap || 9), isFinalRound ? 'champion' : 'meta');
+  try { refreshSpectatorScoreboard(); refreshSpectatorLog(); refreshSpectatorStats(); } catch (_) {}
+  setTimeout(() => {
+    try { spectatorSimulateOneRound(); } catch (e) { spectatorPushLog(null, 'round sim failed: ' + (e && e.message ? e.message : e), 'meta'); }
+    try { refreshSpectatorScoreboard(); refreshSpectatorScorecardStrip(); refreshSpectatorStats(); refreshSpectatorLog(); refreshSpectatorGrid(); } catch (_) {}
+    setTimeout(spectatorRunTourneyRounds, 1500);
+  }, 60);
 }
 
 function spectatorStartLiveTourney() {
   spectatorTeardown();
   spectatorInitSession('liveTourney');
   const evType = SpectatorState.setup.eventType;
-  // v69.82 — golf-tournament fields: a few hundred → WSOP-Main scale. Round
-  // count is DERIVED from the field + the 50% cut schedule, not welded to it.
+  // v69.84 — golf-major shape: the event type sets ONLY the field size (a few
+  // hundred → WSOP-Main scale); the round count is fixed at 4 (R1 free, ~50%
+  // cut after R2 & R3, lowest 4-round cumulative total wins). All rounds are
+  // simulated synchronously — at these field sizes there's no small bracket to
+  // broadcast hand-by-hand; the Live Scoreboard updates round-by-round instead.
   const fieldCap = evType === 'main' ? 7000 : (evType === 'major' ? 1024 : 256);
   const handsPerRound = 18;
-  const tourEnter = tourneyStructure(fieldCap);     // [R1 field, R2 field, …, 2]
-  const totalRounds = tourEnter.length;
-  // Rounds whose entering field is > 16 are simulated up front (no felts);
-  // from the first round with ≤16 entrants on, we broadcast hand-by-hand.
-  let firstBroadcastRound = 1;
-  for (let i = 0; i < tourEnter.length; i++) { if (tourEnter[i] <= 16) { firstBroadcastRound = i + 1; break; } }
+  const tourEnter = tourneyStructure(fieldCap);     // [R1, R2, ⌈N/2⌉, ⌈⌈N/2⌉/2⌉]
+  const totalRounds = tourEnter.length;             // always 4
   const eventTotalHoles = totalRounds * handsPerRound;
   // v69.49 — divisor is PER-ROUND, applied at round end. Anchored to the
   // hole count of one round (default 18). honeyDivisorFor() honors the
@@ -16488,19 +16601,11 @@ function spectatorStartLiveTourney() {
   };
   spectatorPushLog(null, '🏆 Live Tournament — ' + evType.toUpperCase()
     + ' · field of ' + fieldCap + ' · ' + handsPerRound + ' holes/round × ' + totalRounds + ' rounds'
-    + ' · R1 free, then ⌈half⌉ golf-cut each round to a heads-up final'
+    + ' · R1 free, ~50% golf-cut after R2 & R3, lowest 4-round total wins the Yellow Jacket'
     + ' · ' + (tourneyLoserBogey ? 'Yellow Jacket (Bogey Loss)' : 'Bumblebee (Honored Loss)')
     + ' · honey cap ÷' + divisor + ' (= 1 stroke per ' + divisor + ' net honey, applied at round end)', 'meta');
-  if (firstBroadcastRound > 1) {
-    spectatorPushLog(null, '🧮 simulating qualifying rounds R1–R' + (firstBroadcastRound - 1) + ' (≈ ' + (tourEnter.slice(0, firstBroadcastRound - 1).reduce((a, b) => a + Math.floor(b / 2), 0)) + ' matches) — the tab may freeze for a moment…', 'meta');
-    setTimeout(() => {
-      try { for (let q = 1; q < firstBroadcastRound; q++) spectatorSimulateOneRound(); } catch (e) { spectatorPushLog(null, 'qualifier sim failed: ' + (e && e.message ? e.message : e), 'meta'); }
-      try { spectatorSeatTourneyRound(); } catch (e) { spectatorPushLog(null, 'seat failed: ' + (e && e.message ? e.message : e), 'meta'); }
-      try { refreshSpectatorFeatured(); refreshSpectatorGrid(); refreshSpectatorLog(); refreshSpectatorStats(); refreshSpectatorScorecardStrip(); refreshSpectatorScoreboard(); } catch (_) {}
-    }, 60);
-  } else {
-    spectatorSeatTourneyRound();
-  }
+  try { refreshSpectatorScoreboard(); refreshSpectatorScorecardStrip(); refreshSpectatorStats(); refreshSpectatorLog(); } catch (_) {}
+  setTimeout(() => spectatorRunTourneyRounds(), 60);
 }
 
 function spectatorMakePlayerName(idx) {
@@ -19498,7 +19603,7 @@ Views.spectator = function() {
     setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'Event type' }));
     const evSel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:8px; font-size:12px;' });
     const opts = SpectatorState.mode === 'liveTourney'
-      ? [{v:'regular',l:'Regular — 256 players · 9 rounds'},{v:'major',l:'Major — 1,024 players · 11 rounds'},{v:'main',l:'Main — ~7,000 players · 14 rounds'}]
+      ? [{v:'regular',l:'Regular — 256 players · 4 rounds'},{v:'major',l:'Major — 1,024 players · 4 rounds'},{v:'main',l:'Main — ~7,000 players · 4 rounds'}]
       : [{v:'regular',l:'Regular (full field)'},{v:'major',l:'Major (full field)'},{v:'main',l:'Main Event (full field)'}];
     opts.forEach(o => {
       const opt = el('option', { value: o.v, text: o.l });
@@ -19696,11 +19801,11 @@ Views.spectator = function() {
     if (!Array.isArray(SpectatorState.bracketStudy.history)) SpectatorState.bracketStudy.history = [];
     const bs = SpectatorState.bracketStudy;
     const evtNow = SpectatorState.setup.eventType;
-    const SBOARD_STUDY_FIELD = 64;   // v69.82 — fixed (fast); not the big event-type field
+    const SBOARD_STUDY_FIELD = 64;   // v69.84 — fixed (fast); not the big event-type field
     const studyCard = el('div', { class: 'card', style: 'padding:14px; margin-bottom:14px;' });
     studyCard.appendChild(el('h2', { text: '🔬 Bracket Skill Study  ·  offline A/B', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
     studyCard.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.65; line-height:1.5; margin-bottom:10px;', text:
-      'Runs N tournaments with the field skill-seeded and N with the same fields drawn in random order, then reports how much the seeding lifts skill→finish. Uses a fixed ' + SBOARD_STUDY_FIELD + '-player golf-cut event (R1 free, ⌈half⌉ each round, heads-up final) · ' + evtNow + ' skill spread · honey ' + (SpectatorState.setup.honeyCapMode === 'spec' ? '÷18 (Spec)' : '÷9 (Calibrated)') + ' · AI curve ' + (SpectatorState.setup.skillCurve === 'wide' ? 'Wide' : 'Standard') + '. (Field size is fixed for speed — independent of the event-type field; pass fieldSize/skillCurve to runBracketSkillStudy() in the console for sweeps.)' }));
+      'Runs N tournaments with the field skill-seeded and N with the same fields drawn in random order, then reports how much the seeding lifts skill→finish. Uses a fixed ' + SBOARD_STUDY_FIELD + '-player golf-major event (4 rounds: R1 free, ~50% cut after R2 & R3, lowest 4-round total wins) · ' + evtNow + ' skill spread · honey ' + (SpectatorState.setup.honeyCapMode === 'spec' ? '÷18 (Spec)' : '÷9 (Calibrated)') + ' · AI curve ' + (SpectatorState.setup.skillCurve === 'wide' ? 'Wide' : 'Standard') + '. (Field size is fixed for speed — independent of the event-type field; pass fieldSize/skillCurve to runBracketSkillStudy() in the console for sweeps.)' }));
     if (bs.running) {
       studyCard.appendChild(el('div', { style: 'padding:10px 12px; border-radius:5px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.28); font-size:12px; color:#F0C75E;', text: '⏳ ' + (bs.phase || 'Running…') + '  (the tab is unresponsive while this runs)' }));
     } else {
@@ -19713,7 +19818,7 @@ Views.spectator = function() {
       runBtn.onclick = () => {
         const n = Math.max(10, Math.min(5000, SpectatorState.bracketStudy.n || 100));
         const evt = SpectatorState.setup.eventType;
-        const fieldSize = 64;   // v69.82 — fixed study field (the spectator's 256/1024/7000 are too big to pool)
+        const fieldSize = 64;   // v69.84 — fixed study field (the spectator's 256/1024/7000 are too big to pool)
         const honeyCapMode = (SpectatorState.setup.honeyCapMode === 'spec') ? 'spec' : 'calibrated';
         const skillCurve = (SpectatorState.setup.skillCurve === 'wide') ? 'wide' : 'standard';
         const baseSeed = 'ui-study-' + Date.now();
