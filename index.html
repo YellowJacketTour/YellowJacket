@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.89-hive-tour-smooth-rating";
+const APP_VERSION = "2026.05.12-v69.91-hive-tour-chunked-glicko-antigame";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5178,6 +5178,20 @@ const Season = {
     skillCurve: 1.0,            // AI skill-curve width multiplier (see makeProfileForSkill)
     honeyCapMode: 'spec',       // 'spec' (÷N) | 'calibrated' (÷stepped) — locked for the run
     cardTour: 0,                // # of Tour cards issued at season end (0 ⇒ universeSize/4)
+    // --- Glicko-2-flavored volatility (a streaky player's rating stays more uncertain) ---
+    volBlend: 0.15,             // EWMA weight on the per-player squared-prediction-error (the volatility estimate)
+    volStartEvents: 6,          // don't track volatility until the rating's settled (else "not converged" looks "erratic")
+    volMin: 0.4, volMax: 2.6,   // clamp on the volatility-scaled process-noise multiplier
+    // --- anti-gaming / anti-inflation ---
+    sofFloorMu: -0.10,          // a field whose mean current rating is below this is a "weak field" ⇒
+    sofFloorWeight: 0.6,        // ...its results carry only this fraction of the normal information weight
+    volumeCapPerWindow: 0,      // ≤ this many events in a `volumeWindow`-event window count at full weight (0 = disabled — it's a stub for a future multi-track real-tour calendar; in the current sequential sim everyone plays everything so it'd nuke everyone)
+    volumeWindow: 7,
+    // --- careers ---
+    offSeasonGap: 2,            // between-season process noise, in "events" (form from last year partly goes stale; vol also relaxes toward 1). ↑ ⇒ less carries over season-to-season
+    // --- multi-criteria Hive Crown eligibility (all must hold; if NO ONE qualifies, the Crown falls to the player with the highest LOWER-confidence-bound rating μ − 1.5·RD — a good-AND-trusted pick, not a fluky-few-events one) ---
+    crownRdCap: 0.40,           // rating deviation must be ≤ this (z-units; ≈ 160 Hive-Rating points) — the number must be confident enough
+    crownMinMajorsFrac: 0.5,    // must have played ≥ this fraction of the season's Majors
   },
 
   // ---- numeric helpers -----------------------------------------------------
@@ -5210,11 +5224,19 @@ const Season = {
   },
   _mkStats() { return { holesPlayed: 0, strokesBetTotal: 0, holesWon: 0, holesLost: 0, holesTied: 0, holesFolded: 0, handCounts: {}, totalScore: 0, matchesWon: 0, matchesLost: 0 }; },
 
-  // ---- the rating filter (Kalman on latent skill, in performance-z units) ---
-  newRating(cfg) { return { mu: 0, P: cfg.P0, events: 0 }; },           // μ = posterior mean (z-units), P = precision = 1/var
+  // ---- the rating filter (Kalman on latent skill, in performance-z units; Glicko-2-flavored volatility) ---
+  newRating(cfg) { return { mu: 0, P: (cfg && cfg.P0) || 0.8, events: 0, vol: 1.0 }; },   // μ = posterior mean (z), P = precision = 1/var, vol = EWMA squared-error (≈1 = typical)
   rdOf(r) { return Math.sqrt(1 / Math.max(1e-9, r.P)); },              // "rating deviation": the ± band, in z-units
-  updateRating(r, z, tau) { const P = r.P + tau; r.mu = (r.P * r.mu + tau * z) / P; r.P = P; r.events++; return r; },
-  driftRating(r, cfg, dt) { r.P = 1 / (1 / r.P + cfg.omega * (dt || 1)); return r; },
+  updateRating(r, z, tau, cfg) {
+    const muPre = r.mu, P = r.P + tau;
+    r.mu = (r.P * r.mu + tau * z) / P; r.P = P; r.events++;
+    if (cfg && r.events >= (cfg.volStartEvents || 6)) { const b = cfg.volBlend || 0.15, e = z - muPre; r.vol = (1 - b) * (r.vol || 1) + b * Math.min(9, e * e); }
+    return r;
+  },
+  driftRating(r, cfg, dt) {                                            // process noise — scaled up for streaky players
+    const f = Math.max((cfg && cfg.volMin) || 0.4, Math.min((cfg && cfg.volMax) || 2.6, 0.5 + 0.5 * (r.vol || 1)));
+    r.P = 1 / (1 / r.P + ((cfg && cfg.omega) || 0.03) * f * (dt || 1)); return r;
+  },
   hiveRating(r) { return Math.round(Math.max(800, Math.min(3200, 2000 + 400 * r.mu))); },   // friendly Elo-ish display number
 
   // ---- build a player universe ---------------------------------------------
@@ -5226,10 +5248,11 @@ const Season = {
         id: i, name: (typeof spectatorMakePlayerName === 'function') ? spectatorMakePlayerName(i) : ('Player #' + (i + 1)),
         skill: skill, profile: makeProfileForSkill(skill, { skillCurve: cfg.skillCurve }),
         rating: this.newRating(cfg), earnings: 0, eventsPlayed: 0, bestFinish: Infinity,
-        cum: 0, stats: this._mkStats(), majorWins: 0, regularWins: 0, jacketWins: 0,
-        _muStart: 0, _muEnd: 0,
+        cum: 0, stats: this._mkStats(), majorWins: 0, regularWins: 0, jacketWins: 0, majorsPlayed: 0,
+        _muStart: 0, _muEnd: 0, _recent: [],
       });
     }
+    U._evtCounter = 0;   // cumulative event index across the universe's lifetime (for the volume cap)
     return U;
   },
 
@@ -5237,10 +5260,11 @@ const Season = {
   // tier ∈ {'regular','major','main'}. Returns { finishers (by raw aggregate),
   // champion, sigma }. The rating update uses the RAW (pre-reset) finishing
   // order — the Main's competitive head-start is applied by the caller, not here.
-  runEvent(field, cfg, tier, prizePool, noCuts) {
+  runEvent(field, cfg, tier, prizePool, noCuts, eventIdx) {
     const holes = (tier === 'main' && +cfg.mainHoles > 0) ? +cfg.mainHoles
       : (tier === 'major' && +cfg.majorHoles > 0) ? +cfg.majorHoles : cfg.holesPerRound;
     const N = field.length, R = Math.max(1, cfg.nRounds || 4);
+    if (tier === 'major') field.forEach(p => { p.majorsPlayed = (p.majorsPlayed || 0) + 1; });
     field.forEach(p => { p.cum = 0; p._cutAfter = R + 1; });            // R+1 ⇒ "made every cut / played the whole event"
     let surviving = field.slice();
     for (let rnd = 1; rnd <= R; rnd++) {
@@ -5280,7 +5304,10 @@ const Season = {
     const fm = fullCums.length ? fullCums.reduce((s, x) => s + x, 0) / fullCums.length : 0;
     const sigmaFull = (fullCums.length > 1) ? (Math.sqrt(fullCums.reduce((s, x) => s + (x - fm) * (x - fm), 0) / (fullCums.length - 1)) || 1) : (sdAll * Math.sqrt(R));
     const fieldMeanMu = field.reduce((s, p) => s + p.rating.mu, 0) / N;
-    const tauEvent = cfg.tau0 * (cfg.prestige[tier] || 1) * Math.sqrt(holes / 72) * Math.sqrt(Math.min(N, 400) / 64);
+    // anti-inflation: a weak field (low mean rating) is a less-trustworthy skill signal ⇒ down-weight it
+    const sofMul = (fieldMeanMu < (cfg.sofFloorMu != null ? cfg.sofFloorMu : -0.10)) ? (cfg.sofFloorWeight || 0.6) : 1.0;
+    const tauEvent = cfg.tau0 * (cfg.prestige[tier] || 1) * Math.sqrt(holes / 72) * Math.sqrt(Math.min(N, 400) / 64) * sofMul;
+    const volCap = (cfg.volumeCapPerWindow | 0), volWin = Math.max(1, cfg.volumeWindow | 0) || 7, ei = (eventIdx == null) ? null : (eventIdx | 0);
     const paid = Math.max(1, Math.round(N * 0.6)); let wSum = 0;
     for (let k = 1; k <= paid; k++) wSum += (paid - k + 1) * (paid - k + 1);
     finishers.forEach((p, idx) => {                                       // idx = official-standing rank → prizes / best-finish
@@ -5289,11 +5316,17 @@ const Season = {
       if (prizePool > 0 && rank <= paid && wSum > 0) p.earnings += prizePool * ((paid - rank + 1) * (paid - rank + 1)) / wSum;
     });
     field.forEach(p => {                                                  // the rating update — smooth performance z, τ ∝ rounds played
+      let volMul = 1.0;
+      if (volCap > 0 && ei != null) {                                     // volume cap (disabled by default — a stub for a future multi-track calendar)
+        if (!Array.isArray(p._recent)) p._recent = [];
+        p._recent.push(ei); while (p._recent.length && (ei - p._recent[0]) >= volWin) p._recent.shift();
+        if (p._recent.length > volCap) volMul = 0.4;
+      }
       const pr = perfRankM.get(p.id);
       const zRank = this._probit(1 - (pr - 0.5) / N);
       const zMargin = (mean - Math.max(loC, Math.min(hiC, prMap.get(p.id)))) / sdAll;
       const zStar = (1 - cfg.marginWeight) * zRank + cfg.marginWeight * zMargin + cfg.fieldStrengthLambda * fieldMeanMu;
-      this.updateRating(p.rating, zStar, tauEvent * (roundsOf(p) / R));
+      this.updateRating(p.rating, zStar, tauEvent * (roundsOf(p) / R) * volMul, cfg);
       p.eventsPlayed++;
     });
     const champion = finishers[0];
@@ -5345,6 +5378,7 @@ const Season = {
     const majorAt = new Set();
     for (let m = 1; m <= cfg.nMajors; m++) majorAt.add(Math.round(m * (totalEvents - 1) / (cfg.nMajors + 1)));
     U.forEach(p => { p._muStart = p.rating.mu; });
+    if (typeof U._evtCounter !== 'number') U._evtCounter = 0;
     const majorWinners = [], regularWinners = []; let evIdx = 0;
     for (let week = 1; week <= cfg.nRegulars + cfg.nMajors; week++) {
       U.forEach(p => this.driftRating(p.rating, cfg, 1));
@@ -5352,7 +5386,7 @@ const Season = {
       const size = isMajor ? cfg.majorField : cfg.regularField;
       const slots = isMajor ? cfg.qualifierSlotsMajor : cfg.qualifierSlotsRegular;
       const field = this._pickField(U, size, slots);
-      const r = this.runEvent(field, cfg, tier, isMajor ? 2.5 : 1.0);
+      const r = this.runEvent(field, cfg, tier, isMajor ? 2.5 : 1.0, false, U._evtCounter++);
       (isMajor ? majorWinners : regularWinners).push(r.champion);
       evIdx++;
     }
@@ -5372,7 +5406,7 @@ const Season = {
     let beta = 0, modeledP = NaN;
     if (cfg.finaleMode === 'calibrated') { const sol = this._solveFinaleBeta(seeded, medMu, cfg); beta = sol.beta; modeledP = sol.p; }
     else if (cfg.finaleMode === 'fixed') { beta = +cfg.finaleBeta || 0; modeledP = this._modelNo1WinProb(seeded, medMu, beta, cfg, 3000); }
-    const mr = this.runEvent(mainField, cfg, 'main', 5.0, noCutMain);     // ratings update off the RAW (pre-head-start) order in here
+    const mr = this.runEvent(mainField, cfg, 'main', 5.0, noCutMain, U._evtCounter++);   // ratings update off the RAW (pre-head-start) order in here
     const sigma = mr.sigma || 1;
     mainField.forEach(p => { p._adj = p.cum - beta * (p.rating.mu - medMu) * sigma; });   // head-start in strokes (β=0 ⇒ _adj = cum)
     const mainFinish = mainField.slice().sort((a, b) => (b._cutAfter - a._cutAfter) || (a._adj - b._adj) || (a.cum - b.cum) || (a.id - b.id));
@@ -5381,8 +5415,16 @@ const Season = {
     U.forEach(p => { p._muEnd = p.rating.mu; });
     // ---- crowns, ranks, diagnostics ----
     const ratedAll = U.slice().sort((a, b) => (b.rating.mu - a.rating.mu) || (a.id - b.id));
-    const eligible = ratedAll.filter(p => p.rating.events >= cfg.minEventsForCrown);
-    const crown = eligible[0] || ratedAll[0];
+    // Multi-criteria Hive Crown eligibility (ALL must hold): enough rated events,
+    // a confident-enough rating (RD ≤ cap), and ≥ a fraction of the season's Majors.
+    const rdCapZ = (cfg.crownRdCap != null) ? cfg.crownRdCap : 0.22;
+    const minMaj = Math.max(0, Math.round((cfg.nMajors || 0) * ((cfg.crownMinMajorsFrac != null) ? cfg.crownMinMajorsFrac : 0.5)));
+    const isCrownEligible = p => (p.rating.events >= cfg.minEventsForCrown) && (this.rdOf(p.rating) <= rdCapZ) && ((p.majorsPlayed || 0) >= minMaj);
+    const eligible = ratedAll.filter(isCrownEligible);
+    const playedEnough = ratedAll.filter(p => p.rating.events >= cfg.minEventsForCrown);   // for cards (volume only)
+    // If no one met the full criteria, the Crown falls to the highest LOWER-confidence-bound rating among those who played enough (μ − 1.5·RD) — good AND trusted, not a fluky-few-events spike.
+    const lcb = p => p.rating.mu - 1.5 * this.rdOf(p.rating);
+    const crown = eligible[0] || playedEnough.slice().sort((a, b) => (lcb(b) - lcb(a)) || (b.rating.mu - a.rating.mu) || (a.id - b.id))[0] || ratedAll[0];
     const bySkill = U.slice().sort((a, b) => b.skill - a.skill);
     const skillRankM = new Map(); bySkill.forEach((p, i) => skillRankM.set(p.id, i + 1));
     const ratingRankM = new Map(); ratedAll.forEach((p, i) => ratingRankM.set(p.id, i + 1));
@@ -5394,17 +5436,26 @@ const Season = {
     const rhoEligible = (eligible.length >= 3) ? this._spearman(eligible.map(p => p.skill), eligible.map(p => p.rating.mu)) : 0;
     const rhoMain = this._spearman(mainFinish.map(p => p.skill), mainFinish.map(p => -(mainRankOf(p.id))));
     const nCards = cfg.cardTour || Math.max(8, Math.round(cfg.universeSize / 4));
-    const tourCardIds = eligible.slice(0, nCards).map(p => p.id);
+    const tourCardIds = playedEnough.slice(0, nCards).map(p => p.id);
     let riser = U[0], faller = U[0];
     U.forEach(p => { if ((p._muEnd - p._muStart) > (riser._muEnd - riser._muStart)) riser = p; if ((p._muEnd - p._muStart) < (faller._muEnd - faller._muStart)) faller = p; });
     const pinfo = p => ({ id: p.id, name: p.name, skill: +p.skill.toFixed(3), skillRank: skillRankM.get(p.id), skillPct: +pct(skillRankM.get(p.id)).toFixed(3) });
     const jacketSeasonRank = ratingRankPreMain.get(jacket.id);
+    // "What I Need" — the top-rated player who just missed Crown eligibility, and why
+    const bubbleP = ratedAll.find(p => !isCrownEligible(p));
+    const bubble = bubbleP ? {
+      name: bubbleP.name, hiveRating: this.hiveRating(bubbleP.rating), ratingRank: ratingRankM.get(bubbleP.id), skillPct: +pct(skillRankM.get(bubbleP.id)).toFixed(3),
+      events: bubbleP.rating.events, needEvents: Math.max(0, cfg.minEventsForCrown - bubbleP.rating.events),
+      majorsPlayed: (bubbleP.majorsPlayed || 0), needMajors: Math.max(0, minMaj - (bubbleP.majorsPlayed || 0)),
+      rd: Math.round(400 * this.rdOf(bubbleP.rating)), rdCap: Math.round(400 * rdCapZ), rdOver: this.rdOf(bubbleP.rating) > rdCapZ,
+    } : null;
     return {
       year: year,
       ratingTop: ratedAll.slice(0, 25).map(p => ({ id: p.id, name: p.name, skill: +p.skill.toFixed(3), skillRank: skillRankM.get(p.id), hiveRating: this.hiveRating(p.rating), rd: Math.round(400 * this.rdOf(p.rating)), events: p.rating.events, earnings: +p.earnings.toFixed(2), bestFinish: p.bestFinish, jacketWins: p.jacketWins, majorWins: p.majorWins })),
-      hiveCrown: Object.assign(pinfo(crown), { hiveRating: this.hiveRating(crown.rating), rd: Math.round(400 * this.rdOf(crown.rating)), events: crown.rating.events, ratingRank: ratingRankM.get(crown.id) }),
+      hiveCrown: Object.assign(pinfo(crown), { hiveRating: this.hiveRating(crown.rating), rd: Math.round(400 * this.rdOf(crown.rating)), vol: +(crown.rating.vol || 1).toFixed(2), events: crown.rating.events, majorsPlayed: (crown.majorsPlayed || 0), ratingRank: ratingRankM.get(crown.id), fullyEligible: isCrownEligible(crown) }),
       yellowJacket: Object.assign(pinfo(jacket), { seasonRatingRank: jacketSeasonRank, mainSeedRank: seeded.findIndex(p => p.id === jacket.id) + 1, wasNo1Seed: seeded[0].id === jacket.id, hiveRating: this.hiveRating(jacket.rating) }),
       majorWinners: majorWinners.map(pinfo),
+      eligibility: { count: eligible.length, ratedCount: U.filter(p => p.rating.events >= 1).length, minEvents: cfg.minEventsForCrown, minMajors: minMaj, rdCap: Math.round(400 * rdCapZ), totalEvents: cfg.nRegulars + cfg.nMajors + 1, bubble: bubble },
       finale: { mode: cfg.finaleMode, beta: +beta.toFixed(3), targetWinProb: +(+cfg.finaleTargetWinProb || 0.3).toFixed(2), modeledNo1WinProb: isFinite(modeledP) ? +modeledP.toFixed(3) : null, no1SeedId: seeded[0].id, no1SeedName: seeded[0].name, no1SeedWonRealized: seeded[0].id === jacket.id ? 1 : 0, mainFieldSize: mainField.length },
       mover: { riser: Object.assign(pinfo(riser), { delta: +(riser._muEnd - riser._muStart).toFixed(3), hiveRating: this.hiveRating(riser.rating) }), faller: Object.assign(pinfo(faller), { delta: +(faller._muEnd - faller._muStart).toFixed(3), hiveRating: this.hiveRating(faller.rating) }) },
       promotion: { nCards: nCards, tourCardIds: tourCardIds },
@@ -5446,6 +5497,11 @@ const Season = {
     cfg.omega = Math.max(0.0005, Math.min(0.3, +cfg.omega || 0.03));    // rating memory: ↓ = longer memory = higher ρ in a static-skill model (but slower to track real form)
     cfg.tau0 = Math.max(0.05, Math.min(20, +cfg.tau0 || 1.0));
     cfg.finaleTargetWinProb = Math.max(0.02, Math.min(0.95, +cfg.finaleTargetWinProb || 0.3));
+    cfg.offSeasonGap = Math.max(0, Math.min(60, (cfg.offSeasonGap != null) ? +cfg.offSeasonGap : 2));
+    cfg.crownRdCap = Math.max(0.02, Math.min(2, +cfg.crownRdCap || 0.40));
+    cfg.crownMinMajorsFrac = Math.max(0, Math.min(1, (cfg.crownMinMajorsFrac != null) ? +cfg.crownMinMajorsFrac : 0.5));
+    cfg.volBlend = Math.max(0, Math.min(0.6, (cfg.volBlend != null) ? +cfg.volBlend : 0.15));
+    cfg.volumeCapPerWindow = Math.max(0, Math.min(50, cfg.volumeCapPerWindow | 0));
     if (['none', 'fixed', 'calibrated'].indexOf(cfg.finaleMode) < 0) cfg.finaleMode = 'none';
     if (cfg.honeyCapMode !== 'calibrated') cfg.honeyCapMode = 'spec';
     return cfg;
@@ -5458,17 +5514,26 @@ const Season = {
     try { return fn(); }
     finally { if (typeof setHoneyCapMode === 'function') setHoneyCapMode(_cap); if (typeof setLoserBogey === 'function') setLoserBogey(_lb); }
   },
+  // Between seasons of a career: extra process noise (last year's form goes stale, OWGR-style) + volatility relaxes toward typical.
+  _offSeason(U, cfg) { const g = (cfg.offSeasonGap != null) ? cfg.offSeasonGap : 12; U.forEach(p => { this.driftRating(p.rating, cfg, g); p.rating.vol = 0.5 * (p.rating.vol || 1) + 0.5; }); },
 
   // ---- public: run a multi-season CAREER (persistent universe) ------------
   runCareer(cfg, seedStr, nSeasons) {
     cfg = this._norm(cfg); nSeasons = Math.max(1, Math.round(+nSeasons || 1));
     seedStr = String(seedStr || ('hive-' + Date.now()));
+    const matchesPerSeason = 1.55 * (cfg.nRegulars * cfg.regularField + cfg.nMajors * cfg.majorField + cfg.mainField);
+    const handBudget = nSeasons * matchesPerSeason * cfg.holesPerRound;
+    if (handBudget > 9e6) {
+      const msg = '"Run a season/career" too large: ≈ ' + (handBudget / 1e6).toFixed(0) + 'M engine hands (cap ≈9M ≈ a minute). Reduce: career seasons (' + nSeasons + '), # Regulars (' + cfg.nRegulars + ') / # Majors (' + cfg.nMajors + '), field sizes (' + cfg.regularField + '/' + cfg.majorField + '/' + cfg.mainField + '), or holes/round. (One season at WSOP-scale fields is fine; a multi-season career at those sizes isn\'t — drop the field sizes for the career view.)';
+      try { console.warn('[Season.runCareer]', msg); } catch (_) {}
+      throw new Error(msg);
+    }
     return this._withEngineEnv(cfg, () => {
       setCashRngSeed(seedStr);
       const seasons = [];
       withCashRng(() => {
         const U = this.makeUniverse(cfg);
-        for (let y = 1; y <= nSeasons; y++) seasons.push(this._runSeasonInner(cfg, U, y));
+        for (let y = 1; y <= nSeasons; y++) { if (y > 1) this._offSeason(U, cfg); seasons.push(this._runSeasonInner(cfg, U, y)); }
         // attach a final-state universe view (for the career leaderboard)
         const finalTop = U.slice().sort((a, b) => (b.rating.mu - a.rating.mu) || (a.id - b.id)).slice(0, 25)
           .map((p, i) => ({ rank: i + 1, id: p.id, name: p.name, skill: +p.skill.toFixed(3), hiveRating: this.hiveRating(p.rating), rd: Math.round(400 * this.rdOf(p.rating)), events: p.rating.events, careerEarnings: +p.earnings.toFixed(2), jacketWins: p.jacketWins, majorWins: p.majorWins, regularWins: p.regularWins }));
@@ -5485,55 +5550,98 @@ const Season = {
     });
   },
 
-  // ---- public: the validation STUDY ------------------------------------------
-  // opts: { s (careers per arm, default 8), careerSeasons (default 1 — set >1 to
-  // measure ρ at the end of a multi-year career, the OWGR-style accumulation),
-  // holesArm:[h1,h2,...] (default [configuredHoles, 18]), + a config (universeSize,
-  // nRegulars, nMajors, regularField, majorField, mainField, skillSpread,
-  // skillCurve, honeyCapMode, finaleMode, finaleTargetWinProb), baseSeed,
-  // includeNoSkill (default true) }. Reports pooled per-arm skill diagnostics at
-  // career-end (+ ρ_season-by-year curve when careerSeasons>1) + a no-skill column.
-  runStudy(opts) {
+  // ---- the validation STUDY as a CHUNKABLE job ------------------------------
+  // makeStudyJob(opts) → { totalTasks, estimatedHands, config, runNextChunk(maxTasks), result(), abort() }
+  // Each "task" = one full K-season career for one arm. Drive it with setTimeout
+  // for a non-freezing UI, or drain it synchronously (that's what runStudy does).
+  // opts: { s (careers per arm, default 8), careerSeasons (default 1 — measures ρ at
+  // the end of a multi-year career), holesArm:[h1,h2,…] (default [configuredHoles, 18]),
+  // + a config (universeSize/nRegulars/nMajors/regular|major|mainField/omega/tau0/
+  // skillSpread/skillCurve/honeyCapMode/finaleMode/finaleTargetWinProb/…), baseSeed,
+  // includeNoSkill (default true) }. Study fields are CAPPED (it measures the rating
+  // mechanism — small fields suffice); the budget cap is generous (chunked, with progress).
+  makeStudyJob(opts) {
     opts = opts || {};
     const s = Math.max(1, Math.round(+opts.s || 8));
     const careerSeasons = Math.max(1, Math.min(40, Math.round(+opts.careerSeasons || 1)));
     const baseCfg = this._norm(opts);
+    const snap8 = n => Math.max(8, 8 * Math.round((+n || 8) / 8));
+    baseCfg.universeSize = Math.min(baseCfg.universeSize, 1024);
+    baseCfg.regularField = snap8(Math.min(baseCfg.regularField, 256, baseCfg.universeSize));
+    baseCfg.majorField   = snap8(Math.min(baseCfg.majorField,   320, baseCfg.universeSize));
+    baseCfg.mainField    = snap8(Math.min(baseCfg.mainField,    384, baseCfg.universeSize));
     let arms = Array.isArray(opts.holesArm) ? opts.holesArm.map(h => Math.max(9, Math.min(216, Math.round(+h || 18)))) : [baseCfg.holesPerRound, 18];
     arms = arms.filter((h, i) => arms.indexOf(h) === i);                     // dedupe
+    const includeNoSkill = (opts.includeNoSkill !== false);
     const baseSeed = String(opts.baseSeed || ('season-study-' + Date.now()));
+    const matchesPerSeason = 1.55 * (baseCfg.nRegulars * baseCfg.regularField + baseCfg.nMajors * baseCfg.majorField + baseCfg.mainField);
+    const handBudget = (arms.length + (includeNoSkill ? 1 : 0)) * s * careerSeasons * matchesPerSeason * Math.max(...arms);
+    if (handBudget > 1.6e8) {
+      const msg = 'Season study too large even chunked: ≈ ' + (handBudget / 1e6).toFixed(0) + 'M engine hands (cap ≈160M). Reduce: seasons/arm (' + s + '), career-seasons (' + careerSeasons + '), # Regulars (' + baseCfg.nRegulars + ')/# Majors (' + baseCfg.nMajors + '), or holes/round.';
+      try { console.warn('[Season.makeStudyJob]', msg); } catch (_) {}
+      throw new Error(msg);
+    }
     const KEYS = ['rhoSeason', 'rhoEligible', 'rhoMain', 'crownSkillPct', 'trueNo1IsCrown', 'top5SkillIsCrown', 'bestPlayerRatingPct', 'jacketSkillPct', 'jacketSeasonPct', 'no1SeedWinsFinale'];
-    const runArm = (holes, spreadOverride) => {
-      const cfg = Object.assign({}, baseCfg, { holesPerRound: holes });
-      if (spreadOverride) cfg.skillSpread = spreadOverride;
-      const acc = {}; KEYS.forEach(k => acc[k] = 0); let betaSum = 0;
-      const rhoYr = new Array(careerSeasons).fill(0);
-      for (let i = 0; i < s; i++) {
-        let lastSeason = null;
-        setCashRngSeed(baseSeed + '/' + holes + (spreadOverride ? '/' + spreadOverride : '') + '/' + i);
-        withCashRng(() => {
-          const U = this.makeUniverse(cfg);
-          for (let y = 1; y <= careerSeasons; y++) { const sr = this._runSeasonInner(cfg, U, y); rhoYr[y - 1] += (+sr.skill.rhoSeason || 0); lastSeason = sr; }
-        });
-        if (!lastSeason) continue;
-        KEYS.forEach(k => acc[k] += (+lastSeason.skill[k] || 0));
-        betaSum += (+lastSeason.finale.beta || 0);
-      }
-      const out = { holesPerRound: holes, totalHoles: holes * (cfg.nRounds || 4), avgFinaleBeta: +(betaSum / s).toFixed(3) };
-      KEYS.forEach(k => out[k] = +(acc[k] / s).toFixed(3));
-      if (careerSeasons > 1) out.rhoByYear = rhoYr.map(v => +(v / s).toFixed(3));
-      return out;
+    const armSpecs = arms.map(h => ({ holes: h, spread: null }));
+    if (includeNoSkill) armSpecs.push({ holes: arms[0], spread: 'flat' });
+    const armAcc = armSpecs.map(() => { const a = {}; KEYS.forEach(k => a[k] = 0); return { acc: a, betaSum: 0, rhoYr: new Array(careerSeasons).fill(0), done: 0 }; });
+    // engine env — set now, restored on completion/abort (the throws below also restore)
+    const _cap = (typeof CurrentHoneyCapMode === 'string') ? CurrentHoneyCapMode : 'spec';
+    const _lb = (typeof CurrentLoserBogey !== 'undefined') ? CurrentLoserBogey : true;
+    let envOn = true;
+    if (typeof setHoneyCapMode === 'function') setHoneyCapMode(baseCfg.honeyCapMode === 'spec' ? 'spec' : 'calibrated');
+    if (typeof setLoserBogey === 'function') setLoserBogey(true);
+    const restoreEnv = () => { if (!envOn) return; envOn = false; try { if (typeof setHoneyCapMode === 'function') setHoneyCapMode(_cap); if (typeof setLoserBogey === 'function') setLoserBogey(_lb); } catch (_) {} };
+    const cfgOut = { s: s, careerSeasons: careerSeasons, holesArm: arms, nRounds: baseCfg.nRounds, nRegulars: baseCfg.nRegulars, nMajors: baseCfg.nMajors, universeSize: baseCfg.universeSize, regularField: baseCfg.regularField, majorField: baseCfg.majorField, mainField: baseCfg.mainField, minEventsForCrown: baseCfg.minEventsForCrown, omega: baseCfg.omega, tau0: baseCfg.tau0, finaleMode: baseCfg.finaleMode, finaleTargetWinProb: baseCfg.finaleTargetWinProb, skillSpread: baseCfg.skillSpread, skillCurve: baseCfg.skillCurve, honeyCapMode: baseCfg.honeyCapMode, offSeasonGap: baseCfg.offSeasonGap, baseSeed: baseSeed };
+    // Step state — we advance one SEASON at a time (so a chunk is ~one season's worth of work, not a whole career).
+    const totalSteps = armSpecs.length * s * careerSeasons;
+    let armI = 0, careerI = 0, seasonI = 0, curU = null, curCfg = null, aborted = false;
+    const stepsDoneNow = () => (armI >= armSpecs.length) ? totalSteps : (armI * s * careerSeasons + careerI * careerSeasons + seasonI);
+    const labelNow = () => (armI >= armSpecs.length) ? 'done' : ('arm ' + (armI + 1) + '/' + armSpecs.length + (armSpecs[armI].spread ? ' (no-skill)' : ' (' + (armSpecs[armI].holes * (baseCfg.nRounds || 4)) + 'h)') + ' · career ' + (careerI + 1) + '/' + s + (careerSeasons > 1 ? ' · season ' + (seasonI + 1) + '/' + careerSeasons : ''));
+    return {
+      totalSteps: totalSteps, totalTasks: armSpecs.length * s, estimatedHands: Math.round(handBudget), config: cfgOut,
+      abort() { aborted = true; restoreEnv(); },
+      runNextChunk(maxSteps) {                                              // run up to maxSteps SEASONS; return {done, stepsDone, totalSteps, label, aborted}
+        if (aborted || envOn === false) return { done: true, aborted: aborted, stepsDone: stepsDoneNow(), totalSteps: totalSteps, label: 'stopped' };
+        const lim = Math.max(1, maxSteps | 0) || 1;
+        for (let r = 0; r < lim && armI < armSpecs.length; r++) {
+          const spec = armSpecs[armI], acc = armAcc[armI];
+          if (seasonI === 0) {                                             // start a new career: fresh seed + universe
+            curCfg = Object.assign({}, baseCfg, { holesPerRound: spec.holes });
+            if (spec.spread) curCfg.skillSpread = spec.spread;
+            setCashRngSeed(baseSeed + '/' + spec.holes + (spec.spread ? '/' + spec.spread : '') + '/' + careerI);
+            curU = withCashRng(() => Season.makeUniverse(curCfg));
+          }
+          let sr = null;
+          withCashRng(() => { if (seasonI > 0) Season._offSeason(curU, curCfg); sr = Season._runSeasonInner(curCfg, curU, seasonI + 1); });
+          if (sr) {
+            acc.rhoYr[seasonI] += (+sr.skill.rhoSeason || 0);
+            if (seasonI === careerSeasons - 1) { KEYS.forEach(k => acc.acc[k] += (+sr.skill[k] || 0)); acc.betaSum += (+sr.finale.beta || 0); acc.done++; }
+          }
+          if (seasonI >= careerSeasons - 1) { seasonI = 0; careerI++; curU = null; if (careerI >= s) { careerI = 0; armI++; } }
+          else seasonI++;
+        }
+        const done = (armI >= armSpecs.length);
+        if (done) restoreEnv();
+        return { done: done, aborted: false, stepsDone: stepsDoneNow(), totalSteps: totalSteps, label: labelNow() };
+      },
+      result() {
+        const mkArm = (ai, holes) => { const acc = armAcc[ai], n = Math.max(1, acc.done); const o = { holesPerRound: holes, totalHoles: holes * (baseCfg.nRounds || 4), avgFinaleBeta: +(acc.betaSum / n).toFixed(3) }; KEYS.forEach(k => o[k] = +(acc.acc[k] / n).toFixed(3)); if (careerSeasons > 1) o.rhoByYear = acc.rhoYr.map(v => +(v / n).toFixed(3)); return o; };
+        const armsOut = arms.map((h, ai) => mkArm(ai, h));
+        const baseline = includeNoSkill ? mkArm(arms.length, arms[0]) : null;
+        return { config: cfgOut, arms: armsOut, noSkill: baseline };
+      },
     };
-    return this._withEngineEnv(baseCfg, () => {
-      const armsOut = arms.map(h => runArm(h));
-      const baseline = (opts.includeNoSkill === false) ? null : runArm(arms[0], 'flat');     // everyone (near-)identical → the "skill irrelevant" reference
-      const out = {
-        config: { s: s, careerSeasons: careerSeasons, holesArm: arms, nRounds: baseCfg.nRounds, nRegulars: baseCfg.nRegulars, nMajors: baseCfg.nMajors, universeSize: baseCfg.universeSize, regularField: baseCfg.regularField, majorField: baseCfg.majorField, mainField: baseCfg.mainField, minEventsForCrown: baseCfg.minEventsForCrown, omega: baseCfg.omega, tau0: baseCfg.tau0, finaleMode: baseCfg.finaleMode, finaleTargetWinProb: baseCfg.finaleTargetWinProb, skillSpread: baseCfg.skillSpread, skillCurve: baseCfg.skillCurve, honeyCapMode: baseCfg.honeyCapMode, baseSeed: baseSeed },
-        arms: armsOut, noSkill: baseline,
-      };
-      try { console.log('[Season.runStudy]', JSON.stringify(out.config)); console.table(armsOut.concat(baseline ? [Object.assign({ holesPerRound: 'no-skill' }, baseline)] : [])); } catch (_) {}
-      console.log('higher↑ = better: rhoSeason, rhoEligible, rhoMain, crownSkillPct, trueNo1IsCrown, top5SkillIsCrown, bestPlayerRatingPct  ·  jacketSeasonPct LOWER = more chaotic (good)  ·  no1SeedWinsFinale ≈ the finale target (calibrated mode)  ·  rhoByYear = ρ_season climbing over a career');
-      return out;
-    });
+  },
+
+  // ---- public: the validation STUDY (synchronous — drains a study job) -------
+  runStudy(opts) {
+    const job = this.makeStudyJob(opts);
+    while (true) { const r = job.runNextChunk(999); if (r.done) break; }
+    const out = job.result();
+    try { console.log('[Season.runStudy]', JSON.stringify(out.config)); console.table(out.arms.concat(out.noSkill ? [Object.assign({ holesPerRound: 'no-skill' }, out.noSkill)] : [])); } catch (_) {}
+    console.log('higher↑ = better: rhoSeason, rhoEligible, rhoMain, crownSkillPct, trueNo1IsCrown, top5SkillIsCrown, bestPlayerRatingPct  ·  jacketSeasonPct LOWER = more chaotic (good)  ·  no1SeedWinsFinale ≈ the finale target (calibrated mode)  ·  rhoByYear = ρ_season climbing over a career');
+    return out;
   },
 };
 // Console aliases (for devtools sweeps): runHiveSeasonStudy(opts), runHiveCareer(cfg, seed, nSeasons)
@@ -5592,11 +5700,18 @@ function renderSeasonRunCard(out) {
     el('div', { style: 'font-size:10px; opacity:0.8; margin-top:2px;', text: 'skill ' + pc(last.yellowJacket.skillPct) + 'ile · season rating rank #' + last.yellowJacket.seasonRatingRank + ' · was the #' + last.yellowJacket.mainSeedRank + ' seed' + (last.yellowJacket.wasNo1Seed ? ' (the top seed!)' : '') })));
   crownRow.appendChild(el('div', { style: 'flex:1 1 260px; padding:9px 11px; border-radius:6px; background:rgba(120,180,255,0.10); border:1px solid rgba(120,180,255,0.28);' },
     el('div', { style: 'font-size:9.5px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; margin-bottom:2px;', text: '👑 The Hive Crown  ·  season #1 (skill title)' }),
-    el('div', { style: 'font-size:13px; font-weight:700; color:#9CC6FF;', text: last.hiveCrown.name }),
-    el('div', { style: 'font-size:10px; opacity:0.8; margin-top:2px;', text: 'Hive Rating ' + last.hiveCrown.hiveRating + ' ±' + last.hiveCrown.rd + ' · skill ' + pc(last.hiveCrown.skillPct) + 'ile (true skill rank #' + last.hiveCrown.skillRank + ') · ' + last.hiveCrown.events + ' events' })));
+    el('div', { style: 'font-size:13px; font-weight:700; color:#9CC6FF;', text: last.hiveCrown.name + (last.hiveCrown.fullyEligible === false ? '  (provisional)' : '') }),
+    el('div', { style: 'font-size:10px; opacity:0.8; margin-top:2px;', text: 'Hive Rating ' + last.hiveCrown.hiveRating + ' ±' + last.hiveCrown.rd + ' · skill ' + pc(last.hiveCrown.skillPct) + 'ile (true #' + last.hiveCrown.skillRank + ') · ' + last.hiveCrown.events + ' events · ' + (last.hiveCrown.majorsPlayed || 0) + ' Majors · form ' + ((+last.hiveCrown.vol || 1) <= 0.85 ? 'steady' : (+last.hiveCrown.vol || 1) >= 1.4 ? 'streaky' : 'normal') + ' (vol ' + (+last.hiveCrown.vol || 1).toFixed(2) + ')' })));
   wrap.appendChild(crownRow);
   // majors line
   if (last.majorWinners && last.majorWinners.length) wrap.appendChild(el('div', { style: 'font-size:10px; opacity:0.75; margin-bottom:8px;', text: '🏆 Majors: ' + last.majorWinners.map(w => w.name + ' (' + pc(w.skillPct) + 'ile)').join('  ·  ') }));
+  // eligibility / "What I Need"
+  if (last.eligibility) {
+    const e = last.eligibility, b = e.bubble;
+    wrap.appendChild(el('div', { style: 'font-size:9.5px; opacity:0.65; margin-bottom:8px; line-height:1.45;', text:
+      '🎟 Crown-eligible: ' + e.count + ' of ' + e.ratedCount + ' rated players (need ≥ ' + e.minEvents + ' of ' + e.totalEvents + ' events, ≥ ' + e.minMajors + ' Majors, RD ≤ ' + e.rdCap + ')'
+      + (b ? '  ·  on the bubble: ' + b.name + ' (rated #' + b.ratingRank + ', skill ' + pc(b.skillPct) + 'ile) — needs ' + (b.needEvents > 0 ? b.needEvents + ' more event' + (b.needEvents === 1 ? '' : 's') : (b.needMajors > 0 ? b.needMajors + ' more Major' + (b.needMajors === 1 ? '' : 's') : (b.rdOver ? 'a tighter rating (RD ' + b.rd + ' → ' + b.rdCap + ' — keep playing)' : 'nothing — should be in'))) : '') }));
+  }
   // finale line
   if (last.finale) wrap.appendChild(el('div', { style: 'font-size:9.5px; opacity:0.6; margin-bottom:8px; font-style:italic;', text:
     (last.finale.mode === 'none'
@@ -16736,7 +16851,7 @@ const SpectatorState = {
   feedLog: [],                             // complete broadcast log for the exported CSV/JSON (uncapped up to a memory ceiling) — v69.75
   logSeen: {},                             // tableId -> last h.log index harvested
   bracketStudy: { n: 100, holes: 18, running: false, phase: null, result: null, history: [] },   // v69.79/80/86 — offline skill-seeded-vs-random bracket A/B (Spectator UI); `holes` = holes/round for the sweep; history holds the last ~25 runs for pooling + CSV export
-  seasonStudy: { holes: 18, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', finaleM: 'none', omega: 0.03, studyS: 6, careerYrs: 1, running: false, phase: null, lastRun: null, lastStudy: null, history: [] },   // v69.87/88 — The Hive Tour season engine (Spectator UI)
+  seasonStudy: { holes: 18, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', finaleM: 'none', omega: 0.03, studyS: 6, careerYrs: 1, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [] },   // v69.87+ — The Hive Tour season engine (Spectator UI)
   scoreboard: { zoom: 1.0 },               // v69.81 — Live Scoreboard (golf-scorecard grid) view state
   scorecardOpen: false,                    // v69.46 — featured panel toggle (felt ↔ full scorecard) for liveTourney
   // Setup form state (persisted across view re-renders)
@@ -20529,7 +20644,7 @@ Views.spectator = function() {
     const seasonCard = el('div', { class: 'card', style: 'padding:14px; margin-bottom:14px;' });
     seasonCard.appendChild(el('h2', { text: '🏆 The Hive Tour  ·  season engine', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
     seasonCard.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.65; line-height:1.5; margin-bottom:10px;', text:
-      'A full season (or career) as a measurement instrument for skill. Each event is the v69.84 golf-major (R1 free, ~50% cut after R2 & R3, lowest 4-round total wins, golf-true cut tiers); a Kalman/Glicko-style filter folds every event\'s field-relative performance into a "Hive Rating" with precision weighted by event tier × √holes × √field-size, plus process noise between events (form fades — so a career accumulates like the OWGR 2-year window). The Main Event closes the season. Two crowns: the Yellow Jacket (Main winner — chaotic) and the Hive Crown (season #1 rating — the skill title). NOTE: with ~18-hole rounds the per-event skill signal is weak, so a single season caps ρ_season ≈ 0.2–0.3 — push "career seasons" up (the rating accumulates) and/or "holes/round" up to drive it toward 0.7. Run a season/career, or the validation study (your holes vs the classic 18, optionally over an N-season career, + a no-skill reference). Uses the left-panel honey-cap + AI-curve.' }));
+      'A full season (or career) as a measurement instrument for skill. Each event is the v69.84 golf-major (R1 free, ~50% cut after R2 & R3, lowest 4-round total wins, golf-true cut tiers); a Kalman/Glicko-style filter folds every event\'s field-relative performance into a "Hive Rating" (precision ∝ tier × √holes × √field × rounds-played; the rating uses a smooth cut-blind performance order so a strong-but-cut player still measures well), plus process noise between events (form fades — so a career accumulates like the OWGR 2-year window). The Main Event closes the season. Two crowns: the Yellow Jacket (Main winner — chaotic) and the Hive Crown (season #1 rating — the skill title). With ~18-hole rounds the per-event skill signal is weak, so push "career seasons" / lower ω / longer "holes/round" to drive ρ_season up. ⚠ The STUDY caps fields (it measures the rating mechanism — small fields suffice; WSOP-scale fields just freeze the tab and add nothing) and refuses anything over ~12M engine-hands — those big 256/1024/7000 sizes are for "Run a season". Run a season/career, or the validation study (your holes vs the classic 18, optionally over an N-season career, + a no-skill reference). Uses the left-panel honey-cap + AI-curve.' }));
     const mkNum = (label, key, min, max, step, w) => {
       const box = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
       box.appendChild(el('span', { style: 'font-size:9px; opacity:0.6;', text: label }));
@@ -20574,13 +20689,19 @@ Views.spectator = function() {
       skillCurve: (typeof spectatorCurveMul === 'function') ? spectatorCurveMul() : 1,
       honeyCapMode: (SpectatorState.setup && SpectatorState.setup.honeyCapMode === 'spec') ? 'spec' : 'calibrated',
     });
-    if (ss.running) {
-      seasonCard.appendChild(el('div', { style: 'padding:10px 12px; border-radius:5px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.28); font-size:12px; color:#F0C75E;', text: '⏳ ' + (ss.phase || 'Running…') + '  (the tab is unresponsive while this runs)' }));
+    if (ss.running && ss.studyJob) {
+      // chunked study in progress — live progress + a Stop button (the tab stays responsive)
+      const prog = el('div', { 'data-season-progress': '1', style: 'padding:10px 12px; border-radius:5px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.28); font-size:12px; color:#F0C75E; flex:1 1 320px;', text: '⏳ Season study — ' + (ss.studyProgress ? (ss.studyProgress.done + '/' + ss.studyProgress.total + ' · ' + ss.studyProgress.label) : 'starting…') + '  ·  ≈ ' + ((ss.studyJob.estimatedHands || 0) / 1e6).toFixed(0) + 'M hands' });
+      const stopBtn = el('button', { class: 'btn ghost', style: 'font-size:11px;', text: '⏹ Stop' });
+      stopBtn.onclick = () => { try { if (ss.studyJob) ss.studyJob.abort(); } catch (_) {} };
+      seasonCard.appendChild(el('div', { style: 'display:flex; gap:8px; align-items:center; flex-wrap:wrap;' }, prog, stopBtn));
+    } else if (ss.running) {
+      seasonCard.appendChild(el('div', { style: 'padding:10px 12px; border-radius:5px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.28); font-size:12px; color:#F0C75E;', text: '⏳ ' + (ss.phase || 'Running…') + '  (this one runs synchronously — the tab pauses while it does)' }));
     } else {
       const btnRow = el('div', { style: 'display:flex; gap:8px; flex-wrap:wrap; align-items:center;' });
       const runBtn = el('button', { class: 'btn gold', style: 'font-size:11px;', text: (ss.nSeasons > 1 ? ('▶ Run ' + (ss.nSeasons | 0) + '-season career') : '▶ Run a season') });
       runBtn.onclick = () => {
-        ss.running = true; ss.phase = (ss.nSeasons > 1 ? 'Simulating a ' + (ss.nSeasons | 0) + '-season career…' : 'Simulating a season…'); ss.lastRun = null;
+        ss.running = true; ss.studyJob = null; ss.phase = (ss.nSeasons > 1 ? 'Simulating a ' + (ss.nSeasons | 0) + '-season career…' : 'Simulating a season…'); ss.lastRun = null;
         Views.spectator();
         setTimeout(() => {
           try { ss.lastRun = Season.runCareer(buildCfg(), 'hive-' + Date.now(), ss.nSeasons | 0); }
@@ -20589,19 +20710,35 @@ Views.spectator = function() {
         }, 60);
       };
       btnRow.appendChild(runBtn);
-      const studyBtn = el('button', { class: 'btn gold', style: 'font-size:11px;', text: '🔬 Run study  (' + (ss.studyS | 0) + (ss.careerYrs > 1 ? '×' + (ss.careerYrs | 0) + 'yr careers' : ' seasons') + '/arm · {' + (ss.holes | 0) + 'h' + ((ss.holes | 0) === 18 ? '' : ' vs 18h') + '})' });
+      const studyBtn = el('button', { class: 'btn gold', style: 'font-size:11px;', text: '🔬 Run study  (' + (ss.studyS | 0) + (ss.careerYrs > 1 ? '×' + (ss.careerYrs | 0) + 'yr careers' : ' seasons') + '/arm · {' + (ss.holes | 0) + 'h' + ((ss.holes | 0) === 18 ? '' : ' vs 18h') + '})  ▸ chunked' });
       studyBtn.onclick = () => {
         const S = ss.studyS | 0, holesA = ss.holes | 0, K = ss.careerYrs | 0;
-        ss.running = true; ss.phase = 'Season study — ' + S + (K > 1 ? '×' + K + '-season careers' : ' seasons') + ' × ' + (holesA === 18 ? '1 arm (18h)' : '2 arms (' + holesA + 'h, 18h)') + ' + a no-skill reference…'; ss.lastStudy = null;
+        let job = null;
+        try { job = Season.makeStudyJob(Object.assign(buildCfg(), { s: S, careerSeasons: K, holesArm: [holesA, 18], baseSeed: 'ui-season-' + Date.now() })); }
+        catch (e) { ss.running = false; ss.studyJob = null; ss.phase = 'Error: ' + (e && e.message ? e.message : e); ss.lastStudy = null; Views.spectator(); /* show the error where lastRun-error shows? just alert too */ alert(e && e.message ? e.message : e); return; }
+        ss.running = true; ss.studyJob = job; ss.studyProgress = { done: 0, total: job.totalSteps, label: 'starting…' }; ss.lastStudy = null;
         Views.spectator();
-        setTimeout(() => {
-          let out = null;
-          try { out = Season.runStudy(Object.assign(buildCfg(), { s: S, careerSeasons: K, holesArm: [holesA, 18], baseSeed: 'ui-season-' + Date.now() })); }
-          catch (e) { ss.running = false; ss.phase = 'Error: ' + (e && e.message ? e.message : e); Views.spectator(); return; }
-          ss.lastStudy = out;
-          ss.history = [out].concat((ss.history || []).slice(0, 19));
-          ss.running = false; ss.phase = null; Views.spectator();
-        }, 60);
+        // chunked driver: one+ season(s) per tick, adaptive to ~280ms/tick, yields to the browser between ticks
+        let chunk = 1;
+        const tick = () => {
+          if (!ss.studyJob || ss.studyJob !== job) { return; }   // a new study/run superseded this one
+          const t0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+          let r;
+          try { r = job.runNextChunk(chunk); }
+          catch (e) { try { job.abort(); } catch (_) {} ss.studyJob = null; ss.running = false; ss.phase = 'Error: ' + (e && e.message ? e.message : e); Views.spectator(); return; }
+          const dt = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) - t0;
+          chunk = Math.max(1, Math.min(48, Math.round(chunk * 280 / Math.max(8, dt))));
+          ss.studyProgress = { done: Math.min(r.stepsDone, r.totalSteps), total: r.totalSteps, label: r.label };
+          try { const pe = $('[data-season-progress]'); if (pe) pe.textContent = '⏳ ' + (r.aborted ? 'Stopping…' : ('Season study — ' + ss.studyProgress.done + '/' + ss.studyProgress.total + ' season-steps · ' + r.label)) + '  ·  ≈ ' + ((job.estimatedHands || 0) / 1e6).toFixed(0) + 'M hands'; } catch (_) {}
+          if (r.done || r.aborted) {
+            const wasAborted = !!r.aborted;
+            try { if (!wasAborted) { ss.lastStudy = job.result(); if (ss.lastStudy) ss.history = [ss.lastStudy].concat((ss.history || []).slice(0, 19)); } } catch (_) {}
+            ss.studyJob = null; ss.running = false; ss.studyProgress = null; ss.phase = null;
+            Views.spectator(); return;
+          }
+          setTimeout(tick, 0);
+        };
+        setTimeout(tick, 30);
       };
       btnRow.appendChild(studyBtn);
       if (ss.history.length) {
@@ -20617,7 +20754,7 @@ Views.spectator = function() {
         };
         btnRow.appendChild(csvBtn);
       }
-      btnRow.appendChild(el('span', { style: 'font-size:9px; opacity:0.5;', text: '· small fields ≈ a few seconds; big fields × long rounds × many seasons can freeze the tab a while' }));
+      btnRow.appendChild(el('span', { style: 'font-size:9px; opacity:0.5;', text: '· the study runs chunked (responsive, with progress + Stop) and caps its fields; "Run a season" runs synchronously and allows WSOP-scale fields (one season ≈ a few s; multi-season careers at big fields are refused — drop the fields)' }));
       seasonCard.appendChild(btnRow);
     }
     if (ss.lastRun) { try { seasonCard.appendChild(renderSeasonRunCard(ss.lastRun)); } catch (e) { seasonCard.appendChild(el('div', { style: 'color:#E08070; font-size:11px;', text: 'season render error: ' + (e && e.message ? e.message : e) })); } }
