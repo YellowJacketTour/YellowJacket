@@ -11,12 +11,23 @@ desktop.ini
 
 # Sensitive (do not commit)
 IP/executed-NDAs/
-IP/registrations/
 IP/trademark-applications/
-IP/trademark-search/
 IP/infringement-watch/
 audit-data/
 *.csv
 *.xlsx
 secrets.*
 .env
+
+# Build artifacts (zips at the repo root from filing-bundle creation)
+/*.zip
+# But DO commit zips inside IP/registrations/ (those are evidentiary
+# copies of deposit files for filed copyright registrations)
+!IP/registrations/*.zip
+
+# Note: IP/registrations/ and IP/trademark-search/ are now COMMITTED
+# (changed from earlier ignore policy). These directories hold
+# evidentiary records of filings (case numbers, deposit copies, search
+# results) that benefit from version control + offline backup. Sensitive
+# personal-document collections (executed NDAs, trademark applications
+# with attorney WIP) remain ignored above.

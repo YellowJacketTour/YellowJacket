@@ -12,24 +12,19 @@
 # Mixed-Games Extension to the Yellow Jacket Tour
 ## Design Specification, Calibration Plan, and Open-Questions Register
 
-**Document version:** 0.2 (pre-implementation draft, audit-revised)
-**Build target:** YJT v70 (extension of v69.25)
-**Status:** Design specification only. No code in `index.html` is changed by this document. The PLO module described in Part II is implementation-ready; lowball variants in Part III are framework-only and require evaluator development.
+**Document version:** 1.0
+**Author of record:** Dalton Graham
+**Owning entity:** Blank Canvas, Inc. (Wyoming)
+**Date:** 2026-05-02
+**Status:** Design specification for the mixed-games extension of the Yellow Jacket Tour rule system. Describes the full extension framework: Pot-Limit Omaha is implementation-ready; lowball variants (Razz, 2-7 Triple Draw, Badugi) and Big O are framework-only and require evaluator development.
 
 **Audience:** Engineering reviewers, poker subject-matter experts (cash game and tournament professionals), academic reviewers of skill-vs-luck systems, and actuarial reviewers of variance compression and calibration claims.
-
-**Changes from v0.1 (audit-revised):**
-1. §10 — Schemas A and B replaced with a single Hybrid Schema C (percentile-aligned buckets with conventional labels).
-2. §14 — Lowball Bogey-Loss compatibility resolved with an Adaptive percentile rule (70th-percentile cutoff, parameterised) rather than two open design options.
-3. §7 and §18 — Calibration bands tightened, with bootstrap 95% CI requirements and explicit upper as well as lower rejection thresholds.
-4. §20 — New section: Variant Calibration Mode as a first-class simulator feature for per-variant parameter sweeps.
-5. Appendix C — Restructured into Tier 1 (established) and Tier 2 (measured but unverified) frequency tables, with measured 1M-hand Monte Carlo numbers and explicit verification status per row.
 
 ---
 
 ## Abstract
 
-The Yellow Jacket Tour (YJ) is a single-file browser-based hybrid of heads-up Texas Hold'em and tournament golf, built on a scoring law called Honey-Stroke. Each hand of poker becomes one hole on a golf scorecard via two parallel layers: (1) a bounded per-hole golf score derived from the showdown hand class, range −5 to +2; and (2) a per-hole honey pot whose net imbalance is divided by a round-length divisor and subtracted from the scorecard. The scoring law and its calibration are described in `RULES.md` and `README.md`; the audit suite confirming skill expression metrics (Spearman rank correlation between authored skill and empirical performance ≈ 0.49 at v69.24, see audit data Run_1_Y1_Y100) is shipped alongside the build.
+The Yellow Jacket Tour (YJ) is a browser-based hybrid of heads-up Texas Hold'em and tournament golf, built on a scoring law called Honey-Stroke. Each hand of poker becomes one hole on a golf scorecard via two parallel layers: (1) a bounded per-hole golf score derived from the showdown hand class, range −5 to +2; and (2) a per-hole honey pot whose net imbalance is divided by a round-length divisor and subtracted from the scorecard. The scoring law and its calibration are described in `RULES.md` and `README.md`; an audit suite confirming skill expression metrics is shipped alongside the build.
 
 This document specifies how to extend the YJ engine to support mixed-poker variants — Pot-Limit Omaha, 7-Card Stud, Razz, 2-7 Triple Draw, Badugi, Big O — while preserving (or, where preservation is not possible, transparently re-calibrating) the audit metrics that establish skill expression.
 
@@ -37,10 +32,31 @@ The document treats engine reuse as **necessary but not sufficient.** Each new v
 
 ---
 
+## Note on Brand Lexicon (for engineering reviewers)
+
+This specification uses standard poker terminology (preflop / flop / turn / river / showdown) throughout for technical clarity, because the engineering work described herein operates at the engine layer where those terms are the canonical enum values.
+
+The product surface above the engine uses a **proprietary eight-beat lexicon** that the reader should be aware of when correlating this spec with the build's user-facing copy:
+
+| Engine term | Product beat (state) | Product beat (action) |
+|-------------|---------------------|------------------------|
+| preflop (deal + bet combined) | — | **Tea Box** |
+| flop (deal) | **The Fairway** | — |
+| flop (bet) | — | **The Lay-Up** |
+| turn (deal) | **The Hazard** | — |
+| turn (bet) | — | **The Approach** |
+| river (deal) | **The Green** | — |
+| river (bet) | — | **The Putt** |
+| showdown | **The Cup** | — |
+
+The eight-beat structure alternates state (where the cards / ball are) with action (the next bet) in real-golf order. It is documented as a proprietary brand suite in `IP/IP_INVENTORY.md` §2.3 and `IP/LEXICON.md`. When this spec is implemented, all user-facing strings must use the product beats; engine internals remain on the engine terms above. The mixed-game variants in this spec (PLO, Razz, 2-7 Triple Draw, Badugi, Stud, Big O, Stud Hi-Lo) inherit the same eight-beat structure where the underlying poker variant has matching betting rounds; deviations (e.g., Stud's bring-in mechanic, draw games' draw events) are noted in their respective sections.
+
+---
+
 ## Table of Contents
 
 - [Part I — Foundation](#part-i--foundation)
-  - [1. Invariants Inherited from v69.25](#1-invariants-inherited-from-v6925)
+  - [1. Core Invariants](#1-core-invariants)
   - [2. Distinction Between Engine Reuse and Calibration Transfer](#2-distinction-between-engine-reuse-and-calibration-transfer)
 - [Part II — Pot-Limit Omaha (Production-Ready Specification)](#part-ii--pot-limit-omaha-production-ready-specification)
   - [3. PLO Rules](#3-plo-rules)
@@ -77,21 +93,21 @@ The document treats engine reuse as **necessary but not sufficient.** Each new v
 
 # Part I — Foundation
 
-## 1. Invariants Inherited from v69.25
+## 1. Core Invariants
 
 The following YJ engine components are **invariants** that the mixed-games extension does not modify:
 
 1. **Per-hole golf scorecard** with hand-class buckets in the integer range [−5, +2]. The 16-row mapping (including premium-kicker buckets) is defined in `RULES.md` §7. This mapping is preserved unchanged for all high-only variants (Hold'em, PLO, 7-Card Stud, Big O Hi side, Short Deck).
 
-2. **Honey wagering primitive** in tournament events: agreed-total scalar proposals with progressive 25 / 50 / 75 / 100% street unlock against per-event stroke caps. Cash tables use matched-contribution wagering.
+2. **Honey wagering primitive** in tournament events: agreed-total scalar proposals bounded per hole by the hole envelope E (default 3 — each player may wager up to E strokes' worth of Honey per hole, `effectiveCap = round(E × honeyCap)`) and per betting beat by pot-elastic K (default 5 — each beat's cap is K times the Honey already agreed into the pot, hard-ceilinged at 3× the hole envelope). The legacy per-tier stroke caps (Regular 6 / Major 9 / Main-early 8 / Main-finals 18) survive only as the E = 0 fallback. Cash tables use matched-contribution wagering.
 
-3. **Round-length divisor table** {1, 4, 9, 36} for round lengths {1, 9, 18, 72} holes. Net honey divided by divisor exactly once at round end, subtracted from cumulative scorecard.
+3. **Round-end honey-cap reconciliation.** At each round end, that round's net honey is divided by the **honey cap** and subtracted from the round's scorecard. The honey cap has two selectable modes: `calibrated` (the ship default — stepped table {1, 4, 9, 36} for round lengths {1, 9, 18, 72} holes) and `spec` (the v23 design-intent mode — the divisor is the round's hole count N).
 
 4. **Carry-forward on tied showdowns** at the per-hand level. The full honey pot rolls to the next hole's mandatory opener.
 
-5. **Dual scoring variants**: Yellow Jacket (decisive-showdown loser posts +1 bogey, fixed) and Bumblebee (decisive-showdown loser posts their own hand's golf score). Folds and ties resolve identically in both variants.
+5. **Dual scoring variants**: Yellow Jacket — a decisive-showdown loser climbs a single monotone **loser ladder** of four named rungs: **Next Best** (straight+ keeps its own −5…−1 — "coolered"), **Take a Stroke** (pair/2P/trips → +1 bogey), **Lay a Brick** (high card checked through to the opener → +1), **Stack Bricks** (high card bet into a pot ≥ 2× the opener → +2, "the blow-up"; rungs 3–4 are the pot-gated rule `1 + ⌊(T−opener)/opener⌋`, capped). A fold sits off the ladder — "put me down for 1": always +1, never +2. Ordering: *Next Best (−5…−1) < {Take a Stroke, Lay a Brick} (+1) < Stack Bricks (+2…+C)*. And Bumblebee — a decisive loser always posts their own hand's golf score, no ladder. Folds and ties resolve identically in both variants. (The pot-gated brick sub-rule is v69.68's ship default and is configurable; see `RULES.md` §3.9, and the full per-hand outcome matrix in `RULES.md` §7.)
 
-6. **Tournament structure**: aggregate stroke play (default) or bracket knockout (alternative), with cushion + cut elimination, satellite ladder, exemption windows. Multi-way table support (4 / 6 / 9 players) in early rounds, collapsing to heads-up final.
+6. **Tournament structure**: aggregate stroke play (default) or bracket knockout (alternative), with cushion + cut elimination, satellite ladder, exemption windows. Multi-way table support (4 / 6 / 9 players in rounds R1–R3, collapsing to a heads-up final at R4) is **live in the aggregate-stroke-play format** — selecting a table size above HU routes events through the multi-way matched-contribution runner (matched-contribution wagering, per-table-size cap scaling, fold-discipline-slack tightening, opener doubling at N > 6, default loser rule = Bumblebee via `multiwayVariant`). The bracket-knockout format remains heads-up. This mixed-games extension can build on the multi-way runner as a live capability.
 
 7. **Audit suite**: a fixed battery of metrics — skillSpearman, skillEVSpearman_nonMain, authoredVsMeasuredSkill, tier ROI separation (all-events and ex-Main), finalsSkillEdge per event type, champion-score percentile distribution, equity-bucket fold-rate distribution, true fold cost histogram, bluff-read suppression by readingDepth — measured against a 1,000-player pool over 100 simulated seasons.
 
@@ -121,7 +137,7 @@ Therefore, this specification treats each new variant as a **research project re
 
 ## 3. PLO Rules
 
-PLO uses the same five community streets as Hold'em (Tea Box / Drive / Hazard / Putt / The Cup, internally `preflop` / `flop` / `turn` / `river` / `showdown`). The two rules that differ from Hold'em:
+PLO uses the same five community streets as Hold'em (Tea Box / The Fairway / The Hazard / The Green / The Cup, internally `preflop` / `flop` / `turn` / `river` / `showdown`). The two rules that differ from Hold'em:
 
 **Rule P1 (Hole Card Count).** Each player is dealt **four** hole cards (vs two in Hold'em).
 
@@ -166,7 +182,7 @@ For each of the 60 combinations, evaluate the resulting 5-card hand using a 5-ca
 2. **Use a flop-board ranking precomputation.** When the board is fixed, a 4-hole evaluator becomes "evaluate the best 5 from 4 hole + (one of 10 fixed board triples)" — a 6-combination enumeration over the hole pairs.
 3. **Hand-class bucketing.** For audit purposes (frequency tables) the per-hand category is sufficient; the full kicker evaluation is needed only for cross-player comparison at decisive showdowns.
 
-For the v70 first pass we recommend the unoptimized enumeration. Profile and optimize only if simulator throughput drops below the v69.25 baseline (~2,500 events/sec on reference hardware).
+For the first implementation pass we recommend the unoptimized enumeration. Profile and optimize only if simulator throughput drops below the the canonical-build baseline (~2,500 events/sec on reference hardware).
 
 ## 5. PLO Equity-Distribution Considerations
 
@@ -183,7 +199,7 @@ This last point has direct consequences for the YJ scoring mapping.
 | Hand class | Hold'em (random 7-card) | PLO (best of 60 from 4-hole + 5-board) |
 |------------|-------------------------|----------------------------------------|
 | High card | 17.4% | <0.5% |
-| One pair  | 43.0% | ~7% |
+| One pair  | 43.8% | ~7% |
 | Two pair  | 23.5% | ~28% |
 | Three of a kind | 4.83% | ~12% |
 | Straight  | 4.62% | ~25% |
@@ -215,7 +231,7 @@ The hand-class distribution shift discussed in §5 will redistribute mass across
 
 The audit suite must be re-run on PLO. The following are **falsifiable predictions** to be tested, not claims:
 
-| Metric | Hold'em baseline (v69.24, 1k pool, 100 seasons) | PLO hypothesis | Concern if violated |
+| Metric | Hold'em baseline (1k pool, 100 seasons) | PLO hypothesis | Concern if violated |
 |--------|------------------------------------------------|----------------|---------------------|
 | skillSpearman | 0.4872 | 0.42 – 0.52 | Below 0.42 → skill compression; below 0.35 → reject PLO calibration |
 | skillEVSpearman_nonMain | 0.0356 | 0.03 – 0.08 | Negative or near-zero → AI optima don't transfer |
@@ -225,7 +241,7 @@ The audit suite must be re-run on PLO. The following are **falsifiable predictio
 | belowParRate (Major) | 24.1% | 65% – 85% | <60% → champions not capitalising on equity edge |
 | ITM rate | 13.6% | 13% – 16% | Should be invariant under payout structure unchanged |
 
-The bands above are tighter than v0.1's exploratory bounds. They reflect the smaller measurement uncertainty achievable with 100-season runs (1k pool) and bootstrap 95% confidence intervals on the audit metrics; rejection thresholds are set at roughly 2σ deviations from the band centres rather than at qualitative cliffs.
+The bands above are tighter than earlier exploratory bounds. They reflect the smaller measurement uncertainty achievable with 100-season runs (1k pool) and bootstrap 95% confidence intervals on the audit metrics; rejection thresholds are set at roughly 2σ deviations from the band centres rather than at qualitative cliffs.
 
 **The shape of these hypotheses matters as much as the numbers.** If PLO reproduces all the *qualitative* signatures of YJ skill expression (positive Spearman, positive authoredVsMeasured, monotone tier ROI ordering with Elite > Bottom) at *quantitatively* different absolute levels, the variant is shipping-viable and the absolute levels just establish PLO's own benchmark band. If any *qualitative* signature inverts (e.g., authoredVsMeasured goes negative), the variant requires redesign, not just re-tuning.
 
@@ -264,7 +280,7 @@ The bands above are tighter than v0.1's exploratory bounds. They reflect the sma
 
 **Total estimate: 650–950 lines, plus 1–4 days of calibration iteration depending on whether the Hypotheses §7 hold first-pass or require AI re-tuning.**
 
-This is a single sprint of work for one engineer, plus calibration time. It is approximately 4–6× larger than the original Grok proposal claimed and approximately one-tenth the size of a from-scratch poker engine.
+This is a focused engineering effort for one developer, plus calibration time. It is approximately one-tenth the size of a from-scratch poker engine.
 
 ---
 
@@ -370,7 +386,7 @@ Generic pseudocode for the Schema C bucket mapper is given in Appendix B.
 
 ## 14. Bogey-Loss Compatibility with Continuous Strength
 
-The Yellow Jacket variant's Bogey-Loss rule (decisive-showdown loser posts +1 bogey, fixed) was calibrated for Hold'em's 16-bucket categorical hand-strength distribution. It serves to align showdown-loss cost with fold-loss cost (both are +1 bogey), creating the equity-cost structure that drives YJ's "fold tighter than poker, call wider than poker" strategic profile.
+The Yellow Jacket variant's Bogey-Loss rule (decisive-showdown loser posts +1 bogey by default, with two carve-outs in the live Hold'em rule — a "respected loss" of the loser's own −5..−1 if their hand was a straight or better, and the pot-gated brick sub-rule that scales a high-card loss to +2 when bet into the pot; see `RULES.md` §3.9) was calibrated for Hold'em's 16-bucket categorical hand-strength distribution. Its core (+1 = the fold cost) aligns showdown-loss cost with fold-loss cost, creating the equity-cost structure that drives YJ's "fold tighter than poker, call wider than poker" strategic profile; the pot-gating extends that alignment to pot size.
 
 In continuous-strength lowball variants, applying the flat +1 throws away the gradient of loser hand strength. A loser with a 7-low (a strong Razz hand that simply ran into a 6-low) and a loser with a Q-low (a weak Razz hand) both post +1 bogey. This is qualitatively different from Hold'em, where a loser with a flush vs a full house already has a much lower golf score than a loser with high-card vs a pair.
 
@@ -381,13 +397,13 @@ Rather than picking a categorical bucket threshold (which would re-introduce Sch
 **Rule.** At a decisive Yellow Jacket showdown in a lowball variant, the loser's hand is evaluated against the random-showdown CDF for that variant:
 
 - If the loser's hand is at the **70th percentile or higher** in strength (i.e., among the top 30% of possible hands at random showdown), the loss is **respected**: the loser posts their own Hybrid Schema C golf score (which will be in the −3..−5 range by construction of §10's bucket boundaries).
-- Otherwise the loss is **standard**: the loser posts the fixed +1 bogey, identical to Hold'em Yellow Jacket.
+- Otherwise the loss is **standard**: the loser posts the +1 bogey (subject, in Hold'em, to the pot-gated brick sub-rule for high-card hands — the lowball percentile rule and the Hold'em brick rule both layer on the same +1 base).
 
 **Why a percentile rule, not a bucket cut.** The Schema C buckets in §10 are themselves percentile-aligned, so a "≤ −3 bucket score" rule and a "≥ 70th percentile" rule will produce identical outcomes *given the proposed boundaries* in §10. We state the rule in percentile form because:
 
-1. It is invariant to bucket-boundary refinement during calibration. If §10's boundaries shift in v0.3 to better match measured CDFs, the loss rule does not need a parallel edit.
+1. It is invariant to bucket-boundary refinement during calibration. If §10's boundaries shift in a future revision to better match measured CDFs, the loss rule does not need a parallel edit.
 2. It generalises cleanly to any future continuous-strength variant added beyond Razz / 2-7 / Badugi.
-3. It exposes a single tunable parameter (the percentile cutoff, default 70th) for the Variant Calibration Mode (§19) to sweep, rather than hiding the threshold inside a discrete bucket table.
+3. It exposes a single tunable parameter (the percentile cutoff, default 70th — equivalently θ = 0.30 in `IP/MATHEMATICAL_SPECIFICATION.md` §15, i.e. the top 30% of hand strength) for the Variant Calibration Mode (§19) to sweep, rather than hiding the threshold inside a discrete bucket table.
 
 **Variant differentiation preserved.** Bumblebee remains "loser scores own hand" universally (no percentile gate). Yellow Jacket remains "loser typically posts +1 bogey, except respected losses." The percentile cutoff (70th) is the lowball-variant analogue of Hold'em's existing "straight-or-better" respected-loss sub-rule, and it preserves the equity-cost asymmetry that drives YJ's strategic profile.
 
@@ -410,7 +426,7 @@ Rather than picking a categorical bucket threshold (which would re-introduce Sch
 
 - If at least one player has a qualifying Lo: the honey pot splits 50/50 between Hi-half and Lo-half.
 - If no player has a qualifying Lo: the entire honey pot goes to the Hi-half winner.
-- Within each half, ties roll forward (preserving v69.25 tied-pot carry mechanic) for that half only. Two halves with two different winners means each half is awarded independently.
+- Within each half, ties roll forward (preserving the canonical tied-pot carry mechanic) for that half only. Two halves with two different winners means each half is awarded independently.
 - "Scoop" (one player wins both halves): that player takes the full honey pot.
 
 **Scorecard resolution per hand.** Proposed rule:
@@ -444,7 +460,7 @@ Pot resolution and scorecard resolution rules are identical to Big O (§15). Stu
 
 ## 17. Audit Suite per Variant
 
-Each new variant must run the existing v69.24 audit suite plus variant-specific frequency tables. The full per-variant audit consists of:
+Each new variant must run the existing canonical-build audit suite plus variant-specific frequency tables. The full per-variant audit consists of:
 
 **Pre-implementation analytical work (1–3 days):**
 
@@ -507,7 +523,7 @@ Producing these artifacts before the full audit reduces the chance that a 4–8 
 
 ## 20. Variant Calibration Mode
 
-The audit suite as it exists in v69.25 was designed to confirm calibration of a *single* variant (Hold'em) once. Mixed games require **iterative re-calibration of multiple variants**, each with its own AI threshold optima, Schema C bucket boundaries, and (for Yellow Jacket lowball variants) Bogey-Loss percentile cutoff. Running the full 4–8 hour audit per parameter sweep is not tractable.
+The audit suite as it exists in the canonical audit suite was designed to confirm calibration of a *single* variant (Hold'em) once. Mixed games require **iterative re-calibration of multiple variants**, each with its own AI threshold optima, Schema C bucket boundaries, and (for Yellow Jacket lowball variants) Bogey-Loss percentile cutoff. Running the full 4–8 hour audit per parameter sweep is not tractable.
 
 Variant Calibration Mode is a first-class simulator feature, not an ad-hoc script. It is added to the Lab simulator UI alongside the existing Simple / Advanced toggle.
 
@@ -524,7 +540,7 @@ Variant Calibration Mode is a first-class simulator feature, not an ad-hoc scrip
 1. A grid (one row per parameter cell) showing each metric's bootstrap 95% CI and a pass/fail indicator against the §18 thresholds.
 2. The Pareto frontier of cells that pass all hard criteria, sorted by composite score (sum of normalised metric distances from band centres).
 3. A delta table comparing the best cell to the current frozen optima.
-4. CSV export with full per-cell raw metrics (already standard for v69.25 simulator runs).
+4. CSV export with full per-cell raw metrics (already standard for canonical simulator runs).
 
 **Implementation footprint.** Approximately 250–400 lines:
 
@@ -569,8 +585,8 @@ The current function uses Hold'em equity tables (`PREFLOP_EQUITY`) and a board-t
 **R6 (Severity: medium). Multi-way table sizes don't fit all variants.**
 Stud is conventionally 8-handed (a 9th player exhausts the 52-card deck). PLO is 6-handed at cash but 9 in tournaments. Hold'em is flexible. The current table-size dropdown (2/4/6/9) needs an "8" option for Stud and the YJ multi-way engine needs to verify it handles 8-handed correctly.
 
-**R7 (Severity: medium). Cash-table stroke ledger is uncalibrated for new variants.**
-The existing cash YJ Stroke / Bumblebee Stroke variants settle at +$0.50 per net stroke. This rate was calibrated for Hold'em hand-class frequencies. Variants with different distributions (PLO's higher made-hand frequency, Razz's continuous low) will produce stroke ledgers with different magnitudes. The +$0.50/stroke rate may need per-variant tuning to keep the Nectar settlement reasonable.
+**R7 (Severity: low). Cash-table golf scorecard reads differently across variants.**
+The cash YJ Stroke / Bumblebee Stroke variants keep a separate golf scorecard (true golf convention; pot winner posts own hand. Under YJ the showdown loser posts the same Yellow Jacket loser score used on Tour — a respected loss (own −5..−1) on a straight or better, +1 bogey on trips/two pair/pair, and a pot-gated +1/+2 on a high-card brick, with the posted blinds standing in for the tour's mandatory honey opener; under Bumblebee the loser posts their own hand). As of v69.65 the scorecard does **not** convert to Nectar — it is a pure skill record (cashout pays the chip stack only) — so there is no settlement rate to recalibrate. The remaining concern is purely presentational: variants with different made-hand frequencies (PLO's higher-flopped-set rate, Razz's continuous low) will produce scorecards with different magnitudes, so a session's "vs par" number means something a bit different per game. The hand-class→golf-score table may want per-variant midpoints so the scorecard reads consistently as a skill measure across the mixed-game rotation.
 
 **R8 (Severity: low). Draw mechanics add UI complexity.**
 2-7 Triple Draw and Badugi need a draw-selection UI (which cards to discard) between betting rounds. This is straightforward but is incremental UI work not present in any existing YJ mode.
@@ -643,11 +659,11 @@ Each new variant's audit run is a 4–8 hour 100-season simulation. Adding 5 var
 **Scope:**
 - Per-variant audit benchmarks frozen
 - Calibration documentation finalized
-- v70 release
+- initial mixed-games release
 
 **Total duration estimate: 18–28 weeks of engineering time, plus calibration iteration.**
 
-This is approximately **10× larger** than the original Grok proposal claimed. It is approximately the right size for what is actually being built: a multi-variant poker engine with a uniform scoring law and a per-variant calibration cycle.
+This timeline is approximately the right size for what is being built: a multi-variant poker engine with a uniform scoring law and a per-variant calibration cycle.
 
 If the strategic value of mixed games is not 10× the strategic value of single-variant Hold'em, this project should not proceed past Phase 1.
 
@@ -797,23 +813,29 @@ The "Verification status" column flips from "unverified" to a date and seed once
 
 **Agreed-total wagering** — the YJ tournament wagering primitive. The pot at any moment is the most recently accepted proposal. Bets/raises propose a new total; calls accept it. Differs from matched-contribution wagering (cash and standard poker).
 
-**Authored skill** — a player's intended skill level on [0, 1], sampled from a truncated Normal(0.5, 0.18) when the pool is built. Used to construct the player's profile.
+**Authored skill** — a player's intended skill level on [0, 1], sampled from a truncated Normal(0.5, 0.24) when the pool is built (σ bumped from 0.18 to 0.24 in v30 to widen the skill distribution). Used to construct the player's profile.
 
 **Authored-vs-measured correlation** — Pearson correlation between authored skill and an empirical performance index (wins + 0.5 × runner-ups + 0.25 × final-tables, normalized by events entered). A negative value indicates a calibration inversion: high-skill players underperforming.
 
-**Bogey loss** — Yellow Jacket variant's decisive-showdown loser rule: loser posts +1 stroke regardless of hand strength.
+**Bogey loss** — Yellow Jacket variant's decisive-showdown loser rule. Base case: loser posts +1 stroke. Two overrides: a "respected loss" (loser holding a straight or better posts their own −5..−1 score) and the **pot-gated brick** sub-rule (a loser holding only a high card posts +1 if they checked through to the opener, +2 if they bet into the pot — `1 + ⌊(T−opener)/opener⌋` capped at 2; v69.68 default, configurable). Mirrors the fold cost's pot-dependence.
 
-**Honored loss** — Bumblebee variant's decisive-showdown loser rule: loser posts their own hand's golf score (which can be as low as −1 for a respectable losing hand).
+**Honored loss** — Bumblebee variant's decisive-showdown loser rule: loser posts their own hand's golf score, always (which can be as low as −1 for a respectable losing hand; a brick loser posts their own +2 regardless of pot size).
+
+**Pot-gated brick** — see "Bogey loss." The Yellow Jacket sub-rule that scales a high-card showdown loss with the pot committed; the lever that gives pre-flop hand-selection discipline and bluff equity teeth in the otherwise fold-equity-flat honey-stroke game.
 
 **Honey-Stroke law** — YJ's per-hole scoring system: bounded golf score (−5..+2) plus honey pot, with net honey divided by round divisor at round end.
 
-**Round divisor** — the integer divisor by round length: {1, 4, 9, 36} for {1, 9, 18, 72} hole rounds. Net honey is divided by this once at round end.
+**Honey cap** (formerly "round divisor") — the divisor that converts a round's net honey to strokes, applied once at each round end. Two selectable modes: `calibrated` (the ship default — stepped table {1, 4, 9, 36} for {1, 9, 18, 72} hole rounds) and `spec` (the v23 design-intent mode — divisor = the round's hole count N). The mode is recorded in run exports as `honey_cap_mode`.
+
+**Hole envelope (E)** — the per-hole, per-player Honey ceiling in stroke-equivalents (default 3). The per-hole pot cap is `effectiveCap = round(E × honeyCap)`. When E > 0 it replaces the legacy per-tier stroke caps; E = 0 falls back to them.
+
+**Pot-elastic K** — the per-beat cap multiplier (default 5). Each betting beat's cap is `min(3 × envelopeCap, ⌈K × agreedTotal⌉)` — K times the Honey already agreed into the pot, hard-ceilinged at 3× the hole envelope.
 
 **Schema C** — the lowball-to-scorecard mapping adopted in §10. Combines empirical CDF percentile bucketing (variance compression) with conventional hand-class labels at bucket boundaries (recognisable language for variant players). Supersedes earlier Schema A (categorical only) and Schema B (percentile only) drafts.
 
 **Spearman rank correlation (skillSpearman)** — non-parametric rank correlation between authored skill and total event wins. Primary skill-expression metric in the YJ audit suite.
 
-**Stroke cap** — per-event limit on the maximum honey pot size per hole. Progressive 25/50/75/100% unlock across the four community streets in tour events.
+**Stroke cap (legacy per-tier)** — the older fixed per-event ceiling on the honey pot per hole (Regular 6 / Major 9 / Main-early 8 / Main-finals 18). Used only when the hole envelope E is disabled (E = 0); under default settings (E = 3) the live per-hole cap is `round(E × honeyCap)` instead, and per-beat growth is governed by pot-elastic K.
 
 ## E. References
 
@@ -823,7 +845,7 @@ The following references inform this specification but are not exhaustive:
 - Chen, B. & Ankenman, J. *The Mathematics of Poker*. ConJelCo, 2006. Chapter on Pot-Limit Omaha equity provides the basis for the PLO equity-flatness claim.
 - Yardley, M. *Tournament Poker for Advanced Players*. Two Plus Two Publishing, 2003. Chapter on Stud games provides the bring-in mechanics referenced in §11.
 - Lederer, H. *The Theory of Poker (Razz Edition)*. Standard treatment of Razz hand rankings.
-- The v69.25 audit data (Run_1_Y1_Y100.csv files shipped with the build) provides the empirical baseline against which this specification's hypotheses are stated.
+- The canonical audit data (Run_1_Y1_Y100.csv shipped with the build) provides the empirical baseline against which this specification's hypotheses are stated.
 
 Specific frequencies cited in Appendix C are reproduced from informal references and **must be re-derived empirically** before being used in production calibration claims. This document does not assert numerical values as findings; it asserts methodologies for finding them.
 
