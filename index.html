@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.73-loser-ladder-named-rungs";
+const APP_VERSION = "2026.05.12-v69.74-tourney-export-cleanup";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -17025,7 +17025,10 @@ function spectatorExportCSV() {
     // --- Section: session metadata (self-describing config snapshot) ---
     chunks.push(row(['section', 'spectator_session']));
     chunks.push(row(['key', 'value']));
-    const meta = [
+    const isTourney = (sess.mode === 'liveTourney');
+    const tourState = isTourney ? SpectatorState.tournament : null;
+    // Common header rows (apply to every spectator mode).
+    const commonMeta = [
       ['app_version', sess.settings.appVersion],
       ['generated_at', new Date().toISOString()],
       ['mode', sess.mode],
@@ -17045,19 +17048,10 @@ function spectatorExportCSV() {
       ['run_limit_mode', sess.runLimit.mode],
       ['run_limit_value', sess.runLimit.value],
       ['variant', sess.settings.variant],
-      ['stakes_sb', sess.settings.stakesSb],
-      ['stakes_bb', sess.settings.stakesBb],
       ['skill_mix', sess.settings.skillMix],
-      ['tables', sess.mode === 'liveCash' ? sess.settings.cashTables : ''],
-      ['seats_per_table', sess.mode === 'liveCash' ? sess.settings.cashSeats : 2],
-      ['event_type', sess.mode === 'liveTourney' ? sess.settings.eventType : ''],
       ['hand_delay_ms', sess.settings.handDelayMs],
       ['director_interval_sec', sess.settings.directorIntervalSec],
       ['director_on', sess.settings.directorOn],
-      ['rake_pct', sess.settings.rakePct],
-      ['rake_cap_per_hand', sess.settings.rakeCapPerHand],
-      ['golden_hand_prob', sess.settings.goldenHandProb],
-      ['golden_rake_share', sess.settings.goldenRakeShare],
       ['hands_played', summary.handsPlayed],
       ['showdowns', summary.showdowns],
       ['fold_outs', summary.foldOuts],
@@ -17065,29 +17059,60 @@ function spectatorExportCSV() {
       ['biggest_pot_hand', summary.biggestPotHand],
       ['biggest_pot_table', summary.biggestPotTableId],
       ['eliminations', summary.eliminations],
+    ];
+    // Mode-specific header rows. The Live Tournament is a heads-up golf-cut
+    // bracket — it has no blinds (uses the 2/4-honey opener), no rake, no
+    // Golden-Card lottery, and no per-hand `hands` log (the per-hole detail
+    // lives in the `tournament_scorecard` section), so those cash-only fields
+    // are replaced by the bracket's own shape rather than emitted as dead zeros.
+    const tourneyMeta = isTourney ? [
+      ['event_type', sess.settings.eventType],
+      ['format', (tourState && tourState.format === 'golf-honey') ? 'golf-cut heads-up bracket (Honey-Stroke)' : (tourState ? tourState.format : 'golf-cut heads-up bracket')],
+      ['loser_rule', (sess.settings.variant === 'bb') ? 'Bumblebee (Honored Loss — loser always cards own hand)' : 'Yellow Jacket (Bogey Loss — loser ladder: Next Best / Take a Stroke / Lay a Brick / Stack Bricks)'],
+      ['field_size', tourState ? tourState.fieldSize : ''],
+      ['rounds', tourState ? ((tourState.history && tourState.history.length) || tourState.totalRounds || tourState.round || '') : ''],
+      ['hands_per_round', tourState ? (tourState.handsPerRound || 18) : ''],
+      ['event_total_holes', tourState ? (tourState.eventTotalHoles || '') : ''],
+      ['honey_cap_divisor', tourState ? (tourState.honeyCap || 9) : ''],
+      ['ties_carried', Math.max(0, (summary.handsPlayed || 0) - (summary.showdowns || 0) - (summary.foldOuts || 0))],
+    ] : [];
+    const cashMeta = isTourney ? [] : [
+      ['stakes_sb', sess.settings.stakesSb],
+      ['stakes_bb', sess.settings.stakesBb],
+      ['tables', sess.mode === 'liveCash' ? sess.settings.cashTables : ''],
+      ['seats_per_table', sess.mode === 'liveCash' ? sess.settings.cashSeats : 2],
+      ['rake_pct', sess.settings.rakePct],
+      ['rake_cap_per_hand', sess.settings.rakeCapPerHand],
+      ['golden_hand_prob', sess.settings.goldenHandProb],
+      ['golden_rake_share', sess.settings.goldenRakeShare],
       ['golden_card_hits', summary.goldenHits],
       ['total_rake_collected', Math.round(summary.rakeCollected * 100) / 100],
       ['hands_logged', summary.handsLogged],
       ['hands_dropped_from_log', summary.handsDropped],
       ['log_truncated', summary.handsDropped > 0],
     ];
+    const meta = commonMeta.concat(tourneyMeta, cashMeta);
     meta.forEach(kv => chunks.push(row(kv)));
     chunks.push('\r\n');
-    // --- Section: per-table ---
-    chunks.push(row(['section', 'per_table']));
-    chunks.push(row(['table_id', 'label', 'hands', 'biggest_pot']));
-    summary.perTable.forEach(pt => chunks.push(row([pt.tableId, pt.label, pt.hands, Math.round(pt.biggestPot * 100) / 100])));
-    chunks.push('\r\n');
-    // --- Section: per-seat (bot P&L) ---
-    chunks.push(row(['section', 'per_seat']));
-    chunks.push(row(['table_id', 'table_label', 'seat', 'player_id', 'name', 'skill', 'buy_in', 'final_stack', 'net_pl', 'hands_played', 'stroke_ledger', 'busted']));
-    summary.perSeat.forEach(p => chunks.push(row([
-      p.tableId, p.tableLabel, p.seat, p.playerId, p.name,
-      p.skill != null ? p.skill.toFixed(4) : '',
-      Math.round(p.buyIn * 100) / 100, Math.round(p.finalStack * 100) / 100, Math.round(p.net * 100) / 100,
-      p.handsPlayed, Math.round(p.strokes * 100) / 100, p.busted,
-    ])));
-    chunks.push('\r\n');
+    // --- Sections: per-table + per-seat (cash modes only). A Live Tournament
+    //     is a heads-up bracket with no CashLobby tables and no bot P&L ledger
+    //     — its per-player/per-hole detail lives in the tournament_* sections
+    //     below — so these two would be empty headers and are suppressed.
+    if (!isTourney) {
+      chunks.push(row(['section', 'per_table']));
+      chunks.push(row(['table_id', 'label', 'hands', 'biggest_pot']));
+      summary.perTable.forEach(pt => chunks.push(row([pt.tableId, pt.label, pt.hands, Math.round(pt.biggestPot * 100) / 100])));
+      chunks.push('\r\n');
+      chunks.push(row(['section', 'per_seat']));
+      chunks.push(row(['table_id', 'table_label', 'seat', 'player_id', 'name', 'skill', 'buy_in', 'final_stack', 'net_pl', 'hands_played', 'stroke_ledger', 'busted']));
+      summary.perSeat.forEach(p => chunks.push(row([
+        p.tableId, p.tableLabel, p.seat, p.playerId, p.name,
+        p.skill != null ? p.skill.toFixed(4) : '',
+        Math.round(p.buyIn * 100) / 100, Math.round(p.finalStack * 100) / 100, Math.round(p.net * 100) / 100,
+        p.handsPlayed, Math.round(p.strokes * 100) / 100, p.busted,
+      ])));
+      chunks.push('\r\n');
+    }
     // --- Section: tournament field (liveTourney only). v69.47 — every column
     //     an auditor needs to re-derive final = golf − netHoney/divisor.
     if (sess.mode === 'liveTourney' && SpectatorState.tournament) {
@@ -17191,19 +17216,24 @@ function spectatorExportCSV() {
         chunks.push('\r\n');
       }
     }
-    // --- Section: per-hand (the authoritative record) ---
-    chunks.push(row(['section', 'hands']));
-    chunks.push(row(['hand_no', 'hand_id', 'table_id', 'table_label', 'round', 'variant', 'players', 'street_reached', 'pot', 'rake', 'showdown', 'winner_seat', 'winner_name', 'winner_class', 'board', 'golden_card', 'golden_hit', 'hole_cards']));
-    SpectatorState.handLog.forEach(r => {
-      const holeStr = Object.keys(r.holes || {}).map(k => 'S' + k + ':' + r.holes[k]).join(' ');
-      chunks.push(row([
-        r.seq, r.handId, r.tableId, r.tableLabel, r.round == null ? '' : r.round, r.variant, r.players,
-        r.streetReached, r.pot, r.rake, r.showdown,
-        r.winnerSeat == null ? '' : r.winnerSeat, r.winnerName || '', r.winnerClass || '',
-        r.board || '', r.goldenCard || '', r.goldenHit, holeStr,
-      ]));
-    });
-    chunks.push('\r\n');
+    // --- Section: per-hand (cash modes only — the authoritative cash record).
+    //     A Live Tournament does not populate handLog (its per-hole record is
+    //     the tournament_scorecard section above), so the `hands` section is
+    //     suppressed for liveTourney rather than emitted as an empty header.
+    if (!isTourney) {
+      chunks.push(row(['section', 'hands']));
+      chunks.push(row(['hand_no', 'hand_id', 'table_id', 'table_label', 'round', 'variant', 'players', 'street_reached', 'pot', 'rake', 'showdown', 'winner_seat', 'winner_name', 'winner_class', 'board', 'golden_card', 'golden_hit', 'hole_cards']));
+      SpectatorState.handLog.forEach(r => {
+        const holeStr = Object.keys(r.holes || {}).map(k => 'S' + k + ':' + r.holes[k]).join(' ');
+        chunks.push(row([
+          r.seq, r.handId, r.tableId, r.tableLabel, r.round == null ? '' : r.round, r.variant, r.players,
+          r.streetReached, r.pot, r.rake, r.showdown,
+          r.winnerSeat == null ? '' : r.winnerSeat, r.winnerName || '', r.winnerClass || '',
+          r.board || '', r.goldenCard || '', r.goldenHit, holeStr,
+        ]));
+      });
+      chunks.push('\r\n');
+    }
     // --- Section: broadcast feed (last 500 lines, for context) ---
     chunks.push(row(['section', 'feed']));
     chunks.push(row(['idx', 'ts', 'table_id', 'kind', 'line']));
