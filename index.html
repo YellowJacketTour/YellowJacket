@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.76-skill-seeded-bracket";
+const APP_VERSION = "2026.05.12-v69.78-skill-curve";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -4297,6 +4297,17 @@ function getRegimeProfileOpts(cfg) {
 
 function makeProfileForSkill(targetSkill, cfg) {
   const t = Math.max(0, Math.min(1, targetSkill));
+  // v69.78 — SKILL-CURVE WIDTH. The standard curve (curveMul = 1.0) already has
+  // the high-skill end AT the EV-calibrated optima (0.45 / 0.20 / 0.75 + tiny
+  // jitter), so it can't go better — "widening" the curve drops the FLOOR: a
+  // 'wide' (curveMul ≈ 1.5) low-skill profile drifts further from optimal
+  // (looser/tighter thresholds, noisier decisions, weaker reads, sloppier
+  // bluff frequency) — i.e. a genuine rec-player vs near-optimal-pro spread,
+  // not a scorecard fudge. curveMul = 1.0 is a bit-for-bit no-op; 'standard'
+  // (or no cfg) keeps it. Accepts cfg.skillCurve as 'standard' | 'wide' | a
+  // raw multiplier ≥ 1.
+  const curveMul = (cfg && Number.isFinite(+cfg.skillCurve)) ? Math.max(1, +cfg.skillCurve)
+    : (cfg && cfg.skillCurve === 'wide') ? 1.5 : 1.0;
   const jitterScaleN = (cfg && Number.isFinite(cfg.noiseSpread)) ? cfg.noiseSpread * 0.050 : 0.025;
   const jitterScaleB = (cfg && Number.isFinite(cfg.betSpread))   ? cfg.betSpread   * 0.030 : 0.015;
   const jitterScaleF = (cfg && Number.isFinite(cfg.foldSpread))  ? cfg.foldSpread  * 0.030 : 0.015;
@@ -4343,16 +4354,22 @@ function makeProfileForSkill(targetSkill, cfg) {
   // contributed to the v69.23 authoredVsMeasured = -0.55 inversion. Clamping
   // to non-negative restores monotonic behavior without affecting HU.
   return {
-    noise: Math.max(0.005, noiseOpt + (1 - t) * 0.30 + jitter(jitterScaleN)),
-    betThreshold:   Math.max(0.01, Math.min(0.99, betOpt   + dir() * (1 - t) * 0.15 + jitter(jitterScaleB))),
-    foldThreshold:  Math.max(0.01, Math.min(0.99, foldOpt  + dir() * (1 - t) * 0.15 + jitter(jitterScaleF))),
-    raiseThreshold: Math.max(0.01, Math.min(0.99, raiseOpt + dir() * (1 - t) * 0.10 + jitter(jitterScaleR))),
+    // v69.78 — the (1-t)*K "skill miss" terms scale by curveMul (1.0 = standard;
+    // 1.5 = 'wide'). The optimum-anchored high-skill end is unchanged; the
+    // low-skill end drifts further from optimal under 'wide'.
+    noise: Math.max(0.005, noiseOpt + (1 - t) * 0.30 * curveMul + jitter(jitterScaleN)),
+    betThreshold:   Math.max(0.01, Math.min(0.99, betOpt   + dir() * (1 - t) * 0.15 * curveMul + jitter(jitterScaleB))),
+    foldThreshold:  Math.max(0.01, Math.min(0.99, foldOpt  + dir() * (1 - t) * 0.15 * curveMul + jitter(jitterScaleF))),
+    raiseThreshold: Math.max(0.01, Math.min(0.99, raiseOpt + dir() * (1 - t) * 0.10 * curveMul + jitter(jitterScaleR))),
     authoredSkill: t,
-    aggression: Math.max(0.1, Math.min(0.9, 0.5 + (Math.random() - 0.5) * 0.6)),
-    // v50 (B): bluffFreq scales with skill. Mean (0.02 + 0.10·t), multiplicative
-    // jitter in [0.5, 1.0]. skill 0.05 → ~0.015, skill 0.95 → ~0.090 (typical).
-    bluffFreq: Math.max(0, Math.min(0.18, (0.02 + 0.10 * t) * (0.5 + Math.random() * 0.5))),
-    readingDepth: Math.max(0, Math.min(1, 0.3 + 0.4 * t + (Math.random() - 0.5) * 0.4)),
+    aggression: Math.max(0.1, Math.min(0.9, 0.5 + (Math.random() - 0.5) * 0.6)),   // style axis — skill-independent, never scaled
+    // v50 (B): bluffFreq scales with skill. Standard mean (0.02 + 0.10·t); under
+    // 'wide' the slope steepens / intercept drops (curveMul=1 → unchanged):
+    // (0.02/curveMul + 0.10·curveMul·t) · jitter∈[0.5,1.0].
+    bluffFreq: Math.max(0, Math.min(0.18, ((0.02 / curveMul) + (0.10 * curveMul) * t) * (0.5 + Math.random() * 0.5))),
+    // readingDepth: standard 0.3 + 0.4·t (slope 0.4 about the t=0.5 midpoint);
+    // under 'wide' the slope steepens to 0.4·curveMul (curveMul=1 → unchanged).
+    readingDepth: Math.max(0, Math.min(1, 0.5 + 0.4 * curveMul * (t - 0.5) + (Math.random() - 0.5) * 0.4)),
   };
 }
 
@@ -4947,6 +4964,151 @@ function runKnockoutRound(players, numHoles) {
     m.loser.eliminatedAtBracket = bracketSize;
   }
   return { winners, losers, bracketSize };
+}
+
+// =============================================================================
+// runBracketSkillStudy — headless A/B for the Live-Tournament golf-cut bracket
+// (v69.77). Console tool. Runs N events with the field SKILL-SEEDED and N with
+// the SAME fields but in their as-drawn (random) order, so only the bracket
+// assignment differs, then reports how much the seeding lifts skill→finish.
+// Doubles as a honey-divisor sweep: pass { honeyCapMode:'spec' } for ÷18.
+//
+//   runBracketSkillStudy()                              // 50 events · 8-field · ÷9
+//   runBracketSkillStudy({ n: 300 })
+//   runBracketSkillStudy({ n: 200, fieldSize: 16 })
+//   runBracketSkillStudy({ n: 200, honeyCapMode: 'spec' })   // the ÷18 arm
+//   runBracketSkillStudy({ n: 200, eventType: 'main' })      // 0.30–0.95 skill spread
+//
+// Metrics (per arm, averaged over N events):
+//   spearman             skill-rank ↔ finish-rank correlation (1 = perfect, 0 = none)
+//   champSkillRank       champion's skill rank in the field (1 = the best player won)
+//   champSkillPct        champion's skill percentile (1.0 = best, 0.0 = worst)
+//   bestPlayerMeanPlace  finish place of the field's best player (1 = always champion)
+//   worstPlayerMeanPlace finish place of the field's worst player (fieldSize = always last)
+//   bestReachesFinal2/4  fraction of events where the best player makes the final 2 / final 4
+//   bestIsChampion       fraction of events the best player wins it all
+// Higher is better for spearman / champSkillPct / bestReaches* / bestIsChampion /
+// worstPlayerMeanPlace; lower is better for champSkillRank / bestPlayerMeanPlace.
+//
+// Synchronous — ~126 hands/event for an 8-field; n=50 ≈ a few seconds, n=500 ≈ ~a
+// minute, and the tab blocks while it runs. Returns the raw aggregates object.
+// =============================================================================
+function runBracketSkillStudy(opts) {
+  opts = opts || {};
+  const n         = Math.max(1, (opts.n | 0) || 50);
+  // Round the field up to a power of two so the single-elim bracket is clean.
+  const fieldSize = (() => { let f = Math.max(2, (opts.fieldSize | 0) || 8), p = 2; while (p < f) p *= 2; return p; })();
+  const rounds    = Math.round(Math.log2(fieldSize));
+  const holes     = (opts.holesPerRound | 0) || 18;
+  const eventType = (opts.eventType === 'main' || opts.eventType === 'major') ? opts.eventType : 'regular';
+  const baseSeed  = String(opts.baseSeed || 'bracket-study');
+  // v69.78 — AI skill-curve width: 'standard' | 'wide' | a raw multiplier ≥ 1.
+  const skillCurve = (Number.isFinite(+opts.skillCurve)) ? Math.max(1, +opts.skillCurve)
+    : (opts.skillCurve === 'wide') ? 'wide' : 'standard';
+  // Match the Live-Tournament scoring stack; restore the globals afterward.
+  const _capMode    = (typeof CurrentHoneyCapMode === 'string') ? CurrentHoneyCapMode : 'calibrated';
+  const _loserBogey = (typeof CurrentLoserBogey !== 'undefined') ? CurrentLoserBogey : true;
+  setHoneyCapMode((opts.honeyCapMode === 'spec') ? 'spec' : 'calibrated');
+  if (typeof setLoserBogey === 'function') setLoserBogey(true);
+  const divisor = (typeof honeyDivisorFor === 'function') ? honeyDivisorFor(holes) : 9;
+
+  const mkStats = () => ({ holesPlayed:0, strokesBetTotal:0, holesWon:0, holesLost:0, holesTied:0, holesFolded:0, handCounts:{}, totalScore:0, matchesWon:0, matchesLost:0 });
+  const skillRange = () => eventType === 'main'  ? [0.30, 0.95]
+                         : eventType === 'major' ? [0.55, 0.95]
+                         : [0.40, 0.90];
+
+  // One event for a given arm; returns [{ skill, seed, finalPlace }] for the whole field.
+  function runEvent(arm, idx) {
+    setCashRngSeed(baseSeed + '/' + idx);
+    return withCashRng(() => {
+      const [lo, hi] = skillRange();
+      const drafted = [];
+      for (let j = 0; j < fieldSize; j++) {
+        const skill = lo + cashRng() * (hi - lo);
+        drafted.push({ skill: skill, profile: makeProfileForSkill(skill, { skillCurve: skillCurve }) });
+      }
+      if (arm === 'skill') drafted.sort((a, b) => b.skill - a.skill);   // seed #1 = best
+      const players = drafted.map((d, j) => ({
+        id: j, name: '#' + (j + 1), seed: j + 1, skill: d.skill, profile: d.profile,
+        cum: 0, eliminatedRound: null, finalPlace: null, stats: mkStats(),
+      }));
+      let surviving = players.slice();
+      for (let r = 1; r <= rounds; r++) {
+        surviving.sort((a, b) => (a.cum - b.cum) || (a.seed - b.seed));   // re-seed by cumulative score
+        const m2 = surviving.length;
+        for (let k = 0; k < m2 / 2; k++) {                                // pair top ↔ bottom
+          const pA = surviving[k], pB = surviving[m2 - 1 - k];
+          const m = playMatch(pA, pB, holes, { noPlayoff: true, noMatchStats: true, gameContext: { mode: 'strokePlay', holeNumber: 1, totalHoles: holes } });
+          pA.cum += m.aTotal; pB.cum += m.bTotal;
+        }
+        if (r < rounds) {                                                 // cut the bottom half
+          surviving.sort((a, b) => (a.cum - b.cum) || (a.seed - b.seed));
+          const cut = Math.max(1, Math.floor(m2 / 2));
+          for (let i = m2 - cut; i < m2; i++) surviving[i].eliminatedRound = r;
+          surviving = surviving.slice(0, m2 - cut);
+        }
+      }
+      surviving.sort((a, b) => (a.cum - b.cum) || (a.seed - b.seed));      // champion = best survivor
+      // Finish ladder: survivors (best first), then eliminated players by
+      // (elimination round desc, then cumulative score asc) — making the cut beats missing it.
+      const elim = players.filter(p => p.eliminatedRound != null)
+        .sort((a, b) => (b.eliminatedRound - a.eliminatedRound) || (a.cum - b.cum));
+      surviving.concat(elim).forEach((p, i) => { p.finalPlace = i + 1; });
+      return players.map(p => ({ skill: p.skill, seed: p.seed, finalPlace: p.finalPlace }));
+    });
+  }
+
+  function spearman(rows) {                                               // skill-rank vs finish-rank, no ties
+    const bySkill = rows.slice().sort((a, b) => b.skill - a.skill);
+    let d2 = 0;
+    bySkill.forEach((r, i) => { const d = (i + 1) - r.finalPlace; d2 += d * d; });
+    const m = rows.length;
+    return 1 - (6 * d2) / (m * (m * m - 1));
+  }
+  function runArm(arm) {
+    let sSpear = 0, sChampRank = 0, sChampPct = 0, sBestPlace = 0, sWorstPlace = 0;
+    let nFinal2 = 0, nFinal4 = 0, nChamp = 0;
+    for (let i = 0; i < n; i++) {
+      const rows = runEvent(arm, i);
+      sSpear += spearman(rows);
+      const champ = rows.find(r => r.finalPlace === 1);
+      const champRank = rows.filter(r => r.skill > champ.skill).length + 1;
+      sChampRank += champRank;
+      sChampPct  += (fieldSize > 1) ? (1 - (champRank - 1) / (fieldSize - 1)) : 1;
+      const bySkill = rows.slice().sort((a, b) => b.skill - a.skill);
+      const best = bySkill[0], worst = bySkill[bySkill.length - 1];
+      sBestPlace  += best.finalPlace;
+      sWorstPlace += worst.finalPlace;
+      if (best.finalPlace <= 2) nFinal2++;
+      if (best.finalPlace <= 4) nFinal4++;
+      if (best.finalPlace === 1) nChamp++;
+    }
+    const r3 = x => Math.round(x * 1000) / 1000, r2 = x => Math.round(x * 100) / 100;
+    return {
+      arm: arm,
+      spearman: r3(sSpear / n),
+      champSkillRank: r2(sChampRank / n),
+      champSkillPct: r3(sChampPct / n),
+      bestPlayerMeanPlace: r2(sBestPlace / n),
+      worstPlayerMeanPlace: r2(sWorstPlace / n),
+      bestReachesFinal2: r3(nFinal2 / n),
+      bestReachesFinal4: r3(nFinal4 / n),
+      bestIsChampion: r3(nChamp / n),
+    };
+  }
+
+  const skillArm = runArm('skill');
+  const randomArm = runArm('random');
+  setHoneyCapMode(_capMode);
+  if (typeof setLoserBogey === 'function') setLoserBogey(_loserBogey);
+  const out = {
+    config: { n: n, fieldSize: fieldSize, rounds: rounds, holesPerRound: holes, eventType: eventType, honeyDivisor: divisor, skillCurve: skillCurve, baseSeed: baseSeed },
+    skill: skillArm, random: randomArm,
+  };
+  try { console.log('[runBracketSkillStudy]', JSON.stringify(out.config)); console.table([skillArm, randomArm]); }
+  catch (_) { console.log(JSON.stringify(out, null, 2)); }
+  console.log('higher↑ = better: spearman, champSkillPct, bestReachesFinal2/4, bestIsChampion, worstPlayerMeanPlace · lower↓ = better: champSkillRank, bestPlayerMeanPlace');
+  return out;
 }
 
 // =============================================================================
@@ -16011,6 +16173,11 @@ const SpectatorState = {
     // and survivors re-seed by cumulative score each round). 'random' keeps the
     // legacy ad-hoc draw order (effectively a random bracket w.r.t. skill).
     bracketSeed: 'skill',
+    // v69.78 — AI skill-curve width. 'standard' = the EV-calibrated curve (the
+    // ≤v69.77 behavior). 'wide' drops the low-skill floor (rec-player leaks vs
+    // near-optimal pro) so authored skill expresses more strongly in finishes —
+    // not a scorecard fudge; it only changes how the bots PLAY. Locks at run-start.
+    skillCurve: 'standard',
   },
   stats: {
     handsPlayed: 0, biggestPot: 0, biggestPotHand: null, biggestPotTableId: null,
@@ -16187,6 +16354,7 @@ function spectatorStartLiveTourney() {
   // the draw order (the legacy behavior). The sort consumes no RNG, so a
   // 'random' run reproduces ≤v69.75 bit-for-bit.
   const bracketDraw = (SpectatorState.setup.bracketSeed === 'random') ? 'random' : 'skill';
+  const skillCurveMode = (SpectatorState.setup.skillCurve === 'wide') ? 'wide' : 'standard';   // v69.78
   const players = [];
   withCashRng(() => {
     const drafted = [];
@@ -16195,7 +16363,7 @@ function spectatorStartLiveTourney() {
       if (evType === 'main') skill = 0.30 + cashRng() * 0.65;
       else if (evType === 'major') skill = 0.55 + cashRng() * 0.40;
       else skill = 0.40 + cashRng() * 0.50;
-      drafted.push({ skill: skill, profile: makeProfileForSkill(skill, 'yellowjacket') });
+      drafted.push({ skill: skill, profile: makeProfileForSkill(skill, { skillCurve: skillCurveMode }) });
     }
     if (bracketDraw === 'skill') drafted.sort((a, b) => b.skill - a.skill);
     drafted.forEach((d, i) => {
@@ -16232,6 +16400,7 @@ function spectatorStartLiveTourney() {
     loserBogey: tourneyLoserBogey,                    // v69.71 — Yellow Jacket (true) vs Bumblebee (false); drives playHole's showdown scoring + the bots' EV math
     variant: variant,                                // 'yj' | 'bb'
     bracketSeed: bracketDraw,                         // v69.76 — 'skill' (1..N by skill) | 'random' (legacy draw order)
+    skillCurve: skillCurveMode,                       // v69.78 — 'standard' | 'wide' (AI skill-curve width used to generate this field)
     surviving: players.slice(),
     matches: [],                                     // populated by spectatorSeatTourneyRound
     history: [],
@@ -16856,6 +17025,7 @@ function spectatorInitSession(mode) {
       cashTables: su.cashTables, cashSeats: su.cashSeats,
       eventType: su.eventType,
       bracketSeed: (su.bracketSeed === 'random') ? 'random' : 'skill',   // v69.76 — Live-Tournament bracket draw
+      skillCurve: (su.skillCurve === 'wide') ? 'wide' : 'standard',       // v69.78 — AI skill-curve width
       handDelayMs: su.handDelayMs, directorIntervalSec: su.directorIntervalSec,
       directorOn: !!SpectatorState.director.on,
       honeyCapMode: honeyMode,
@@ -17102,6 +17272,12 @@ function spectatorExportCSV() {
         ? ((sess.settings.bracketSeed === 'random')
             ? 'random: ad-hoc draw order (bracket is effectively random w.r.t. skill)'
             : 'skill: field seeded 1..N by authored skill (#1 = best); top-vs-bottom HU pairing, survivors re-seed by cumulative score each round')
+        : ''],
+      ['skill_curve', (sess.mode === 'liveTourney') ? (sess.settings.skillCurve || 'standard') : ''],
+      ['skill_curve_desc', (sess.mode === 'liveTourney')
+        ? ((sess.settings.skillCurve === 'wide')
+            ? 'wide: low-skill profiles drift further from optimal (rec-player leaks vs near-optimal pro); only changes how the bots play, not the scorecard'
+            : 'standard: EV-calibrated skill curve (the ≤v69.77 behavior)')
         : ''],
       ['hand_delay_ms', sess.settings.handDelayMs],
       ['director_interval_sec', sess.settings.directorIntervalSec],
@@ -18802,6 +18978,7 @@ function refreshSpectatorStats() {
     host.appendChild(el('div', { style: 'margin-top:6px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px; margin-bottom:2px;', text: 'Session' }));
     host.appendChild(row('Seed', String(sess.seed || '(random)')));
     if (sess.mode === 'liveTourney') host.appendChild(row('Bracket', (sess.settings && sess.settings.bracketSeed === 'random') ? 'Random draw' : 'Skill-seeded'));
+    if (sess.mode === 'liveTourney' && sess.settings && sess.settings.skillCurve === 'wide') host.appendChild(row('AI skill curve', 'Wide'));
     if (sess.status !== 'running') {
       host.appendChild(row('Status', '✓ Complete (' + sess.endReason + ')'));
       host.appendChild(el('div', { style: 'margin-top:6px; font-size:10px; opacity:0.6; font-style:italic;', text: 'Report + CSV/JSON export in the featured panel →' }));
@@ -19112,6 +19289,26 @@ Views.spectator = function() {
         (SpectatorState.setup.bracketSeed === 'random')
           ? 'Random: the field is drawn in arbitrary order, so a top player can collide with another top player in Round 1 (max upset variance).'
           : 'Skill-seeded: #1 plays #N, #2 plays #N-1, … and survivors re-seed by cumulative score each round — the standard tournament bracket.' }));
+
+      // v69.78 — AI skill curve. 'standard' (EV-calibrated) vs 'wide' (drops the
+      // low-skill floor → rec-player leaks vs near-optimal pro). Only changes how
+      // the bots PLAY — not the scorecard. Locks at run-start.
+      setupCard.appendChild(el('div', { style: 'font-size:10px; opacity:0.7; margin-bottom:3px;', text: 'AI skill curve' }));
+      const curveSel = el('select', { class: 'form-control', style: 'width:100%; margin-bottom:4px; font-size:12px;' });
+      [
+        { v: 'standard', l: 'Standard  (EV-calibrated curve — the established behavior)' },
+        { v: 'wide',     l: 'Wide  (low-skill plays much worse → skill expresses more)' },
+      ].forEach(o => {
+        const opt = el('option', { value: o.v, text: o.l });
+        if (((SpectatorState.setup.skillCurve === 'wide') ? 'wide' : 'standard') === o.v) opt.selected = true;
+        curveSel.appendChild(opt);
+      });
+      curveSel.onchange = () => { SpectatorState.setup.skillCurve = curveSel.value; };
+      setupCard.appendChild(curveSel);
+      setupCard.appendChild(el('div', { style: 'font-size:9px; opacity:0.55; margin-bottom:10px; font-style:italic; line-height:1.4;', text:
+        (SpectatorState.setup.skillCurve === 'wide')
+          ? 'Wide: a low-authored-skill bot drifts further from optimal — loose/tight thresholds, noisier decisions, weaker reads, sloppier bluffing. The high end is unchanged (already at the optima). Authored skill should track finishes more closely.'
+          : 'Standard: the EV-calibrated skill→profile mapping used everywhere else.' }));
     }
   }
 
