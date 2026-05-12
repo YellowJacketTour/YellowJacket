@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.94-hive-tour-top-pot";
+const APP_VERSION = "2026.05.12-v69.95-royal-suitor-major-stages";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5151,12 +5151,12 @@ function runBracketSkillStudy(opts) {
 // and the HIVE CROWN (held by the season's top-rated player with ≥ minEvents —
 // the true skill title; rarely an upset). `runSeasonSkillStudy` is the
 // validation tool: it runs S whole seasons at two round-lengths (your choice
-// vs the classic 18) and reports ρ_season, "true #1 wins the Crown" rate, the
+// vs the classic 18) and reports ρ_season, "true #1 is crowned" rate, the
 // Jacket-winner's skill percentile & season rank, finale calibration, etc.
 const Season = {
   DEFAULTS: {
     holesPerRound: 18,          // REGULAR-tour events: 18 = a classic 4-round, 72-hole tournament
-    majorHoles: 72,             // MAJORS: holes per "leg" (4 staged legs with cuts — "the grind"; 72 ⇒ each leg is a full tournament's worth of golf, a 288-hole championship). 0/unset ⇒ same as holesPerRound (= the pure-18h tour). The HYBRID (18h Regulars + 72h Majors/Main) is the default.
+    majorHoles: 72,             // MAJORS: holes per STAGE — 4 staged "mountain stages" with cuts (Tour-de-France style: the stages that separate the men from the boys; 72 ⇒ each stage is a full tournament's worth of golf, a 288-hole championship). 0/unset ⇒ same as holesPerRound (= the pure-18h tour). The HYBRID (18h Regular rounds + 72h Major/Main stages) is the default.
     mainHoles: 72,              // THE MAIN EVENT (the grandest Major): same idea. 0/unset ⇒ same as holesPerRound.
     nRounds: 4,                 // R1 free → ~50% cut after R2 & R3 → R4 (no cut); lowest aggregate wins
     universeSize: 384,          // the player population (tour pros + amateurs) — bump it for a fuller tour
@@ -5170,7 +5170,7 @@ const Season = {
     omega: 0.012,               // process noise per event (skill drift / form); ↑ ⇒ shorter rating memory. Note: ω is NOT the bottleneck — per-event skill signal (round length) is.
     fieldStrengthLambda: 0.7,   // how much a strong field upweights your result (OWGR-style)
     marginWeight: 0.4,          // (1-w)·smooth-rank-z + w·winsorized-per-round-margin-z (both ignore the cut)
-    minEventsForCrown: 8,       // # rated events required to hold the Hive Crown / a Tour card
+    minEventsForCrown: 8,       // # rated events required to hold the Royal Suitor / a Tour card
     finaleMode: 'none',         // the TOP POT (the Main's heads-up final): 'none' = straight HU, lowest score wins (anyone's game) | 'fixed' (β) | 'calibrated'
                                 // ('fixed'/'calibrated' give the higher-rated finalist a stroke head-start ∝ their rating advantage; 'calibrated' solves β so the favorite wins ≈ finaleTargetWinProb of the Top Pot)
     finaleTargetWinProb: 0.65,  // θ*: target win probability of the FAVORITE (higher-rated of the 2 Top Pot finalists) — calibrated mode only; below the natural rate ⇒ no head-start
@@ -5191,7 +5191,7 @@ const Season = {
     volumeWindow: 7,
     // --- careers ---
     offSeasonGap: 2,            // between-season process noise, in "events" (form from last year partly goes stale; vol also relaxes toward 1). ↑ ⇒ less carries over season-to-season
-    // --- multi-criteria Hive Crown eligibility (all must hold; if NO ONE qualifies, the Crown falls to the player with the highest LOWER-confidence-bound rating μ − 1.5·RD — a good-AND-trusted pick, not a fluky-few-events one) ---
+    // --- multi-criteria Royal Suitor eligibility (all must hold; if NO ONE qualifies, the title falls to the player with the highest LOWER-confidence-bound rating μ − 1.5·RD — a good-AND-trusted pick, not a fluky-few-events one) ---
     crownRdCap: 0.40,           // rating deviation must be ≤ this (z-units; ≈ 160 Hive-Rating points) — the number must be confident enough
     crownMinMajorsFrac: 0.5,    // must have played ≥ this fraction of the season's Majors
   },
@@ -5425,14 +5425,14 @@ const Season = {
     U.forEach(p => { p._muEnd = p.rating.mu; });
     // ---- crowns, ranks, diagnostics ----
     const ratedAll = U.slice().sort((a, b) => (b.rating.mu - a.rating.mu) || (a.id - b.id));
-    // Multi-criteria Hive Crown eligibility (ALL must hold): enough rated events,
+    // Multi-criteria Royal Suitor eligibility (ALL must hold): enough rated events,
     // a confident-enough rating (RD ≤ cap), and ≥ a fraction of the season's Majors.
     const rdCapZ = (cfg.crownRdCap != null) ? cfg.crownRdCap : 0.22;
     const minMaj = Math.max(0, Math.round((cfg.nMajors || 0) * ((cfg.crownMinMajorsFrac != null) ? cfg.crownMinMajorsFrac : 0.5)));
     const isCrownEligible = p => (p.rating.events >= cfg.minEventsForCrown) && (this.rdOf(p.rating) <= rdCapZ) && ((p.majorsPlayed || 0) >= minMaj);
     const eligible = ratedAll.filter(isCrownEligible);
     const playedEnough = ratedAll.filter(p => p.rating.events >= cfg.minEventsForCrown);   // for cards (volume only)
-    // If no one met the full criteria, the Crown falls to the highest LOWER-confidence-bound rating among those who played enough (μ − 1.5·RD) — good AND trusted, not a fluky-few-events spike.
+    // If no one met the full criteria, the title falls to the highest LOWER-confidence-bound rating among those who played enough (μ − 1.5·RD) — good AND trusted, not a fluky-few-events spike.
     const lcb = p => p.rating.mu - 1.5 * this.rdOf(p.rating);
     const crown = eligible[0] || playedEnough.slice().sort((a, b) => (lcb(b) - lcb(a)) || (b.rating.mu - a.rating.mu) || (a.id - b.id))[0] || ratedAll[0];
     const bySkill = U.slice().sort((a, b) => b.skill - a.skill);
@@ -5445,7 +5445,7 @@ const Season = {
     //                 tour's actual contenders" — the number the tour really lives or dies on, and not dragged
     //                 down by part-timers with 3-event noise. ◀ the headline now.
     //   rhoSeason   — over anyone with ≥3 rated events (broad; includes the noisy part-timers ⇒ pessimistic).
-    //   rhoEligible — over the Crown-eligible set (tight & range-restricted ⇒ also pessimistic).
+    //   rhoEligible — over the Suitor-eligible set (tight & range-restricted ⇒ also pessimistic).
     const totalEvs = cfg.nRegulars + cfg.nMajors + 1;
     const activeMin = Math.max(cfg.minEventsForCrown, Math.round(totalEvs * 0.6));
     const rhoActivePool = U.filter(p => p.rating.events >= activeMin);
@@ -5720,7 +5720,7 @@ function renderSeasonRunCard(out) {
   wrap.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.7; margin-bottom:8px; line-height:1.5;', text:
     (multi ? out.seasons.length + '-season career' : 'Season ' + last.year) + ' · universe ' + c.universeSize
     + ' · calendar: ' + c.nRegulars + ' Regulars + ' + c.nMajors + ' Majors + the Main Event'
-    + ' · ' + c.holesPerRound + 'h Regular legs' + ((+c.majorHoles && c.majorHoles !== c.holesPerRound) ? ' · ' + c.majorHoles + 'h Major' + ((+c.mainHoles !== c.majorHoles) ? '/' + c.mainHoles + 'h Main' : '/Main') + ' legs (the "grind")' : '') + ' × 4 staged legs/event'
+    + ' · ' + c.holesPerRound + 'h Regular rounds' + ((+c.majorHoles && c.majorHoles !== c.holesPerRound) ? ' · ' + c.majorHoles + 'h Major' + ((+c.mainHoles !== c.majorHoles) ? '/' + c.mainHoles + 'h Main' : '/Main') + ' STAGES (the Tour-de-France grind — the stages that separate the men from the boys)' : '') + ' · 4 per event'
     + ' · fields ' + c.regularField + '/' + c.majorField + '/' + c.mainField
     + ' · honey ' + (c.honeyCapMode === 'spec' ? '÷N (Spec)' : '÷stepped (Calib)') + ' · AI curve ×' + (+c.skillCurve || 1).toFixed(1)
     + ' · finale: ' + (c.finaleMode === 'none' ? 'pure cut (the Yellow Jacket is anyone\'s week)' : (c.finaleMode === 'calibrated' ? 'Tour-Championship — no-cut, head-start, β solved for #1-seed win-prob ' + f2(c.finaleTargetWinProb) : 'Tour-Championship — no-cut, fixed head-start β')) }));
@@ -5731,7 +5731,7 @@ function renderSeasonRunCard(out) {
     el('div', { style: 'font-size:13px; font-weight:700; color:#F0C75E;', text: last.yellowJacket.name + (last.yellowJacket.wasFavorite ? '' : '  ⚡ (the underdog!)') }),
     el('div', { style: 'font-size:10px; opacity:0.8; margin-top:2px;', text: 'skill ' + pc(last.yellowJacket.skillPct) + 'ile · season rating #' + last.yellowJacket.seasonRatingRank + ' · won the Top Pot heads-up vs ' + (last.yellowJacket.topPotOpponent || '?') + (last.finale && last.finale.topPot ? '  (' + last.finale.topPot.favScore.toFixed(1) + ' vs ' + last.finale.topPot.dogScore.toFixed(1) + (last.finale.topPot.headstart > 0 ? ', favorite spotted ' + last.finale.topPot.headstart.toFixed(1) : '') + ')' : '') })));
   crownRow.appendChild(el('div', { style: 'flex:1 1 260px; padding:9px 11px; border-radius:6px; background:rgba(120,180,255,0.10); border:1px solid rgba(120,180,255,0.28);' },
-    el('div', { style: 'font-size:9.5px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; margin-bottom:2px;', text: '👑 The Hive Crown  ·  season #1 (skill title)' }),
+    el('div', { style: 'font-size:9.5px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; margin-bottom:2px;', text: '👑 The Royal Suitor  ·  crowned for topping the season rating (the skill title)' }),
     el('div', { style: 'font-size:13px; font-weight:700; color:#9CC6FF;', text: last.hiveCrown.name + (last.hiveCrown.fullyEligible === false ? '  (provisional)' : '') }),
     el('div', { style: 'font-size:10px; opacity:0.8; margin-top:2px;', text: 'Hive Rating ' + last.hiveCrown.hiveRating + ' ±' + last.hiveCrown.rd + ' · skill ' + pc(last.hiveCrown.skillPct) + 'ile (true #' + last.hiveCrown.skillRank + ') · ' + last.hiveCrown.events + ' events · ' + (last.hiveCrown.majorsPlayed || 0) + ' Majors · form ' + ((+last.hiveCrown.vol || 1) <= 0.85 ? 'steady' : (+last.hiveCrown.vol || 1) >= 1.4 ? 'streaky' : 'normal') + ' (vol ' + (+last.hiveCrown.vol || 1).toFixed(2) + ')' })));
   wrap.appendChild(crownRow);
@@ -5741,7 +5741,7 @@ function renderSeasonRunCard(out) {
   if (last.eligibility) {
     const e = last.eligibility, b = e.bubble;
     wrap.appendChild(el('div', { style: 'font-size:9.5px; opacity:0.65; margin-bottom:8px; line-height:1.45;', text:
-      '🎟 Crown-eligible: ' + e.count + ' of ' + e.ratedCount + ' rated players (need ≥ ' + e.minEvents + ' of ' + e.totalEvents + ' events, ≥ ' + e.minMajors + ' Majors, RD ≤ ' + e.rdCap + ')'
+      '🎟 Suitor-eligible: ' + e.count + ' of ' + e.ratedCount + ' rated players (need ≥ ' + e.minEvents + ' of ' + e.totalEvents + ' events, ≥ ' + e.minMajors + ' Majors, RD ≤ ' + e.rdCap + ')'
       + (b ? '  ·  on the bubble: ' + b.name + ' (rated #' + b.ratingRank + ', skill ' + pc(b.skillPct) + 'ile) — needs ' + (b.needEvents > 0 ? b.needEvents + ' more event' + (b.needEvents === 1 ? '' : 's') : (b.needMajors > 0 ? b.needMajors + ' more Major' + (b.needMajors === 1 ? '' : 's') : (b.rdOver ? 'a tighter rating (RD ' + b.rd + ' → ' + b.rdCap + ' — keep playing)' : 'nothing — should be in'))) : '') }));
   }
   // Top Pot line
@@ -5750,9 +5750,9 @@ function renderSeasonRunCard(out) {
   }
   // skill check
   wrap.appendChild(el('div', { style: 'font-size:11px; padding:7px 10px; border-radius:5px; background:rgba(255,255,255,0.04); margin-bottom:10px;', text:
-    '🎯 Skill check — ρ(rating, true skill) = ' + last.skill.rhoActive + ' over the ' + (last.skill.nActive || '?') + ' "regulars" (≥' + (last.skill.activeMin || '?') + ' events) ◀ the number that matters · ' + last.skill.rhoSeason + ' over all ' + (last.skill.nRated || '?') + ' rated (incl. noisy part-timers) · ' + last.skill.rhoEligible + ' Crown-eligible · single-Main ρ = ' + last.skill.rhoMain
+    '🎯 Skill check — ρ(rating, true skill) = ' + last.skill.rhoActive + ' over the ' + (last.skill.nActive || '?') + ' "regulars" (≥' + (last.skill.activeMin || '?') + ' events) ◀ the number that matters · ' + last.skill.rhoSeason + ' over all ' + (last.skill.nRated || '?') + ' rated (incl. noisy part-timers) · ' + last.skill.rhoEligible + ' Suitor-eligible · single-Main ρ = ' + last.skill.rhoMain
     + '  ·  the best player finished season #' + last.skill.bestPlayerRatingRank + ' (' + pc(last.skill.bestPlayerRatingPct) + 'ile)'
-    + '  ·  true #1 ' + (last.skill.trueNo1IsCrown ? 'WON' : 'did not win') + ' the Crown; top-5 skill ' + (last.skill.top5SkillIsCrown ? 'did' : 'did not') }));
+    + '  ·  the true-#1 skill ' + (last.skill.trueNo1IsCrown ? 'IS' : 'is not') + ' the Royal Suitor; a top-5-skill player ' + (last.skill.top5SkillIsCrown ? 'is' : 'is not') }));
   // rating leaderboard
   const tbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10.5px;' });
   const thr = el('tr', { style: 'opacity:0.6; text-align:left;' });
@@ -5770,7 +5770,7 @@ function renderSeasonRunCard(out) {
     wrap.appendChild(el('div', { style: 'margin-top:10px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px;', text: 'Career arc' }));
     const ct = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10px; margin-top:3px;' });
     const ch = el('tr', { style: 'opacity:0.6; text-align:left;' });
-    ['Year', '👑 Hive Crown', '🧥 Yellow Jacket', '↑ Biggest riser', 'ρ season / Main'].forEach(h => ch.appendChild(el('th', { style: 'padding:2px 6px; border-bottom:1px solid rgba(255,255,255,0.12);', text: h })));
+    ['Year', '👑 Royal Suitor', '🧥 Yellow Jacket', '↑ Biggest riser', 'ρ season / Main'].forEach(h => ch.appendChild(el('th', { style: 'padding:2px 6px; border-bottom:1px solid rgba(255,255,255,0.12);', text: h })));
     ct.appendChild(ch);
     out.careerLog.forEach((r, i) => {
       const tr = el('tr', { style: i % 2 ? 'background:rgba(255,255,255,0.02);' : '' });
@@ -5793,13 +5793,13 @@ function renderSeasonStudyCard(out) {
   const ROWS = [
     ['ρ(rating, true skill) — the REGULARS', 'rhoActive', 'pct2', '◀ THE headline (OWGR-style) — does the ' + (careerN > 1 ? careerN + '-season-career ' : 'season ') + 'rating sort the tour\'s actual contenders (≥60% of the calendar)'],
     ['ρ(rating, true skill) — all rated (≥3 ev)', 'rhoSeason', 'pct2', 'broad pool — dragged down by noisy part-timers (pessimistic)'],
-    ['ρ(rating, true skill) — Crown-eligible only', 'rhoEligible', 'pct2', 'range-restricted to the top (also pessimistic)'],
+    ['ρ(rating, true skill) — Suitor-eligible only', 'rhoEligible', 'pct2', 'range-restricted to the top (also pessimistic)'],
     ['ρ(Main finish, true skill) — one event', 'rhoMain', 'pct2', 'for contrast: a single event stays chaotic'],
-    ['Hive Crown holder — skill %ile', 'crownSkillPct', 'pct', '↑ the #1 is usually one of the genuine best'],
-    ['true #1 wins the Crown', 'trueNo1IsCrown', 'pct', '↑'],
-    ['top-5 skill wins the Crown', 'top5SkillIsCrown', 'pct', '↑'],
+    ['Royal Suitor holder — skill %ile', 'crownSkillPct', 'pct', '↑ the #1 is usually one of the genuine best'],
+    ['true #1 is crowned', 'trueNo1IsCrown', 'pct', '↑'],
+    ['top-5 skill is crowned', 'top5SkillIsCrown', 'pct', '↑'],
     ['best player — final rating %ile', 'bestPlayerRatingPct', 'pct', '↑ where the universe-best ended up'],
-    ['Yellow Jacket winner — skill %ile', 'jacketSkillPct', 'pct', 'lower than the Crown — the Yellow Jacket is anyone\'s Top Pot'],
+    ['Yellow Jacket winner — skill %ile', 'jacketSkillPct', 'pct', 'lower than the title — the Yellow Jacket is anyone\'s Top Pot'],
     ['Yellow Jacket winner — pre-Main season-rating %ile', 'jacketSeasonPct', 'pct', 'LOWER = more chaotic finale (upsets live in the Top Pot)'],
     ['Top Pot — favorite (higher-rated finalist) wins', 'no1SeedWinsFinale', 'pct', c.finaleMode === 'calibrated' ? 'should land near the target (' + (+c.finaleTargetWinProb).toFixed(2) + ')' : (c.finaleMode === 'none' ? 'straight heads-up — the favorite\'s natural edge (≈ a coin-flip+)' : 'fixed-β head-start')],
     ['Top Pot — #1 rating-seed reached the final 2', 'topPotNo1InFinal', 'pct', 'how often the season\'s top-rated Main entrant even makes the Top Pot'],
@@ -5850,7 +5850,7 @@ function renderSeasonStudyCard(out) {
     : ('At ' + a0.totalHoles + ' holes/event the rating sorts the regulars at ρ ≈ ' + ra + (ra >= 0.4 ? '.' : ' — too low. The per-event skill signal at this round length is the bottleneck (not ω, not the calendar); 54–72h rounds raise ρ_single ~3× ⇒ ρ_active climbs. Set Holes/round = 72 and re-run, and/or use a multi-season career.'));
   wrap.appendChild(el('div', { style: 'margin-top:8px; font-size:10px; opacity:0.75; line-height:1.5; border-top:1px dashed rgba(255,255,255,0.10); padding-top:7px;', text:
     careerBit + ' (a single Main event sits at ρ ≈ ' + a0.rhoMain + ' — the year/career is the instrument, not the event; the rating MECHANISM is sound — feed it a strong per-event signal and ρ → ~1.) '
-    + 'The Hive Crown lands on a ' + pc(a0.crownSkillPct) + 'ile player; the Yellow Jacket on a ' + pc(a0.jacketSkillPct) + 'ile player (pre-Main season-rating ' + pc(a0.jacketSeasonPct) + 'ile) — the event stays an upset machine. '
+    + 'The Royal Suitor lands on a ' + pc(a0.crownSkillPct) + 'ile player; the Yellow Jacket on a ' + pc(a0.jacketSkillPct) + 'ile player (pre-Main season-rating ' + pc(a0.jacketSeasonPct) + 'ile) — the event stays an upset machine. '
     + (a18 && a0 !== a18 ? ('Classic 18-hole framing (' + a18.totalHoles + 'h/event): ρ_season ≈ ' + a18.rhoSeason + ' — ' + (Math.abs(lift) < 0.015 ? 'about the same' : (lift > 0 ? 'so ' + a0.totalHoles + 'h rounds are worth +' + lift.toFixed(2) + ' here' : a18.totalHoles + 'h actually edges it by ' + (-lift).toFixed(2))) + '. ') : '')
     + (out.noSkill ? '(No-skill reference: ρ ≈ ' + out.noSkill.rhoSeason + ', Crown ' + pc(out.noSkill.crownSkillPct) + 'ile — i.e. random.)' : '') }));
   return wrap;
@@ -20681,7 +20681,7 @@ Views.spectator = function() {
     const seasonCard = el('div', { class: 'card', style: 'padding:14px; margin-bottom:14px;' });
     seasonCard.appendChild(el('h2', { text: '🏆 The Hive Tour  ·  season engine', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
     seasonCard.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.65; line-height:1.5; margin-bottom:10px;', text:
-      'A full season (or career) as a measurement instrument for skill. Each event is the v69.84 golf-major (R1 free, ~50% cut after R2 & R3, lowest 4-round total wins, golf-true cut tiers); a Kalman/Glicko-style filter folds every event\'s field-relative performance into a "Hive Rating" (precision ∝ tier × √holes × √field × rounds-played; the rating uses a smooth cut-blind performance order so a strong-but-cut player still measures well), plus process noise between events (form fades — so a career accumulates like the OWGR 2-year window). The Main Event closes the season. Two crowns: the Yellow Jacket (Main winner — chaotic) and the Hive Crown (season #1 rating — the skill title). With ~18-hole rounds the per-event skill signal is weak, so push "career seasons" / lower ω / longer "holes/round" to drive ρ_season up. ⚠ The STUDY caps fields (it measures the rating mechanism — small fields suffice; WSOP-scale fields just freeze the tab and add nothing) and refuses anything over ~12M engine-hands — those big 256/1024/7000 sizes are for "Run a season". Run a season/career, or the validation study (your holes vs the classic 18, optionally over an N-season career, + a no-skill reference). Uses the left-panel honey-cap + AI-curve.' }));
+      'A full season (or career) as a measurement instrument for skill. REGULARS are retail-heavy 4-round 72-hole tournaments (recreational players + casual pros); MAJORS are the prestigious flock — 4 staged "mountain stages" with cuts (Tour-de-France style, the stages that separate the men from the boys), each stage a full tournament\'s worth of golf, lowest total wins; the MAIN EVENT plays 4 such stages then narrows to the TOP POT — a heads-up final showdown whose winner takes the Yellow Jacket (the Kill-Bill jumper) + the Bumblebee plushie. A Kalman/Glicko filter folds every event\'s field-relative performance into a "Hive Rating" (precision ∝ tier × √holes × √field × rounds-played; cut-blind smoothing + Glicko volatility), with process noise between events (form fades, OWGR-style). At season\'s end the top-rated player (with the multi-criteria eligibility met) is crowned THE ROYAL SUITOR — the season skill title, distinct from the chaotic Yellow Jacket. With ~18-hole rounds the per-event skill signal is weak; the longer Major/Main stages carry it, so the Royal Suitor ends up Major-driven (push "Major/Main holes/round" up, run a multi-season career, or lengthen the Regulars too). The STUDY runs your config + the classic-18-everything baseline + a no-skill reference, chunked (responsive, with progress + Stop), with capped fields (it measures the rating mechanism — WSOP-scale fields are for "Run a season"). Uses the left-panel honey-cap + AI-curve.' }));
     const mkNum = (label, key, min, max, step, w) => {
       const box = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
       box.appendChild(el('span', { style: 'font-size:9px; opacity:0.6;', text: label }));
@@ -20807,7 +20807,7 @@ Views.spectator = function() {
       if (valid.length > 1) {
         const avgArm0 = key => valid.reduce((a, h) => a + (+h.arms[0][key] || 0), 0) / valid.length;
         seasonCard.appendChild(el('div', { style: 'margin-top:8px; font-size:10px; opacity:0.7; line-height:1.5;', text:
-          'Pooled over ' + valid.length + ' study runs (arm 1) — ρ_season ≈ ' + avgArm0('rhoSeason').toFixed(3) + ' · Crown skill ≈ ' + Math.round(avgArm0('crownSkillPct') * 100) + '%ile · Jacket skill ≈ ' + Math.round(avgArm0('jacketSkillPct') * 100) + '%ile (season-rating ' + Math.round(avgArm0('jacketSeasonPct') * 100) + '%ile) · #1-seed wins the Main ≈ ' + Math.round(avgArm0('no1SeedWinsFinale') * 100) + '%' }));
+          'Pooled over ' + valid.length + ' study runs (arm 1) — ρ_season ≈ ' + avgArm0('rhoSeason').toFixed(3) + ' · Suitor skill ≈ ' + Math.round(avgArm0('crownSkillPct') * 100) + '%ile · Jacket skill ≈ ' + Math.round(avgArm0('jacketSkillPct') * 100) + '%ile (season-rating ' + Math.round(avgArm0('jacketSeasonPct') * 100) + '%ile) · Top Pot favorite wins ≈ ' + Math.round(avgArm0('no1SeedWinsFinale') * 100) + '%' }));
       }
     }
     center.appendChild(seasonCard);
