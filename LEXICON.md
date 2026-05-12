@@ -36,7 +36,7 @@ The canonical structure of a Yellow Jacket Tour hand. Real-golf semantic order: 
 
 | Type | Primary mark | Casual variants |
 |------|--------------|------------------|
-| Bankroll currency | **Nectar (★)** | "the bank," "stash," "stack" (cash context only) |
+| Bankroll currency | **Nectar (◈)** | "the bank," "stash," "stack" (cash context only) |
 | In-event wager unit | **Honey** | "the pot," "the comb" (when describing accumulated honey) |
 
 **Trademark posture:** Nectar and Honey are too descriptive on their own to register strongly in Class 28 (games). They're protected by common-law use and by the Yellow Jacket Tour family-of-marks argument. Don't file them solo.
@@ -47,8 +47,17 @@ The canonical structure of a Yellow Jacket Tour hand. Real-golf semantic order: 
 
 | Mark (PRIMARY — file) | Casual variants | What it is |
 |------------------------|------------------|------------|
-| **Yellow Jacket** (variant) | "YJ," "the sharp side," "the bogey rule" | Decisive-showdown loser posts +1 fixed bogey |
-| **Bumblebee** (variant) | "BB," "the gentle side," "the honored rule" | Decisive-showdown loser posts own hand-class score |
+| **Yellow Jacket** (variant) | "YJ," "the sharp side," "the bogey rule" | Decisive-showdown loser climbs the **loser ladder** (below): Next Best (straight+ keeps own −5..−1) → Take a Stroke (pair/2P/trips → +1 bogey) → Lay a Brick (high card checked through → +1) → Stack Bricks (high card bet into a grown pot → +2, the blow-up) |
+| **Bumblebee** (variant) | "BB," "the gentle side," "the honored rule" | Decisive-showdown loser posts their own hand-class score, always — no ladder |
+| **The loser ladder** (concept) | "the bogey ladder," "the four rungs" | The single monotone ordering of the Yellow Jacket loser score: **Next Best** (straight+ → own −5..−1) **<** **Take a Stroke** = **Lay a Brick** (+1) **<** **Stack Bricks** (+2, or +3/+4 at cap +4). Golf's own scoring shape — better than a bogey → a bogey → a worse-than-a-bogey blow-up. The worse your hand AND the more you committed, the more it costs — but a real made hand is forgiven. A fold sits off the ladder ("put me down for 1") |
+| **Next Best** (rule / outcome) | "respected loss," "coolered," "ran into a hand," "a losing birdie," "you still posted your number," "lipped out" | The top rung: a loser whose hand is a straight or better keeps their own −5..−1 hand-class score instead of any bogey. "A birdie's a birdie, even on a hole you lost." It's the loser side of the **cooler bonus** (the winner of that frame gets the extra −1). (Synonym **respected loss** retained; do **not** call it "the honored loss" — that's the Bumblebee variant.) |
+| **Take a Stroke** (rule / outcome) | "a two-putt bogey," "a working bogey," "take your medicine," "paid it off," "take the L" | The middle rung: a loser with a pair / two pair / trips posts the flat +1 bogey — the routine, no-drama loss, the modal showdown loser |
+| **Lay a Brick** (rule / outcome) | "a brick in your pocket," "checked it down with air," "laid up to bogey-plus" | The cheap brick rung: a loser holding only a high card who checked it through (the agreed total never reached double the opener) posts +1 — air, but you didn't commit to it |
+| **Stack Bricks** (rule / outcome) | "the 3-putt," "the blow-up," "spewed into it," "barreled with air," "the brick wall" | The expensive brick rung: a loser holding only a high card who committed honey until the agreed total reached at least double the opener posts +2 (the blow-up) — and loses the larger honey too. Slogan: "fold the brick to a bet, or stack 'em and eat the blow-up" |
+| **Brick** (term) | "air," "a whiff," "nothing made" | A hand that reaches showdown holding only a high card. Under Yellow Jacket a brick loser is on the Lay a Brick (+1) or Stack Bricks (+2+) rung depending on how much honey they committed |
+| **Pot-gated brick** (rule) | "the brick tax," "the bluff-back lever" | The Yellow Jacket sub-rule covering the two brick rungs: brick loss = `1 + ⌊(T−opener)/opener⌋`, clamped to `[1, cap]`, cap 2 by default — `Flat +1 / Flat +2 / Pot-gated cap +2 ★ / Pot-gated cap +4` in the Simulator's "Brick loss" control. Mirrors how folding a bigger pot costs more; the lever that makes pre-flop hand selection and bluffing matter. At cash, the opener-analog is the posted blinds (small + big) |
+| **Put me down for 1** (rule / phrase) | "a gimme," "conceded the hole," "open-folded," "concede it, take the stroke" | The fold cost on the scorecard: the folder always posts +1 — never +2, whatever they held and however much was bet — cards never revealed (the only part that scales is the honey forfeit, sized to the *previously-agreed* pot). Sits off the loser ladder. The cheap-escape asymmetry vs. Stack Bricks is what gives folding and bluffing their weight |
+| **Cooler bonus** (rule) | "the collide," "two monsters" | A winner who shows a full house or better against a loser also at a full house or better, within one hand-category, gets an extra −1 (floored at −6). Tour events only; <0.1% of showdowns. The loser of that frame is on the **Next Best** rung |
 
 ---
 
@@ -60,6 +69,14 @@ The canonical structure of a Yellow Jacket Tour hand. Real-golf semantic order: 
 | **Sweet Stroke** | Consumer-facing marketing; alternative brand presentation; "sweetening the pot" tagline | "Sweet," "the Sweet" |
 
 Both names refer to the same scoring system. The two marks let the brand have range: Honey-Stroke for in-world / mechanical contexts, Sweet Stroke for marketing and casual reference.
+
+### Scoring-law mechanics — preferred terms
+
+| Term | Use it for | Notes |
+|------|------------|-------|
+| **honey cap** | The round-end Honey→stroke divisor, applied once at each round end. | Two modes: `calibrated` (stepped table — round length 1→cap 1, 9→4, 18→9, 72→36) and `spec` (cap = the round's hole count N). Supersedes the older term **"round divisor"** (acceptable as a synonym, but "honey cap" is preferred in new copy). |
+| **hole envelope (E)** | The per-hole, per-player Honey ceiling in stroke-equivalents. | Default E = 3. Per-hole cap = `round(E × honeyCap)`. When E > 0 it replaces the legacy per-tier stroke caps. |
+| **pot-elastic K** | The per-beat cap multiplier. | Default K = 5. Each betting beat's cap is `min(3 × hole-envelope cap, ⌈K × agreed total⌉)`. |
 
 ---
 
@@ -165,6 +182,11 @@ When a casual variant is first used in a public artifact (marketing, build copy,
 | Date | Variant | First public use | Context |
 |------|---------|-------------------|---------|
 | 2026-05-02 | (initial set) | This LEXICON.md document | Adopted as part of brand-lexicon scaffold |
+| 2026-05-12 | "Next Best" (loser-ladder rung) — and casual variants "coolered," "ran into a hand," "a losing birdie," "you still posted your number," "lipped out" | `RULES.md` §3.9 / §7, in-app Rules-tab codex, README, build copy | Adopted as the name for the top rung of the Yellow Jacket loser ladder (straight+ keeps its own −5…−1) |
+| 2026-05-12 | "Take a Stroke" (loser-ladder rung) — and casual variants "a two-putt bogey," "a working bogey," "take your medicine," "paid it off," "take the L" | `RULES.md` §3.9 / §7, in-app Rules-tab codex, README, build copy | Adopted as the name for the middle rung (pair / two pair / trips → +1 bogey) |
+| 2026-05-12 | "Lay a Brick" (loser-ladder rung) — and casual variants "a brick in your pocket," "checked it down with air," "laid up to bogey-plus" | `RULES.md` §3.9 / §7, in-app Rules-tab codex, README, build copy, Simulator "Brick loss" control | Adopted as the name for the cheap brick rung (high card, checked through → +1) |
+| 2026-05-12 | "Stack Bricks" (loser-ladder rung) — and casual variants "the 3-putt," "the blow-up," "spewed into it," "barreled with air," "the brick wall" | `RULES.md` §3.9 / §7, in-app Rules-tab codex, README, build copy, Simulator "Brick loss" control | Adopted as the name for the expensive brick rung (high card bet into a pot ≥ 2× the opener → +2, the blow-up) |
+| 2026-05-12 | "Put me down for 1" (fold-cost phrase) — and casual variants "a gimme," "conceded the hole," "open-folded" | `RULES.md` §3.7 / §3.9 / §7, in-app Rules-tab codex, README, build copy | Adopted as the name for the fold cost (folder always posts +1, never +2; cards unrevealed) |
 | | | | |
 
 ---
