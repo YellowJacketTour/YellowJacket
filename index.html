@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.97-tour-de-bourdon-name-and-docs";
+const APP_VERSION = "2026.05.12-v69.99-tour-de-bourdon-season-center";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5159,10 +5159,10 @@ const Season = {
     majorHoles: 72,             // MAJORS: holes per STAGE — 4 staged "mountain stages" with cuts (Tour-de-France style: the stages that separate the men from the boys; 72 ⇒ each stage is a full tournament's worth of golf, a 288-hole championship). 0/unset ⇒ same as holesPerRound (= the pure-18h tour). The HYBRID (18h Regular rounds + 72h Major/Main stages) is the default.
     mainHoles: 72,              // THE MAIN EVENT (the grandest Major): same idea. 0/unset ⇒ same as holesPerRound.
     nRounds: 4,                 // R1 free → ~50% cut after R2 & R3 → R4 (no cut); lowest aggregate wins
-    universeSize: 384,          // the player population (tour pros + amateurs) — bump it for a fuller tour
-    nRegulars: 12, nMajors: 3,  // calendar: Regulars + Majors interleaved, then the Main
-    regularField: 48, majorField: 64, mainField: 96,                             // small for speed; the real shape is ~256/1024/7000
-    qualifierSlotsRegular: 8, qualifierSlotsMajor: 12, qualifierSlotsMain: 28,    // outsider spots per field
+    universeSize: 1024,         // the player population (tour pros + amateurs) — the production default; ρ_active ≈ 0.23 at this scale (a heavy calendar feeds the rating filter enough data)
+    nRegulars: 52, nMajors: 12, // calendar: Regulars + Majors interleaved, then the Main (a real-world season's worth — one Regular ≈ weekly, one Major ≈ monthly, the Main once a year)
+    regularField: 256, majorField: 320, mainField: 384,                          // production fields; the very-real shape is even larger (~7000 at the Main) — scale up via the UI for a fuller tour
+    qualifierSlotsRegular: 8, qualifierSlotsMajor: 12, qualifierSlotsMain: 28,    // outsider spots per field (overridden in _norm: ~50% of a Regular, ~15% of a Major, ~25% of the Main)
     qualifierNoise: 1.4,        // z-SD of the (rating + noise) score used to pick outsider qualifiers
     prestige: { regular: 1.0, major: 1.35, main: 1.6 },                          // event-importance × on precision
     tau0: 3.0,                  // base measurement precision per Regular-equivalent — higher ⇒ the rating tightens faster (steady-state precision P* ∝ √tau0/√ω); the dominant in-engine lever for ρ besides round length & the AI-curve width
@@ -5176,8 +5176,8 @@ const Season = {
     finaleTargetWinProb: 0.65,  // θ*: target win probability of the FAVORITE (higher-rated of the 2 Top Pot finalists) — calibrated mode only; below the natural rate ⇒ no head-start
     finaleBeta: 0.5,            // used when finaleMode==='fixed' (z-units of stroke head-start per z-unit of rating advantage)
     finaleModelNoiseVar: 1.0,   // model variance of a finishing-z used by the β solver
-    skillSpread: 'main',        // 'main' [0.30,0.95] | 'regular' [0.40,0.90] | 'wide' [0.20,0.95] | [lo,hi]
-    skillCurve: 1.0,            // AI skill-curve width multiplier (see makeProfileForSkill)
+    skillSpread: 'wide',        // 'main' [0.30,0.95] | 'regular' [0.40,0.90] | 'wide' [0.20,0.95] | [lo,hi] — production default is 'wide' (a real population: a few elites, a long tail of recreational players)
+    skillCurve: 2.5,            // AI skill-curve width multiplier (see makeProfileForSkill) — production default ×2.5: at ×1 the bots barely differ (the low end still plays near-optimal poker) ⇒ ρ ≈ 0; ×2.5 is the real rec-vs-pro gap and is the single biggest lever on ρ
     honeyCapMode: 'spec',       // 'spec' (÷N) | 'calibrated' (÷stepped) — locked for the run
     cardTour: 0,                // # of Tour cards issued at season end (0 ⇒ universeSize/4)
     // --- Glicko-2-flavored volatility (a streaky player's rating stays more uncertain) ---
@@ -5381,7 +5381,9 @@ const Season = {
     for (let m = 1; m <= cfg.nMajors; m++) majorAt.add(Math.round(m * (totalEvents - 1) / (cfg.nMajors + 1)));
     U.forEach(p => { p._muStart = p.rating.mu; });
     if (typeof U._evtCounter !== 'number') U._evtCounter = 0;
-    const majorWinners = [], regularWinners = []; let evIdx = 0;
+    const R4 = Math.max(1, cfg.nRounds || 4);
+    const eventLog = [];                              // a compact per-event broadcast record (production Season Center)
+    const majorWinners = [], regularWinners = []; let evIdx = 0, majN = 0, regN = 0;
     for (let week = 1; week <= cfg.nRegulars + cfg.nMajors; week++) {
       U.forEach(p => this.driftRating(p.rating, cfg, 1));
       const isMajor = majorAt.has(evIdx), tier = isMajor ? 'major' : 'regular';
@@ -5390,6 +5392,7 @@ const Season = {
       const field = this._pickField(U, size, slots);
       const r = this.runEvent(field, cfg, tier, isMajor ? 2.5 : 1.0, false, U._evtCounter++);
       (isMajor ? majorWinners : regularWinners).push(r.champion);
+      eventLog.push({ week: week, tier: tier, label: isMajor ? ('Major ' + (++majN)) : ('Regular ' + (++regN)), holes: isMajor ? cfg.majorHoles : cfg.holesPerRound, fieldSize: field.length, surviveAll: r.finishers.filter(p => (p._cutAfter || (R4 + 1)) > R4).length, _top: r.finishers.slice(0, 6) });
       evIdx++;
     }
     // snapshot ratings just before the Main (so Jacket-vs-season-rating isn't contaminated by the Main's own update)
@@ -5406,8 +5409,10 @@ const Season = {
     U.forEach(p => this.driftRating(p.rating, cfg, 1));
     const mainField = this._pickField(U, cfg.mainField, cfg.qualifierSlotsMain);
     const seeded = mainField.slice().sort((a, b) => (b.rating.mu - a.rating.mu) || (a.id - b.id));   // by rating ("seeds")
-    this.runEvent(mainField, cfg, 'main', 5.0, false, U._evtCounter++);                  // 4 staged legs (with cuts) — ratings update here
+    const mainR = this.runEvent(mainField, cfg, 'main', 5.0, false, U._evtCounter++);    // 4 staged legs (with cuts) — ratings update here
     const mainFinish = mainField.slice().sort((a, b) => (b._cutAfter - a._cutAfter) || (a.cum - b.cum) || (a.id - b.id));   // the 4-leg standing
+    eventLog.push({ week: cfg.nRegulars + cfg.nMajors + 1, tier: 'main', label: 'The Main Event', holes: cfg.mainHoles, fieldSize: mainField.length, surviveAll: mainFinish.filter(p => (p._cutAfter || (R4 + 1)) > R4).length, _top: mainFinish.slice(0, 6), _isMain: true });
+    void mainR;
     const mainRankOf = (() => { const m = new Map(); mainFinish.forEach((p, i) => m.set(p.id, i + 1)); return id => m.get(id); })();
     // THE TOP POT: the 2 best 4-leg totals; the higher-rated is the favorite (gets the head-start, if any).
     const tp0 = mainFinish[0], tp1 = mainFinish[1] || mainFinish[0];
@@ -5468,9 +5473,26 @@ const Season = {
       majorsPlayed: (bubbleP.majorsPlayed || 0), needMajors: Math.max(0, minMaj - (bubbleP.majorsPlayed || 0)),
       rd: Math.round(400 * this.rdOf(bubbleP.rating)), rdCap: Math.round(400 * rdCapZ), rdOver: this.rdOf(bubbleP.rating) > rdCapZ,
     } : null;
+    // finalize the per-event broadcast log (resolve player refs → name/skill-%ile; attach the Top Pot to the Main)
+    eventLog.forEach(ev => {
+      const top = ev._top || [];
+      ev.top5 = top.slice(0, 5).map(p => ({ id: p.id, name: p.name, skillPct: +pct(skillRankM.get(p.id)).toFixed(3), skillRank: skillRankM.get(p.id), hiveRating: this.hiveRating(p.rating) }));
+      ev.champion = ev.top5[0] || null; ev.runnerUp = ev.top5[1] || null;
+      if (ev._isMain) ev.topPot = topPot;
+      delete ev._top; delete ev._isMain;
+    });
+    // per-tier roll-up: did skill sort the winners? (avg champion skill-%ile by tier)
+    const _evAvg = arr => arr.length ? arr.reduce((s, e) => s + (e.champion ? e.champion.skillPct : 0), 0) / arr.length : null;
+    const calendar = {
+      events: eventLog,
+      regularChampAvgPct: _evAvg(eventLog.filter(e => e.tier === 'regular')),
+      majorChampAvgPct: _evAvg(eventLog.filter(e => e.tier === 'major')),
+      totalEvents: eventLog.length,
+    };
     return {
       year: year,
-      ratingTop: ratedAll.slice(0, 25).map(p => ({ id: p.id, name: p.name, skill: +p.skill.toFixed(3), skillRank: skillRankM.get(p.id), hiveRating: this.hiveRating(p.rating), rd: Math.round(400 * this.rdOf(p.rating)), events: p.rating.events, earnings: +p.earnings.toFixed(2), bestFinish: p.bestFinish, jacketWins: p.jacketWins, majorWins: p.majorWins })),
+      calendar: calendar,
+      ratingTop: ratedAll.slice(0, 25).map((p, i) => ({ rank: i + 1, id: p.id, name: p.name, skill: +p.skill.toFixed(3), skillRank: skillRankM.get(p.id), skillPct: +pct(skillRankM.get(p.id)).toFixed(3), hiveRating: this.hiveRating(p.rating), rd: Math.round(400 * this.rdOf(p.rating)), vol: +(p.rating.vol || 1).toFixed(2), events: p.rating.events, majorsPlayed: (p.majorsPlayed || 0), earnings: +p.earnings.toFixed(2), bestFinish: p.bestFinish, jacketWins: p.jacketWins, majorWins: p.majorWins, regularWins: p.regularWins, eligible: isCrownEligible(p) ? 1 : 0 })),
       hiveCrown: Object.assign(pinfo(crown), { hiveRating: this.hiveRating(crown.rating), rd: Math.round(400 * this.rdOf(crown.rating)), vol: +(crown.rating.vol || 1).toFixed(2), events: crown.rating.events, majorsPlayed: (crown.majorsPlayed || 0), ratingRank: ratingRankM.get(crown.id), fullyEligible: isCrownEligible(crown) }),
       yellowJacket: Object.assign(pinfo(jacket), { seasonRatingRank: jacketSeasonRank, mainSeedRank: seeded.findIndex(p => p.id === jacket.id) + 1, wasNo1Seed: seeded[0].id === jacket.id, wonViaTopPot: 1, topPotOpponent: (jacket === fav ? dog : fav).name, wasFavorite: jacket === fav, hiveRating: this.hiveRating(jacket.rating) }),
       majorWinners: majorWinners.map(pinfo),
@@ -5561,9 +5583,11 @@ const Season = {
       withCashRng(() => {
         const U = this.makeUniverse(cfg);
         for (let y = 1; y <= nSeasons; y++) { if (y > 1) this._offSeason(U, cfg); seasons.push(this._runSeasonInner(cfg, U, y)); }
-        // attach a final-state universe view (for the career leaderboard)
+        // attach a final-state universe view (for the career leaderboard / Season Center)
+        const NpopC = U.length, bySkillC = U.slice().sort((a, b) => b.skill - a.skill), skR = new Map();
+        bySkillC.forEach((p, i) => skR.set(p.id, i + 1));
         const finalTop = U.slice().sort((a, b) => (b.rating.mu - a.rating.mu) || (a.id - b.id)).slice(0, 25)
-          .map((p, i) => ({ rank: i + 1, id: p.id, name: p.name, skill: +p.skill.toFixed(3), hiveRating: this.hiveRating(p.rating), rd: Math.round(400 * this.rdOf(p.rating)), events: p.rating.events, careerEarnings: +p.earnings.toFixed(2), jacketWins: p.jacketWins, majorWins: p.majorWins, regularWins: p.regularWins }));
+          .map((p, i) => ({ rank: i + 1, id: p.id, name: p.name, skill: +p.skill.toFixed(3), skillRank: skR.get(p.id), skillPct: +(NpopC > 1 ? 1 - (skR.get(p.id) - 1) / (NpopC - 1) : 1).toFixed(3), hiveRating: this.hiveRating(p.rating), rd: Math.round(400 * this.rdOf(p.rating)), vol: +(p.rating.vol || 1).toFixed(2), events: p.rating.events, majorsPlayed: (p.majorsPlayed || 0), careerEarnings: +p.earnings.toFixed(2), bestFinish: p.bestFinish, jacketWins: p.jacketWins, majorWins: p.majorWins, regularWins: p.regularWins }));
         seasons._finalTop = finalTop;
       });
       const last = seasons[seasons.length - 1];
@@ -5712,74 +5736,272 @@ function seasonStudyToCsv(history) {
 }
 
 // ---- in-page renderers for the Season engine -------------------------------
+// === THE SEASON CENTER — the production presentation of a Tour de Bourdon run ===
+// A tabbed broadcast over a Season.runCareer(...) result: the season overview & the
+// two honors, the Top Pot fight-card, the event calendar, the Hive Rating board, the
+// Royal-Suitor eligibility / "what I need" surface, and the skill-check diagnostics.
+// Tab state lives on out._tab so it sticks across re-renders of the Spectator view.
 function renderSeasonRunCard(out) {
-  const wrap = el('div', { style: 'margin-top:12px;' });
+  const wrap = el('div', { style: 'margin-top:14px;' });
   if (!out || !out.lastSeason) { wrap.appendChild(el('div', { style: 'color:#E08070; font-size:11px;', text: 'no season result' })); return wrap; }
-  const c = out.config, last = out.lastSeason, multi = (out.seasons && out.seasons.length > 1);
+  const c = out.config || {}, last = out.lastSeason, multi = (out.seasons && out.seasons.length > 1), nS = multi ? out.seasons.length : 1;
+  const cal = last.calendar || { events: [], totalEvents: ((c.nRegulars || 0) + (c.nMajors || 0) + 1), regularChampAvgPct: null, majorChampAvgPct: null };
+  const yj = last.yellowJacket || {}, rs = last.hiveCrown || {}, fin = last.finale || {}, tp = fin.topPot || null;
   const pc = x => Math.round((+x || 0) * 100) + '%';
-  const f2 = x => (+x || 0).toFixed(2);
-  wrap.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.7; margin-bottom:8px; line-height:1.5;', text:
-    (multi ? out.seasons.length + '-season career' : 'Season ' + last.year) + ' · universe ' + c.universeSize
-    + ' · calendar: ' + c.nRegulars + ' Regulars + ' + c.nMajors + ' Majors + the Main Event'
-    + ' · ' + c.holesPerRound + 'h Regular rounds' + ((+c.majorHoles && c.majorHoles !== c.holesPerRound) ? ' · ' + c.majorHoles + 'h Major' + ((+c.mainHoles !== c.majorHoles) ? '/' + c.mainHoles + 'h Main' : '/Main') + ' STAGES (the Tour-de-France grind — the stages that separate the men from the boys)' : '') + ' · 4 per event'
-    + ' · fields ' + c.regularField + '/' + c.majorField + '/' + c.mainField
-    + ' · honey ' + (c.honeyCapMode === 'spec' ? '÷N (Spec)' : '÷stepped (Calib)') + ' · AI curve ×' + (+c.skillCurve || 1).toFixed(1)
-    + ' · finale: ' + (c.finaleMode === 'none' ? 'pure cut (the Yellow Jacket is anyone\'s week)' : (c.finaleMode === 'calibrated' ? 'Tour-Championship — no-cut, head-start, β solved for #1-seed win-prob ' + f2(c.finaleTargetWinProb) : 'Tour-Championship — no-cut, fixed head-start β')) }));
-  // the two crowns
-  const crownRow = el('div', { style: 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;' });
-  crownRow.appendChild(el('div', { style: 'flex:1 1 260px; padding:9px 11px; border-radius:6px; background:rgba(212,160,23,0.12); border:1px solid rgba(212,160,23,0.32);' },
-    el('div', { style: 'font-size:9.5px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; margin-bottom:2px;', text: '🧥 The Yellow Jacket  ·  Main Event champion (the Kill-Bill jumper + the Bumblebee plushie)' }),
-    el('div', { style: 'font-size:13px; font-weight:700; color:#F0C75E;', text: last.yellowJacket.name + (last.yellowJacket.wasFavorite ? '' : '  ⚡ (the underdog!)') }),
-    el('div', { style: 'font-size:10px; opacity:0.8; margin-top:2px;', text: 'skill ' + pc(last.yellowJacket.skillPct) + 'ile · season rating #' + last.yellowJacket.seasonRatingRank + ' · won the Top Pot heads-up vs ' + (last.yellowJacket.topPotOpponent || '?') + (last.finale && last.finale.topPot ? '  (' + last.finale.topPot.favScore.toFixed(1) + ' vs ' + last.finale.topPot.dogScore.toFixed(1) + (last.finale.topPot.headstart > 0 ? ', favorite spotted ' + last.finale.topPot.headstart.toFixed(1) : '') + ')' : '') })));
-  crownRow.appendChild(el('div', { style: 'flex:1 1 260px; padding:9px 11px; border-radius:6px; background:rgba(120,180,255,0.10); border:1px solid rgba(120,180,255,0.28);' },
-    el('div', { style: 'font-size:9.5px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; margin-bottom:2px;', text: '👑 The Royal Suitor  ·  crowned for topping the season rating (the skill title)' }),
-    el('div', { style: 'font-size:13px; font-weight:700; color:#9CC6FF;', text: last.hiveCrown.name + (last.hiveCrown.fullyEligible === false ? '  (provisional)' : '') }),
-    el('div', { style: 'font-size:10px; opacity:0.8; margin-top:2px;', text: 'Hive Rating ' + last.hiveCrown.hiveRating + ' ±' + last.hiveCrown.rd + ' · skill ' + pc(last.hiveCrown.skillPct) + 'ile (true #' + last.hiveCrown.skillRank + ') · ' + last.hiveCrown.events + ' events · ' + (last.hiveCrown.majorsPlayed || 0) + ' Majors · form ' + ((+last.hiveCrown.vol || 1) <= 0.85 ? 'steady' : (+last.hiveCrown.vol || 1) >= 1.4 ? 'streaky' : 'normal') + ' (vol ' + (+last.hiveCrown.vol || 1).toFixed(2) + ')' })));
-  wrap.appendChild(crownRow);
-  // majors line
-  if (last.majorWinners && last.majorWinners.length) wrap.appendChild(el('div', { style: 'font-size:10px; opacity:0.75; margin-bottom:8px;', text: '🏆 Majors: ' + last.majorWinners.map(w => w.name + ' (' + pc(w.skillPct) + 'ile)').join('  ·  ') }));
-  // eligibility / "What I Need"
-  if (last.eligibility) {
-    const e = last.eligibility, b = e.bubble;
-    wrap.appendChild(el('div', { style: 'font-size:9.5px; opacity:0.65; margin-bottom:8px; line-height:1.45;', text:
-      '🎟 Suitor-eligible: ' + e.count + ' of ' + e.ratedCount + ' rated players (need ≥ ' + e.minEvents + ' of ' + e.totalEvents + ' events, ≥ ' + e.minMajors + ' Majors, RD ≤ ' + e.rdCap + ')'
-      + (b ? '  ·  on the bubble: ' + b.name + ' (rated #' + b.ratingRank + ', skill ' + pc(b.skillPct) + 'ile) — needs ' + (b.needEvents > 0 ? b.needEvents + ' more event' + (b.needEvents === 1 ? '' : 's') : (b.needMajors > 0 ? b.needMajors + ' more Major' + (b.needMajors === 1 ? '' : 's') : (b.rdOver ? 'a tighter rating (RD ' + b.rd + ' → ' + b.rdCap + ' — keep playing)' : 'nothing — should be in'))) : '') }));
+  const f1 = x => (+x || 0).toFixed(1), f2 = x => (+x || 0).toFixed(2);
+  const GOLD = '#F0C75E', BLUE = '#9CC6FF';
+  const formWord = v => (+v || 1) <= 0.85 ? 'steady' : (+v || 1) >= 1.4 ? 'streaky' : 'in form';
+  const tierOf = v0 => { const v = +v0 || 0; return v >= 0.97 ? 'an elite' : v >= 0.85 ? 'a top-tier' : v >= 0.65 ? 'a strong' : v >= 0.45 ? 'a mid-pack' : v >= 0.2 ? 'a journeyman' : 'a long-shot'; };
+  const chip = (txt, col) => el('span', { style: 'display:inline-block; padding:1.5px 7px; border-radius:99px; font-size:8px; font-weight:700; letter-spacing:0.7px; color:' + col + '; background:' + col + '1c; border:1px solid ' + col + '55; vertical-align:middle;', text: txt });
+  const tierMeta = t => t === 'main' ? { lab: 'THE MAIN', col: GOLD, ic: '🧥' } : t === 'major' ? { lab: 'MAJOR', col: '#E6B84A', ic: '🏆' } : { lab: 'REGULAR', col: '#aeb6bd', ic: '•' };
+  const ruleLine = () => el('div', { style: 'border-top:1px dashed rgba(255,255,255,0.10); margin:12px 0;' });
+  const secHdr = t => el('div', { style: 'font-size:9px; text-transform:uppercase; letter-spacing:1.5px; opacity:0.5; margin:0 0 7px 0; font-weight:700;', text: t });
+  const note = t => el('div', { style: 'font-size:9.5px; opacity:0.55; line-height:1.55; margin-top:8px; font-style:italic;', text: t });
+  const ln = (t, st) => el('div', { style: 'font-size:10px; opacity:0.85; line-height:1.5;' + (st || ''), text: t });
+
+  wrap.appendChild(el('div', { style: 'font-size:10px; opacity:0.6; line-height:1.6; margin-bottom:10px;', text:
+    (multi ? (nS + '-season career — state at end of Year ' + last.year) : ('🐝 Tour de Bourdon · Season ' + last.year))
+    + '  ·  universe ' + (c.universeSize || '?') + '  ·  ' + (c.nRegulars || 0) + ' Regulars + ' + (c.nMajors || 0) + ' Majors + the Main (' + cal.totalEvents + ' events)'
+    + '  ·  ' + (c.holesPerRound || 18) + 'h Regular rounds' + ((+c.majorHoles && c.majorHoles !== c.holesPerRound) ? ' / ' + c.majorHoles + 'h Major' + ((+c.mainHoles !== c.majorHoles) ? '/' + c.mainHoles + 'h Main' : '+Main') + ' stages' : '') + ' ×4'
+    + '  ·  fields ' + c.regularField + '/' + c.majorField + '/' + c.mainField + '  ·  honey ' + (c.honeyCapMode === 'spec' ? '÷N' : '÷stepped') + '  ·  AI curve ×' + (+c.skillCurve || 1).toFixed(1)
+    + '  ·  Top Pot: ' + (c.finaleMode === 'none' ? 'pure heads-up' : c.finaleMode === 'calibrated' ? 'head-start, β→θ*=' + f2(c.finaleTargetWinProb) : 'fixed head-start β') }));
+
+  const TABS = [
+    { id: 'season', label: '🏁 The Season' }, { id: 'toppot', label: '⚔ The Top Pot' }, { id: 'calendar', label: '📅 Calendar' },
+    { id: 'rating', label: '📊 Hive Rating' }, { id: 'elig', label: '🎟 Eligibility' }, { id: 'skill', label: '🎯 Skill Check' },
+  ];
+  if (!out._tab || !TABS.some(t => t.id === out._tab)) out._tab = 'season';
+  const tabBar = el('div', { style: 'display:flex; gap:3px; flex-wrap:wrap; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.12);' });
+  const content = el('div', {});
+
+  function heroHonors() {
+    const row = el('div', { style: 'display:flex; gap:11px; flex-wrap:wrap; margin-bottom:12px;' });
+    const jk = el('div', { style: 'flex:1 1 290px; padding:13px 15px; border-radius:9px; background:linear-gradient(135deg,rgba(212,160,23,0.18),rgba(212,160,23,0.04)); border:1px solid rgba(212,160,23,0.42);' });
+    jk.appendChild(el('div', { style: 'font-size:8.5px; text-transform:uppercase; letter-spacing:1.8px; color:' + GOLD + '; opacity:0.9; margin-bottom:4px;', text: '🧥 The Yellow Jacket' }));
+    jk.appendChild(el('div', { style: 'font-size:19px; font-weight:800; line-height:1.1; color:' + GOLD + ';', text: yj.name || '—' }));
+    jk.appendChild(el('div', { style: 'font-size:9px; opacity:0.65; margin-top:2px;', text: 'Main Event champion — the Kill-Bill jumper + the Bumblebee plushie 🧸' }));
+    jk.appendChild(ln('skill ' + pc(yj.skillPct) + 'ile (true #' + (yj.skillRank || '?') + ' · ' + tierOf(yj.skillPct) + ' player) · pre-Main season rating #' + (yj.seasonRatingRank || '?'), 'margin-top:7px;'));
+    if (tp) jk.appendChild(ln('Won the Top Pot vs ' + (yj.topPotOpponent || '?') + ' — ' + f1(tp.favName === yj.name ? tp.favScore : tp.dogScore) + ' to ' + f1(tp.favName === yj.name ? tp.dogScore : tp.favScore) + (tp.headstart > 0 ? ' (favorite spotted ' + f1(tp.headstart) + ')' : '')));
+    jk.appendChild(el('div', { style: 'margin-top:8px;' }, chip(yj.wasFavorite === false ? '⚡ THE UNDERDOG TOOK IT' : 'THE FAVORITE HELD', GOLD)));
+    row.appendChild(jk);
+    const su = el('div', { style: 'flex:1 1 290px; padding:13px 15px; border-radius:9px; background:linear-gradient(135deg,rgba(120,180,255,0.16),rgba(120,180,255,0.03)); border:1px solid rgba(120,180,255,0.36);' });
+    su.appendChild(el('div', { style: 'font-size:8.5px; text-transform:uppercase; letter-spacing:1.8px; color:' + BLUE + '; opacity:0.9; margin-bottom:4px;', text: '👑 The Royal Suitor' + (rs.fullyEligible === false ? '  ·  provisional' : '') }));
+    su.appendChild(el('div', { style: 'font-size:19px; font-weight:800; line-height:1.1; color:' + BLUE + ';', text: rs.name || '—' }));
+    su.appendChild(el('div', { style: 'font-size:9px; opacity:0.65; margin-top:2px;', text: 'the season skill title — topped the Hive Rating among the eligible' }));
+    su.appendChild(ln('Hive Rating ' + (rs.hiveRating || '?') + ' ±' + (rs.rd != null ? rs.rd : '?') + ' · skill ' + pc(rs.skillPct) + 'ile (true #' + (rs.skillRank || '?') + ' · ' + tierOf(rs.skillPct) + ' player)', 'margin-top:7px;'));
+    su.appendChild(ln((rs.events || '?') + ' events · ' + (rs.majorsPlayed || 0) + ' Majors played · ' + formWord(rs.vol) + ' (form vol ' + f2(rs.vol) + ')'));
+    if (rs.fullyEligible === false) su.appendChild(el('div', { style: 'margin-top:8px;' }, chip('PROVISIONAL — fell short of full eligibility (LCB pick)', BLUE)));
+    row.appendChild(su);
+    return row;
   }
-  // Top Pot line
-  if (last.finale && last.finale.topPot) { const t = last.finale.topPot; wrap.appendChild(el('div', { style: 'font-size:9.5px; opacity:0.65; margin-bottom:8px; font-style:italic;', text:
-    '⚔ The Top Pot — ' + t.favName + ' (' + t.favRating + ', skill ' + pc(t.favSkillPct) + 'ile, the favorite) vs ' + t.dogName + ' (' + t.dogRating + ', skill ' + pc(t.dogSkillPct) + 'ile) · ' + (last.finale.mode === 'none' ? 'straight heads-up, lowest score wins' : 'favorite spotted ' + t.headstart.toFixed(1) + ' strokes (β=' + t.beta + (last.finale.modeledFavWinProb != null ? ', modeled fav-win ≈ ' + f2(last.finale.modeledFavWinProb) : '') + ')') + ' → ' + t.winnerName + ' takes it' + (t.favoriteWon ? '.' : ' — the underdog!') + (t.no1SeedInFinal ? '' : '  (the #1 rating-seed didn\'t even make the final 2)') }));
+
+  function tabSeason() {
+    const d = el('div', {});
+    d.appendChild(heroHonors());
+    d.appendChild(secHdr((multi ? 'Year ' + last.year + ' — ' : '') + 'the championships'));
+    const mw = last.majorWinners || [];
+    if (mw.length) {
+      const grid = el('div', { style: 'display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:5px; margin-bottom:10px;' });
+      mw.forEach((w, i) => { const cell = el('div', { style: 'font-size:10px; padding:5px 8px; border-radius:5px; background:rgba(212,160,23,0.07); border:1px solid rgba(212,160,23,0.18);' }); cell.appendChild(el('div', { style: 'font-size:7.5px; opacity:0.5; text-transform:uppercase; letter-spacing:0.8px;', text: '🏆 Major ' + (i + 1) })); cell.appendChild(el('div', { style: 'font-weight:700; color:#E6B84A;', text: w.name })); cell.appendChild(el('div', { style: 'font-size:8.5px; opacity:0.65;', text: 'skill ' + pc(w.skillPct) + 'ile' })); grid.appendChild(cell); });
+      d.appendChild(grid);
+    } else d.appendChild(el('div', { style: 'font-size:10px; opacity:0.5; margin-bottom:10px;', text: '(no Majors on this calendar)' }));
+    const mv = last.mover || {};
+    if (mv.riser || mv.faller) {
+      const mr = el('div', { style: 'display:flex; gap:9px; flex-wrap:wrap; margin-bottom:10px;' });
+      const moverCell = (m, up) => { const x = el('div', { style: 'flex:1 1 230px; font-size:10px; padding:6px 10px; border-radius:5px; background:' + (up ? 'rgba(120,255,160,0.06)' : 'rgba(255,150,120,0.06)') + '; border:1px solid ' + (up ? 'rgba(120,255,160,0.18)' : 'rgba(255,150,120,0.18)') + ';' }); x.appendChild(el('div', { style: 'font-size:7.5px; opacity:0.55; text-transform:uppercase; letter-spacing:0.9px;', text: (up ? '↑ Biggest riser' : '↓ Biggest faller') })); x.appendChild(el('div', {}, el('span', { style: 'font-weight:700; color:' + (up ? '#9FE8B5' : '#E8A99F') + ';', text: m.name }), el('span', { style: 'opacity:0.7;', text: '   ' + (up ? '+' : '') + f2(m.delta) + ' z  →  Hive ' + (m.hiveRating || '?') + '  ·  skill ' + pc(m.skillPct) + 'ile' }))); return x; };
+      if (mv.riser) mr.appendChild(moverCell(mv.riser, true));
+      if (mv.faller) mr.appendChild(moverCell(mv.faller, false));
+      d.appendChild(mr);
+    }
+    d.appendChild(ruleLine());
+    d.appendChild(secHdr('season at a glance'));
+    const bn = el('div', { style: 'display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:6px;' });
+    const stat = (lab, val, sub) => { const x = el('div', { style: 'padding:7px 10px; border-radius:6px; background:rgba(255,255,255,0.035);' }); x.appendChild(el('div', { style: 'font-size:7.5px; opacity:0.5; text-transform:uppercase; letter-spacing:0.9px;', text: lab })); x.appendChild(el('div', { style: 'font-size:15px; font-weight:700;', text: String(val) })); if (sub) x.appendChild(el('div', { style: 'font-size:8.5px; opacity:0.55;', text: sub })); return x; };
+    bn.appendChild(stat('Events', cal.totalEvents, c.nRegulars + ' Reg · ' + c.nMajors + ' Maj · 1 Main'));
+    bn.appendChild(stat('Population', c.universeSize, 'tour pros + amateurs'));
+    bn.appendChild(stat('Suitor-eligible', (last.eligibility ? last.eligibility.count + ' / ' + last.eligibility.ratedCount : '?'), 'met all 3 criteria'));
+    bn.appendChild(stat('ρ(rating, skill)', f2(last.skill.rhoActive), 'over the regulars ◀ headline'));
+    bn.appendChild(stat('Suitor skill', pc(last.skill.crownSkillPct) + 'ile', tierOf(last.skill.crownSkillPct) + ' champion'));
+    bn.appendChild(stat('Jacket skill', pc(last.skill.jacketSkillPct) + 'ile', 'the Top Pot is wild'));
+    d.appendChild(bn);
+    d.appendChild(note('The Royal Suitor is the season-long skill verdict (a rating crown); the Yellow Jacket is one wild week — the Main\'s heads-up Top Pot — so it lands lower on skill by design. Tabs: ⚔ the Top Pot broadcast · 📅 the event log · 📊 the full Hive Rating board · 🎟 who\'s eligible & "what they need" · 🎯 how well the season sorted skill.'));
+    return d;
   }
-  // skill check
-  wrap.appendChild(el('div', { style: 'font-size:11px; padding:7px 10px; border-radius:5px; background:rgba(255,255,255,0.04); margin-bottom:10px;', text:
-    '🎯 Skill check — ρ(rating, true skill) = ' + last.skill.rhoActive + ' over the ' + (last.skill.nActive || '?') + ' "regulars" (≥' + (last.skill.activeMin || '?') + ' events) ◀ the number that matters · ' + last.skill.rhoSeason + ' over all ' + (last.skill.nRated || '?') + ' rated (incl. noisy part-timers) · ' + last.skill.rhoEligible + ' Suitor-eligible · single-Main ρ = ' + last.skill.rhoMain
-    + '  ·  the best player finished season #' + last.skill.bestPlayerRatingRank + ' (' + pc(last.skill.bestPlayerRatingPct) + 'ile)'
-    + '  ·  the true-#1 skill ' + (last.skill.trueNo1IsCrown ? 'IS' : 'is not') + ' the Royal Suitor; a top-5-skill player ' + (last.skill.top5SkillIsCrown ? 'is' : 'is not') }));
-  // rating leaderboard
-  const tbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10.5px;' });
-  const thr = el('tr', { style: 'opacity:0.6; text-align:left;' });
-  ['#', 'Player', 'Hive Rating', '± RD', 'True skill (rank)', 'Events', 'Earnings', 'Best', 'Wins'].forEach(h => thr.appendChild(el('th', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.12);', text: h })));
-  tbl.appendChild(thr);
-  (multi ? out.finalTop : last.ratingTop).slice(0, 20).forEach((p, i) => {
-    const tr = el('tr', { style: i % 2 ? 'background:rgba(255,255,255,0.02);' : '' });
-    const winBits = ((p.jacketWins || 0) ? ('🧥×' + p.jacketWins + ' ') : '') + ((p.majorWins || 0) ? ('🏆×' + p.majorWins + ' ') : '') + ((p.regularWins || 0) ? ('•×' + p.regularWins) : '');
-    [String(p.rank || (i + 1)), p.name, String(p.hiveRating), '±' + p.rd, (+p.skill).toFixed(2) + '  (#' + p.skillRank + ')', String(p.events), f2(p.careerEarnings != null ? p.careerEarnings : p.earnings), String(p.bestFinish === Infinity ? '—' : (p.bestFinish || '—')), winBits || '—'].forEach((v, ci) => tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05);' + (ci === 0 ? 'opacity:0.6;' : '') + (ci === 4 ? 'opacity:0.8;' : ''), text: v })));
-    tbl.appendChild(tr);
-  });
-  wrap.appendChild(tbl);
-  // career arc
-  if (multi && out.careerLog) {
-    wrap.appendChild(el('div', { style: 'margin-top:10px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px;', text: 'Career arc' }));
-    const ct = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10px; margin-top:3px;' });
-    const ch = el('tr', { style: 'opacity:0.6; text-align:left;' });
-    ['Year', '👑 Royal Suitor', '🧥 Yellow Jacket', '↑ Biggest riser', 'ρ season / Main'].forEach(h => ch.appendChild(el('th', { style: 'padding:2px 6px; border-bottom:1px solid rgba(255,255,255,0.12);', text: h })));
-    ct.appendChild(ch);
-    out.careerLog.forEach((r, i) => {
-      const tr = el('tr', { style: i % 2 ? 'background:rgba(255,255,255,0.02);' : '' });
-      [String(r.year), r.crown, r.jacket, r.riser, r.rhoSeason + ' / ' + r.rhoMain].forEach(v => tr.appendChild(el('td', { style: 'padding:2px 6px; border-bottom:1px solid rgba(255,255,255,0.05);', text: v })));
-      ct.appendChild(tr);
+
+  function tabTopPot() {
+    const d = el('div', {});
+    if (!tp) { d.appendChild(el('div', { style: 'font-size:11px; opacity:0.6;', text: 'No Top Pot on record for this run.' })); return d; }
+    d.appendChild(el('div', { style: 'text-align:center; margin-bottom:2px;' }, el('span', { style: 'font-size:17px; font-weight:800; letter-spacing:3px; color:' + GOLD + ';', text: '⚔  THE TOP POT  ⚔' })));
+    d.appendChild(el('div', { style: 'text-align:center; font-size:9.5px; opacity:0.6; margin-bottom:13px;', text: 'the Main Event\'s heads-up final — winner takes the Yellow Jacket' + (multi ? '  ·  Year ' + last.year : '') }));
+    const won = tp.winnerName;
+    const card = el('div', { style: 'display:flex; align-items:stretch; flex-wrap:wrap; border-radius:9px; overflow:hidden; border:1px solid rgba(212,160,23,0.32);' });
+    const side = (nm, rating, skillPct, badge, badgeCol, isWinner, isLeft) => {
+      const w = el('div', { style: 'flex:1 1 230px; padding:14px 16px; background:' + (isWinner ? 'rgba(212,160,23,0.14)' : 'rgba(255,255,255,0.025)') + ';' + (isLeft ? '' : 'text-align:right;') });
+      w.appendChild(el('div', { style: 'margin-bottom:5px;' }, chip(badge, badgeCol)));
+      w.appendChild(el('div', { style: 'font-size:17px; font-weight:800; line-height:1.1; color:' + (isWinner ? GOLD : '#dde2e6') + ';', text: nm + (isWinner ? '  🧥' : '') }));
+      w.appendChild(el('div', { style: 'font-size:9.5px; opacity:0.7; margin-top:4px;', text: 'Hive Rating ' + rating }));
+      w.appendChild(el('div', { style: 'font-size:9.5px; opacity:0.7;', text: 'skill ' + pc(skillPct) + 'ile · ' + tierOf(skillPct) + ' player' }));
+      w.appendChild(el('div', { style: 'font-size:9px; opacity:0.5; margin-top:2px;', text: 'reached the final 2 via the Main\'s 4-leg standing' }));
+      return w;
+    };
+    card.appendChild(side(tp.favName, tp.favRating, tp.favSkillPct, 'FAVORITE · higher-rated', GOLD, won === tp.favName, true));
+    card.appendChild(el('div', { style: 'display:flex; align-items:center; justify-content:center; padding:0 6px; background:rgba(0,0,0,0.28);' }, el('span', { style: 'font-size:13px; font-weight:800; opacity:0.5; letter-spacing:1px;', text: 'VS' })));
+    card.appendChild(side(tp.dogName, tp.dogRating, tp.dogSkillPct, 'UNDERDOG', '#aeb6bd', won === tp.dogName, false));
+    d.appendChild(card);
+    d.appendChild(el('div', { style: 'margin-top:11px; padding:10px 14px; border-radius:8px; background:rgba(0,0,0,0.22); text-align:center;' },
+      el('div', { style: 'font-size:14px; font-weight:700;', text: tp.favName + '   ' + f1(tp.favScore) + '   —   ' + f1(tp.dogScore) + '   ' + tp.dogName }),
+      el('div', { style: 'font-size:9px; opacity:0.6; margin-top:3px;', text: tp.headstart > 0 ? ('favorite spotted ' + f1(tp.headstart) + ' strokes (β = ' + tp.beta + (fin.modeledFavWinProb != null ? ', modeled favorite-win ≈ ' + pc(fin.modeledFavWinProb) : '') + ')') : 'straight heads-up — lowest score wins, anyone\'s game' }),
+      el('div', { style: 'font-size:15px; font-weight:800; margin-top:7px; color:' + GOLD + ';', text: '🧥  ' + won + ' takes the Yellow Jacket' + (tp.favoriteWon ? '' : '   ·   ⚡ the underdog!') })));
+    d.appendChild(el('div', { style: 'font-size:9.5px; opacity:0.6; margin-top:9px; line-height:1.6;', text:
+      (tp.no1SeedInFinal ? 'The season\'s #1 rating-seed made the final 2 of the Main. ' : 'The season\'s #1 rating-seed didn\'t even reach the final 2 — the Main\'s four cut-staged legs are their own gauntlet. ')
+      + (fin.mode === 'none' ? 'With a pure-cut Top Pot the higher-rated finalist has only a small natural edge — that\'s deliberate: the Jacket is a wild week, the Royal Suitor is the season-long skill verdict.' : 'The head-start mode gives the favorite a rating-proportional stroke spot — dial θ* / β in the left panel.') }));
+    return d;
+  }
+
+  function tabCalendar() {
+    const d = el('div', {});
+    d.appendChild(secHdr((multi ? 'Year ' + last.year + ' — ' : '') + 'the calendar — ' + c.nRegulars + ' Regulars · ' + c.nMajors + ' Majors · the Main'));
+    const evs = cal.events || [];
+    if (!evs.length) { d.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.6;', text: '(per-event log unavailable for this run)' })); return d; }
+    const tbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10px;' });
+    const thr = el('tr', { style: 'opacity:0.5; text-align:left;' });
+    ['#', 'Event', 'Holes×4', 'Field', 'All 4', 'Champion', 'Runner-up'].forEach(h => thr.appendChild(el('th', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.12);', text: h })));
+    tbl.appendChild(thr);
+    evs.forEach((ev, i) => {
+      const tm = tierMeta(ev.tier), isMain = ev.tier === 'main', isMaj = ev.tier === 'major';
+      const tr = el('tr', { style: (isMain ? 'background:rgba(212,160,23,0.11);' : isMaj ? 'background:rgba(212,160,23,0.04);' : (i % 2 ? 'background:rgba(255,255,255,0.02);' : '')) });
+      tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.45;', text: String(ev.week) }));
+      const ec = el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); white-space:nowrap;' });
+      ec.appendChild(el('span', { style: 'margin-right:5px;', text: tm.ic })); ec.appendChild(chip(tm.lab, tm.col)); ec.appendChild(el('span', { style: 'opacity:0.5; font-size:9px; margin-left:6px;', text: ev.label }));
+      tr.appendChild(ec);
+      tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.7;', text: ev.holes + 'h' }));
+      tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.65;', text: String(ev.fieldSize) }));
+      tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.55;', text: String(ev.surviveAll) }));
+      const ch = ev.champion || {};
+      const cc = el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05);' });
+      cc.appendChild(el('span', { style: 'font-weight:700;' + (isMain ? 'color:' + GOLD + ';' : ''), text: ch.name || '—' }));
+      cc.appendChild(el('span', { style: 'opacity:0.5; font-size:9px;', text: '  ' + pc(ch.skillPct) + 'ile' }));
+      if (isMain) cc.appendChild(el('span', { style: 'opacity:0.65; font-size:9px;', text: '  → the Top Pot' }));
+      tr.appendChild(cc);
+      const ru = ev.runnerUp || {};
+      tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.65;', text: ru.name ? (ru.name + '  ' + pc(ru.skillPct) + 'ile') : '—' }));
+      tbl.appendChild(tr);
     });
-    wrap.appendChild(ct);
+    d.appendChild(tbl);
+    if (cal.regularChampAvgPct != null) d.appendChild(note('Average champion skill %ile this ' + (multi ? 'year' : 'season') + ': Regulars ≈ ' + pc(cal.regularChampAvgPct) + 'ile' + (cal.majorChampAvgPct != null ? ', Majors ≈ ' + pc(cal.majorChampAvgPct) + 'ile' : '') + '. The longer Major/Main stages carry more skill signal, so their winners trend higher; a single Regular is close to a coin-flip on who lifts the trophy — true to life (one PGA event isn\'t a skill referendum either). "All 4" = how many of the field survived both cuts to play the final stage.'));
+    return d;
   }
+
+  function tabRating() {
+    const d = el('div', {});
+    const board = multi ? (out.finalTop || []) : (last.ratingTop || []);
+    d.appendChild(secHdr(multi ? 'career standings — cumulative Hive Rating (end of Year ' + last.year + ')' : 'the Hive Rating board — top ' + Math.min(25, board.length)));
+    const minEv = last.eligibility ? last.eligibility.minEvents : 0;
+    const tbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10px;' });
+    const thr = el('tr', { style: 'opacity:0.5; text-align:left;' });
+    ['#', 'Player', 'Hive', '±RD', 'Form', 'True skill', 'Ev', 'Maj', 'Earnings', 'Best', 'Wins', 'Suitor'].forEach(h => thr.appendChild(el('th', { style: 'padding:3px 5px; border-bottom:1px solid rgba(255,255,255,0.12);', text: h })));
+    tbl.appendChild(thr);
+    board.slice(0, 25).forEach((p, i) => {
+      const isCrown = p.id === rs.id, isJk = p.id === yj.id;
+      const tr = el('tr', { style: isCrown ? 'background:rgba(120,180,255,0.11);' : (i % 2 ? 'background:rgba(255,255,255,0.02);' : '') });
+      const wins = ((p.jacketWins || 0) ? ('🧥' + (p.jacketWins > 1 ? '×' + p.jacketWins : '') + ' ') : '') + ((p.majorWins || 0) ? ('🏆' + (p.majorWins > 1 ? '×' + p.majorWins : '') + ' ') : '') + ((p.regularWins || 0) ? ('•×' + p.regularWins) : '');
+      const sui = p.eligible ? '✓' : (p.events != null && p.events < minEv ? '–' : '·');
+      const cells = [
+        String(p.rank || (i + 1)), (isCrown ? '👑 ' : isJk ? '🧥 ' : '') + p.name, String(p.hiveRating), '±' + (p.rd != null ? p.rd : '?'),
+        (p.vol != null ? formWord(p.vol) : '—'),
+        (p.skillPct != null ? pc(p.skillPct) + 'ile' : (+p.skill).toFixed(2)) + (p.skillRank ? ' (#' + p.skillRank + ')' : ''),
+        String(p.events != null ? p.events : '?'), String(p.majorsPlayed != null ? p.majorsPlayed : '—'),
+        f2(p.careerEarnings != null ? p.careerEarnings : p.earnings), String(p.bestFinish === Infinity || p.bestFinish == null ? '—' : p.bestFinish), wins || '—', sui,
+      ];
+      cells.forEach((v, ci) => tr.appendChild(el('td', { style: 'padding:3px 5px; border-bottom:1px solid rgba(255,255,255,0.05);' + (ci === 0 ? 'opacity:0.45;' : '') + (ci === 5 ? 'opacity:0.8;' : '') + (ci === 11 ? 'text-align:center; color:' + (v === '✓' ? '#9FE8B5' : '#777') + ';' : ''), text: v })));
+      tbl.appendChild(tr);
+    });
+    d.appendChild(tbl);
+    d.appendChild(note('Hive Rating = a Kalman/Glicko filter on latent skill: 2000 ≈ tour-average, +400 per z-unit of skill. ±RD is the confidence band — it tightens with every event, re-widens between seasons (form fades) and for streaky players (high "form" volatility). Suitor column: ✓ met all three Royal-Suitor criteria · – not enough events yet · · played enough but rating not yet confident / Majors short.'));
+    if (multi && out.careerLog) {
+      d.appendChild(ruleLine());
+      d.appendChild(secHdr('career arc — winners by year'));
+      const ct = el('table', { style: 'width:100%; border-collapse:collapse; font-size:9.5px;' });
+      const chh = el('tr', { style: 'opacity:0.5; text-align:left;' });
+      ['Year', '👑 Royal Suitor', '🧥 Yellow Jacket', '↑ Biggest riser', 'ρ season / Main'].forEach(h => chh.appendChild(el('th', { style: 'padding:2px 6px; border-bottom:1px solid rgba(255,255,255,0.12);', text: h })));
+      ct.appendChild(chh);
+      out.careerLog.forEach((r, i) => { const tr = el('tr', { style: i % 2 ? 'background:rgba(255,255,255,0.02);' : '' }); [String(r.year), r.crown, r.jacket, r.riser, r.rhoSeason + ' / ' + r.rhoMain].forEach(v => tr.appendChild(el('td', { style: 'padding:2px 6px; border-bottom:1px solid rgba(255,255,255,0.05);', text: v }))); ct.appendChild(tr); });
+      d.appendChild(ct);
+    }
+    return d;
+  }
+
+  function tabElig() {
+    const d = el('div', {});
+    const e = last.eligibility || {}, b = e.bubble;
+    d.appendChild(secHdr('the Royal Suitor — eligibility'));
+    const crit = el('div', { style: 'font-size:11px; line-height:1.65; padding:11px 14px; border-radius:8px; background:rgba(120,180,255,0.06); border:1px solid rgba(120,180,255,0.20); margin-bottom:11px;' });
+    crit.appendChild(el('div', { style: 'opacity:0.85; margin-bottom:6px;', text: 'To win the season skill title a player must satisfy all three:' }));
+    const critRow = (n, txt) => el('div', { style: 'display:flex; gap:7px; align-items:baseline; font-size:10.5px; margin-bottom:3px;' }, el('span', { style: 'color:' + BLUE + '; font-weight:800;', text: n }), el('span', { style: 'opacity:0.85;', text: txt }));
+    crit.appendChild(critRow('①', 'Start ≥ ' + (e.minEvents != null ? e.minEvents : '?') + ' of the ' + (e.totalEvents != null ? e.totalEvents : '?') + ' season events — show up all year, not just for one hot streak.'));
+    crit.appendChild(critRow('②', 'Play ≥ ' + (e.minMajors != null ? e.minMajors : '?') + ' Majors — the big stages have to be part of the résumé.'));
+    crit.appendChild(critRow('③', 'Hold a confident rating — RD ≤ ' + (e.rdCap != null ? e.rdCap : '?') + ' Hive-points — the number has to be trusted, not still converging.'));
+    crit.appendChild(el('div', { style: 'opacity:0.7; margin-top:6px; font-size:10px;', text: 'This season ' + (e.count != null ? e.count : '?') + ' of ' + (e.ratedCount != null ? e.ratedCount : '?') + ' rated players qualified. ' + (rs.fullyEligible === false ? 'Nobody met all three → the title fell to ' + (rs.name || 'the LCB pick') + ', the highest lower-confidence-bound rating (μ − 1.5·RD) among those who showed up enough.' : (rs.name || 'the top eligible player') + ' topped the eligible board.') }));
+    d.appendChild(crit);
+    if (b) {
+      d.appendChild(secHdr('on the bubble — "what I need"'));
+      const need = b.needEvents > 0 ? (b.needEvents + ' more event' + (b.needEvents === 1 ? '' : 's')) : b.needMajors > 0 ? (b.needMajors + ' more Major' + (b.needMajors === 1 ? '' : 's')) : b.rdOver ? ('a tighter rating — RD ' + b.rd + ' must come down to ' + b.rdCap + ' (just keep playing)') : 'nothing — should be in';
+      const bc = el('div', { style: 'font-size:11px; padding:11px 14px; border-radius:8px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.10);' });
+      bc.appendChild(el('div', {}, el('span', { style: 'font-weight:800; font-size:13px;', text: b.name }), el('span', { style: 'opacity:0.6;', text: '   rated #' + b.ratingRank + ' (Hive ' + b.hiveRating + ') · skill ' + pc(b.skillPct) + 'ile' })));
+      bc.appendChild(el('div', { style: 'margin-top:6px; font-size:10.5px; opacity:0.8;', text: 'Events ' + b.events + (b.needEvents > 0 ? ' (needs ' + e.minEvents + ')' : ' ✓') + '   ·   Majors ' + b.majorsPlayed + (b.needMajors > 0 ? ' (needs ' + e.minMajors + ')' : ' ✓') + '   ·   RD ' + b.rd + (b.rdOver ? ' (needs ≤ ' + b.rdCap + ')' : ' ✓') }));
+      bc.appendChild(el('div', { style: 'margin-top:7px; font-size:11px;' }, el('span', { style: 'opacity:0.6;', text: 'To get eligible: ' }), el('span', { style: 'color:' + GOLD + '; font-weight:700;', text: need })));
+      d.appendChild(bc);
+    }
+    d.appendChild(note('The fallback (highest μ − 1.5·RD among the played-enough) keeps the title a "good AND trusted" pick — never a player who spiked over a couple of lucky events and bailed. In a real season most contenders clear all three by mid-year; the bubble is where the season-long story lives.'));
+    return d;
+  }
+
+  function tabSkill() {
+    const d = el('div', {}); const s = last.skill || {};
+    d.appendChild(secHdr('how well did the season sort skill?'));
+    const stat = (lab, val, sub, hl) => { const x = el('div', { style: 'padding:8px 11px; border-radius:6px; background:' + (hl ? 'rgba(212,160,23,0.10)' : 'rgba(255,255,255,0.035)') + (hl ? '; border:1px solid rgba(212,160,23,0.25)' : '') + ';' }); x.appendChild(el('div', { style: 'font-size:7.5px; opacity:0.55; text-transform:uppercase; letter-spacing:0.9px;', text: lab })); x.appendChild(el('div', { style: 'font-size:16px; font-weight:700;' + (hl ? 'color:' + GOLD + ';' : ''), text: String(val) })); if (sub) x.appendChild(el('div', { style: 'font-size:8.5px; opacity:0.55;', text: sub })); return x; };
+    const g = el('div', { style: 'display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:6px; margin-bottom:10px;' });
+    g.appendChild(stat('ρ — the regulars', f2(s.rhoActive), 'rating vs true skill, ≥' + (s.activeMin || '?') + ' events (n=' + (s.nActive || '?') + ')', true));
+    g.appendChild(stat('ρ — all rated', f2(s.rhoSeason), '≥3 events (n=' + (s.nRated || '?') + ') — pessimistic'));
+    g.appendChild(stat('ρ — Suitor-eligible', f2(s.rhoEligible), 'range-restricted to the top'));
+    g.appendChild(stat('ρ — one Main event', f2(s.rhoMain), 'a single event stays chaotic'));
+    g.appendChild(stat('Royal Suitor skill', pc(s.crownSkillPct) + 'ile', tierOf(s.crownSkillPct) + ' — true #' + (rs.skillRank || '?')));
+    g.appendChild(stat('Yellow Jacket skill', pc(s.jacketSkillPct) + 'ile', 'pre-Main rating ' + pc(s.jacketSeasonPct) + 'ile'));
+    g.appendChild(stat('Best player landed', '#' + (s.bestPlayerRatingRank || '?'), pc(s.bestPlayerRatingPct) + 'ile of the rating'));
+    g.appendChild(stat('True #1 = Suitor?', s.trueNo1IsCrown ? 'yes' : 'no', (s.top5SkillIsCrown ? 'a top-5-skill player IS' : 'no top-5-skill player IS') + ' the Suitor'));
+    d.appendChild(g);
+    d.appendChild(el('div', { style: 'font-size:10px; line-height:1.65; opacity:0.7; padding:9px 12px; border-radius:6px; background:rgba(255,255,255,0.03);', text:
+      'Honey-Stroke separates skill by ~1 stroke per round, so a single event barely sorts skill — ρ_single ≈ 0.05 at 18-hole rounds, ≈ 0.19 at 72h. The SEASON is the instrument: pooling ' + cal.totalEvents + ' events lifts the regulars\' ρ to ≈ ' + f2(s.rhoActive) + '. That\'s "skill-tilted but chaotic" — the Royal Suitor lands on roughly a ' + pc(s.crownSkillPct) + 'ile player, the Yellow Jacket on a ' + pc(s.jacketSkillPct) + 'ile one (the heads-up Top Pot is an upset machine, on purpose). "The literal #1 always wins" would need ρ ≈ 0.8 — unreachable at any sane round length, and not the goal: a world ranking that\'s skill-tilted but never a foregone conclusion is exactly what a real tour looks like.' }));
+    if (multi && out.careerLog) {
+      d.appendChild(ruleLine());
+      d.appendChild(secHdr('career arc — winners by year'));
+      const ct = el('table', { style: 'width:100%; border-collapse:collapse; font-size:9.5px;' });
+      const chh = el('tr', { style: 'opacity:0.5; text-align:left;' });
+      ['Year', '👑 Royal Suitor', '🧥 Yellow Jacket', '↑ Biggest riser', 'ρ season / Main'].forEach(h => chh.appendChild(el('th', { style: 'padding:2px 6px; border-bottom:1px solid rgba(255,255,255,0.12);', text: h })));
+      ct.appendChild(chh);
+      out.careerLog.forEach((r, i) => { const tr = el('tr', { style: i % 2 ? 'background:rgba(255,255,255,0.02);' : '' }); [String(r.year), r.crown, r.jacket, r.riser, r.rhoSeason + ' / ' + r.rhoMain].forEach(v => tr.appendChild(el('td', { style: 'padding:2px 6px; border-bottom:1px solid rgba(255,255,255,0.05);', text: v }))); ct.appendChild(tr); });
+      d.appendChild(ct);
+      d.appendChild(note('Watch the ρ column: with the production ω the rating saturates inside the first season, so it\'s roughly flat year-to-year — the value of more seasons is more chances to crown the right player, not an ever-sharpening number.'));
+    }
+    return d;
+  }
+
+  const TABFN = { season: tabSeason, toppot: tabTopPot, calendar: tabCalendar, rating: tabRating, elig: tabElig, skill: tabSkill };
+  function render() {
+    clear(tabBar);
+    TABS.forEach(t => {
+      const active = out._tab === t.id;
+      const b = el('button', { style: 'font-size:10.5px; padding:6px 11px; border:1px solid ' + (active ? 'rgba(212,160,23,0.42)' : 'transparent') + '; border-bottom:none; border-radius:6px 6px 0 0; cursor:pointer; background:' + (active ? 'rgba(212,160,23,0.13)' : 'transparent') + '; color:' + (active ? GOLD : '#9aa3ab') + '; font-weight:' + (active ? '700' : '400') + ';', text: t.label });
+      b.onclick = () => { out._tab = t.id; render(); };
+      tabBar.appendChild(b);
+    });
+    clear(content);
+    try { content.appendChild((TABFN[out._tab] || tabSeason)()); }
+    catch (err) { content.appendChild(el('div', { style: 'color:#E08070; font-size:11px;', text: 'tab render error: ' + (err && err.message ? err.message : err) })); }
+  }
+  wrap.appendChild(tabBar);
+  wrap.appendChild(content);
+  render();
   return wrap;
 }
 function renderSeasonStudyCard(out) {
@@ -7623,13 +7845,14 @@ function composite(p) { return p.majorWins * 10 + p.mainWins * 5 + p.regularWins
 // Buzz knowledge base
 const BuzzKnowledge = {
   faqs: [
-    { cat: 'tournament', q: 'What is Tour de Bourdon (the Nectour)?', a: 'The canonical season structure — a fixed calendar of events, one rolling skill rating (the Hive Rating), and a champion crowned at year\'s end (the Royal Suitor), all on Honey-Stroke underneath. Modeled on golf\'s major-championship season + cycling\'s grand tour. "Tour de Bourdon" = "Tour of the Bumblebee"; colloquially "the Nectour". Live engine: Spectator → the "Tour de Bourdon" card (run a season/career, or the validation study). Console: runBourdonStudy / runNectourStudy / runBourdonCareer.' },
+    { cat: 'tournament', q: 'What is Tour de Bourdon (the Nectour)?', a: 'The canonical season structure — a fixed calendar of events, one rolling skill rating (the Hive Rating), and a champion crowned at year\'s end (the Royal Suitor), all on Honey-Stroke underneath. Modeled on golf\'s major-championship season + cycling\'s grand tour. "Tour de Bourdon" = "Tour of the Bumblebee"; colloquially "the Nectour". The production default season: a 1024-player universe, 52 Regulars + 12 Majors + the Main, hybrid format (18-hole Regular rounds / 72-hole Major-&-Main stages), AI skill curve ×2.5 — ρ ≈ 0.23 over the contenders, Royal Suitor ≈ top-third player. Live engine: Spectator → the "Tour de Bourdon" card (run a season or a multi-season career, or the validation study); a completed run opens in the SEASON CENTER. Console: runBourdonStudy / runNectourStudy / runBourdonCareer.' },
+    { cat: 'tournament', q: 'What is the Season Center?', a: 'The production presentation of a Tour de Bourdon run — a tabbed broadcast that appears after you "Run a season" (or a career) on the Spectator screen. 🏁 THE SEASON: the two honors as hero cards (the Yellow Jacket + Bumblebee plushie · the Royal Suitor), the championships strip (every Major\'s winner, the biggest riser & faller), season-at-a-glance stats. ⚔ THE TOP POT: the heads-up final as a fight-card — favorite vs underdog, Hive Ratings, the score line, the Jacket awarded. 📅 CALENDAR: every event in order — tier badge, holes & field, made-all-4, champion + runner-up with skill %iles, the Main highlighted. 📊 HIVE RATING: the full board — Hive Rating, ±RD, form, true skill, events, Majors, earnings, wins, the Suitor-eligibility tick. 🎟 ELIGIBILITY: the three Royal-Suitor criteria + the lower-confidence-bound fallback, and the "on the bubble — what I need" card for the player who just missed. 🎯 SKILL CHECK: ρ(rating, skill) the regulars / all-rated / eligible / one-Main, the Suitor & Jacket skill %iles, the honest "skill-tilted but chaotic" framing, plus the year-by-year career arc in multi-season mode.' },
     { cat: 'tournament', q: 'On the Nectour, what are the three event tiers?', a: 'REGULARS — the weekly grind, retail-heavy (≈half the field is open qualifiers + casual pros, half exempt-by-rating); a classic 4-round, 72-hole tournament, lowest aggregate wins, ~50% cuts after rounds 2 & 3. MAJORS ("the stages") — the prestigious flock; 4 staged "mountain stages" with ~50% cuts between, each stage a full tournament\'s worth of golf (currently 72 holes/stage — a 288-hole championship); lowest aggregate over the surviving stages wins, no heads-up final; field is mostly the exempt elite + ~15% amateurs funding their way through qualifying. Majors carry the most weight in the rating. THE MAIN EVENT — the season finale; 4 staged legs crown a standing, then the top two play THE TOP POT (a heads-up final showdown) whose winner takes the Yellow Jacket + the Bumblebee plushie.' },
     { cat: 'tournament', q: 'What is the Top Pot?', a: 'The Main Event\'s heads-up final. The Main\'s 4 staged legs narrow the field; the two best 4-leg totals advance to the Top Pot — a one-on-one showdown. By default it\'s a straight heads-up (lowest score wins, anyone\'s game — the underdog wins it often enough to matter); optionally the higher-rated finalist can be spotted a calibrated stroke head-start (the "favorite\'s edge"). The Top Pot winner is the Yellow Jacket champion and gets the Bumblebee plushie.' },
     { cat: 'tournament', q: 'Who is the Royal Suitor?', a: 'The season skill title — crowned at year\'s end on the top Hive Rating among players who meet all the eligibility criteria (enough rated events; rating deviation tight enough to be trusted; ≥ a fraction of the season\'s Majors played). If no one clears the full bar, it falls to the highest lower-confidence-bound rating (μ − 1.5·RD) — a good-and-trusted pick, never a fluky-few-events spike. The Royal Suitor is the maillot jaune of the bumblebee: almost always one of the genuine best — but, like golf\'s year-end #1, never a guaranteed coronation of the literally-#1 player. The Yellow Jacket (a single-week Top Pot result) and the Royal Suitor (a season-long rating) are usually different people — by design.' },
     { cat: 'tournament', q: 'How does the Hive Rating work?', a: 'A Kalman / Glicko-2-flavored filter on latent skill. Each rated event gives you a field-relative performance score (a normal-scores transform of your finishing rank + a winsorized stroke-margin term + an OWGR-style strength-of-field bump — beating a strong field counts more). That\'s folded into your rating with precision ∝ tier × √(holes-per-stage / 72) × √(field size) × (stages played) — so longer / bigger / more-prestigious events move you more, and weak fields move you less. Between events, process noise widens the rating slightly (form fades, old results decay — a rolling world-ranking window). Streaky players keep a wider band; the rating uses a cut-blind performance order so a strong player who got cut on a near-coin-flip cut still measures well. Shown as an Elo-style number with a ± confidence band.' },
     { cat: 'tournament', q: 'Can a retail / amateur player make it on the Nectour?', a: 'Yes — that\'s the point. Every Regular is roughly half open qualifiers, and a slice of every Major and the Main is open too, so a nobody can play their way up within a single season. Do well in the events you scrape into, your Hive Rating climbs, and at season\'s end the rating list issues Tour cards (exempt status) — top of the list ⇒ full card, the next band ⇒ a conditional card, below ⇒ back to the qualifiers. Across seasons the rating carries forward (with a small off-season decay), so careers compound — like a two-year world ranking.' },
-    { cat: 'tournament', q: 'Why doesn\'t the literal best player always win the Royal Suitor?', a: 'Because Honey-Stroke separates an elite from a recreational player by only a stroke or so per round, so a single event barely sorts skill on its own (a Major\'s 288 holes do far better than a Regular\'s 72 — which is why Majors carry the rating). It\'s the SEASON and the CAREER — a rolling, precision-weighted average of dozens of events — that sort the field. By design: the Royal Suitor is a top-quartile-or-better player in a typical year; the literal #1 is rarely crowned; the Yellow Jacket stays a coin-flip in the Top Pot. The Tour rewards class over a season, but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card has a validation study that measures all of this — your config vs. a classic-18-everything baseline vs. a no-skill reference.)' },
+    { cat: 'tournament', q: 'Why doesn\'t the literal best player always win the Royal Suitor?', a: 'Because Honey-Stroke separates an elite from a recreational player by only a stroke or so per round, so a single event barely sorts skill on its own (ρ ≈ 0.05 over an 18-hole-round event, ≈ 0.19 over a 72-hole one — which is why Majors carry the rating). It\'s the SEASON and the CAREER — a rolling, precision-weighted average of dozens of events — that sort the field; the production calendar gets ρ to ≈ 0.23 over the contenders. By design: the Royal Suitor is a top-third (often top-quartile) player in a typical year; the literal #1 is rarely crowned (that would need ρ ≈ 0.8 — unreachable at any sane round length, and not the goal); the Yellow Jacket stays near a coin-flip in the Top Pot, though it\'s fed by the Main\'s standings so the winner tends to be high-rated even when not high-skill. The Tour rewards class over a season, but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card has a validation study that measures all of this — your config vs. a classic-18-everything baseline vs. a no-skill reference; the Season Center\'s "Skill Check" tab shows the same for a single run.)' },
     { cat: 'tournament', q: 'What stops people gaming the Hive Rating?', a: 'Four guards: (1) a field-strength floor — a weak field is a less-trustworthy signal, so its results carry reduced weight (can\'t farm rating off soft fields); (2) Glicko-style volatility — wildly-swinging results give you a wider, more reactive band (can\'t bank one hot streak forever); (3) multi-criteria Crown eligibility — a deep run in a couple of events doesn\'t make you the Royal Suitor, you have to show up all season including the Majors; (4) a volume cap — built in, currently dormant, a guard for a future overlapping-event calendar.' },
     { cat: 'rules', q: 'What is the scoring system?', a: 'Honey-Stroke. Two layers: (1) the scorecard — your hand category sets a bounded golf score for the hole (Royal Flush −5 down to High Card +2). (2) the honey pot — every hole begins with a mandatory 2 honey; bets/raises propose a new agreed total; the hole winner takes that agreed total as honey. Net honey is divided by the round-length divisor (36 for 72-hole finals, 9 for 18-hole rounds, 4 for 9-hole bracket matches, 1 for single-hole) and subtracted from the golf scorecard. Lower wins.' },
     { cat: 'rules', q: 'What does the honey credit do?', a: 'It SUBTRACTS from your round score after normalization. Winning more honey pots than your opponent improves your golf number, but net honey is divided by the round divisor first so honey stays a light drizzle on top of the dominant golf scorecard.' },
@@ -8365,7 +8588,7 @@ Views.codex = function() {
 
   // ---- Tour de Bourdon (the season system) ----
   const tdb = section('Tour de Bourdon — The Season  ·  "the Nectour"',
-    p('Tour de Bourdon ("Tour of the Bumblebee" — colloquially the Nectour) is the season-long competitive circuit: a fixed calendar of events, every result feeding a single rolling skill rating, and a champion crowned at year\'s end. It borrows its shape from two great competitions — golf\'s major-championship season and cycling\'s grand tour — and runs entirely on Honey-Stroke scoring underneath. (Live engine: the Spectator screen → the "Tour de Bourdon" card. Console: runBourdonStudy(opts) / runNectourStudy(opts), runBourdonCareer(cfg, seed, nSeasons). The numbers below are the current default settings — all tunable.)'),
+    p('Tour de Bourdon ("Tour of the Bumblebee" — colloquially the Nectour) is the season-long competitive circuit: a fixed calendar of events, every result feeding a single rolling skill rating, and a champion crowned at year\'s end. It borrows its shape from two great competitions — golf\'s major-championship season and cycling\'s grand tour — and runs entirely on Honey-Stroke scoring underneath. The production default season is a 1024-player universe playing 52 Regulars + 12 Majors + the Main (≈ weekly Regulars, ≈ monthly Majors, the Main once a year), with the hybrid format — 18-hole Regular rounds, 72-hole Major-&-Main stages — and the AI skill curve set to ×2.5 (a real recreational-vs-pro gap); at that scale the rating sorts the field\'s contenders at ρ ≈ 0.23 and the Royal Suitor lands on roughly a top-third player. (Live engine: the Spectator screen → the "Tour de Bourdon" card; a completed run opens in the SEASON CENTER — a tabbed broadcast: the two honors, the Top Pot fight-card, the event calendar, the Hive Rating board, who\'s eligible & "what they need", and the skill-check diagnostics. Console: runBourdonStudy(opts) / runNectourStudy(opts), runBourdonCareer(cfg, seed, nSeasons). All settings are tunable.)'),
     h3('The three tiers of events'),
     ul([
       el('span', null, el('b', null, 'Regular Tour events'), ' — the weekly grind. Retail-heavy fields: roughly half the field is open qualifiers (recreational players + any pros showing up for points or fun); the other half is exempt by rating. A Regular is a classic 4-round, 72-hole tournament (18-hole rounds), lowest aggregate wins, with cuts after rounds 2 and 3.'),
@@ -8393,7 +8616,7 @@ Views.codex = function() {
       'Volume cap (built in, currently dormant) — a guard for a future overlapping-event calendar so a player can\'t farm rating by registering for everything.',
     ]),
     h3('A note on skill vs. chaos'),
-    p('Tour de Bourdon is deliberately skill-tilted, not skill-determined. The underlying Honey-Stroke engine separates an elite player from a recreational one by only a stroke or so per round, so a single event — even a long one — barely sorts skill on its own (a Major\'s 288 holes do far better than a Regular\'s 72, which is why Majors carry the rating). It is the SEASON, and the CAREER, that sort the field — a rolling average of dozens of events, weighted by precision. The result, by design: the Royal Suitor is, in a typical year, a top-quartile-or-better player; the literal #1 is rarely crowned; the Yellow Jacket stays a coin-flip in the Top Pot. That is the brand — the Tour rewards class over a season, but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card includes the validation study that measures all of this — your configuration vs. the classic-18-everything baseline vs. a no-skill reference.)')
+    p('Tour de Bourdon is deliberately skill-tilted, not skill-determined. The underlying Honey-Stroke engine separates an elite player from a recreational one by only a stroke or so per round, so a single event — even a long one — barely sorts skill on its own (ρ ≈ 0.05 over an 18-hole-round event, ≈ 0.19 over a 72-hole one; a Major\'s 288 holes do far better than a Regular\'s 72, which is why Majors carry the rating). It is the SEASON, and the CAREER, that sort the field — a rolling, precision-weighted average of dozens of events; with the production calendar that lifts ρ to ≈ 0.23 over the regulars. The result, by design: the Royal Suitor is, in a typical year, a top-third (often top-quartile) player; the literal #1 is rarely crowned (that would need ρ ≈ 0.8 — unreachable at any sane round length, and not the goal); the Yellow Jacket stays close to a coin-flip in the Top Pot — though it is fed by the Main\'s standings, so the Jacket winner tends to be a high-rated player even when they\'re not a high-skill one. That is the brand — the Tour rewards class over a season, but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card includes the validation study that measures all of this — your configuration vs. the classic-18-everything baseline vs. a no-skill reference; the Season Center\'s "Skill Check" tab shows the same numbers for a single run.)')
   );
   view.appendChild(tdb);
 
@@ -9311,7 +9534,7 @@ Views.rules = function() {
     const _b = (label, rest) => el('span', null, el('b', null, label), rest);
     const sp = el('div', { class: 'card', style: 'margin-top:16px;' });
     sp.appendChild(el('h2', { text: 'Season Play — Tour de Bourdon  ·  "the Nectour"' }));
-    sp.appendChild(el('p', { class: 'ui-sans', style: 'font-size:12px; color: var(--text-secondary); margin-bottom:6px;', text: 'The canonical season structure: a fixed calendar of events, one rolling skill rating, a champion crowned at year\'s end. Modeled on golf\'s major-championship season + cycling\'s grand tour. (Live: Spectator → "Tour de Bourdon"; console: runBourdonStudy / runNectourStudy / runBourdonCareer. Numbers below are current default settings — all tunable.)' }));
+    sp.appendChild(el('p', { class: 'ui-sans', style: 'font-size:12px; color: var(--text-secondary); margin-bottom:6px;', text: 'The canonical season structure: a fixed calendar of events, one rolling skill rating, a champion crowned at year\'s end. Modeled on golf\'s major-championship season + cycling\'s grand tour. The production default season — a 1024-player universe, 52 Regulars + 12 Majors + the Main, hybrid format (18-hole Regular rounds / 72-hole Major-&-Main stages), AI skill curve ×2.5 — sorts the contenders at ρ ≈ 0.23 and lands the Royal Suitor on roughly a top-third player. (Live: Spectator → "Tour de Bourdon"; a finished run opens in the SEASON CENTER — a tabbed broadcast (the two honors · the Top Pot fight-card · the event calendar · the Hive Rating board · who\'s eligible & "what they need" · the skill-check diagnostics). Console: runBourdonStudy / runNectourStudy / runBourdonCareer. All settings tunable.)' }));
     sp.appendChild(_h3('The calendar — three tiers of events'));
     sp.appendChild(_ul([
       _b('Regular Tour events ', '— the weekly grind, retail-heavy. Field ≈ half open qualifiers (recreational players + casual pros), half exempt-by-rating. Format: a classic 4-round, 72-hole tournament (18-hole rounds), lowest aggregate wins, with ~50% cuts after rounds 2 and 3.'),
@@ -9339,7 +9562,7 @@ Views.rules = function() {
       'Volume cap — built in, currently dormant; a guard for a future overlapping-event calendar.',
     ]));
     sp.appendChild(_h3('Skill vs. chaos — by design'));
-    sp.appendChild(_p('Honey-Stroke separates an elite from a recreational player by only a stroke or so per round, so a single event barely sorts skill on its own (a Major\'s 288 holes do far better than a Regular\'s 72 — which is why Majors carry the rating). It is the SEASON and the CAREER that sort the field: a rolling, precision-weighted average of dozens of events. Result, intentionally: the Royal Suitor is a top-quartile-or-better player in a typical year; the literal #1 is rarely crowned; the Yellow Jacket stays a coin-flip in the Top Pot. The Tour rewards class over a season — but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card carries the validation study that measures all of this — your config vs. the classic-18-everything baseline vs. a no-skill reference.)'));
+    sp.appendChild(_p('Honey-Stroke separates an elite from a recreational player by only a stroke or so per round, so a single event barely sorts skill on its own (ρ ≈ 0.05 over an 18-hole-round event, ≈ 0.19 over a 72-hole one — which is why Majors carry the rating). It is the SEASON and the CAREER that sort the field: a rolling, precision-weighted average of dozens of events; the production calendar gets ρ to ≈ 0.23 over the contenders. Result, intentionally: the Royal Suitor is a top-third (often top-quartile) player in a typical year; the literal #1 is rarely crowned (that would need ρ ≈ 0.8 — unreachable at any sane round length, and not the goal); the Yellow Jacket stays near a coin-flip in the Top Pot, though it\'s fed by the Main\'s standings so the winner tends to be high-rated even when not high-skill. The Tour rewards class over a season — but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card carries the validation study that measures all of this — your config vs. the classic-18-everything baseline vs. a no-skill reference; the Season Center\'s "Skill Check" tab shows the same for a single run.)'));
     view.appendChild(sp);
   }
 
@@ -9582,7 +9805,7 @@ Views.decisiontree = function() {
       el('li', null, '**REGULAR** — a classic 4-round tournament; ~50% cut after rounds 2 & 3; lowest aggregate wins. Retail-heavy field — a competent player who survives is usually well-placed. Standard "steady-then-press-the-bubble" play.'),
       el('li', null, '**MAJOR — "the stages"** — 4 staged "mountain stages" with cuts between, each stage a full tournament\'s worth of golf (much longer than a Regular round). Skill matters far more here — Majors carry the most weight in your Hive Rating, and the long stages give a genuine edge time to express. Press for strokes through the stages; this is where careers are made.'),
       el('li', null, '**THE MAIN EVENT → THE TOP POT** — the season finale: 4 staged legs to crown a standing, then the top two play the Top Pot, a heads-up final. If you reach the Top Pot, it\'s pure heads-up Honey-Stroke (with, by default, no head-start) — the lowest score over the showdown holes takes the Yellow Jacket + the Bumblebee plushie. Anyone\'s game; play it as a long HU match — value-bet made hands, fold bricks ("put me down for 1"), and only bluff when the fold equity covers the Stack-Bricks +2.'),
-      el('li', null, '**THE BIG PICTURE** — no single event crowns the season. Your Hive Rating is a rolling, precision-weighted average of every rated event; top it (with the eligibility met) and you\'re crowned the **Royal Suitor** — the year\'s proven best. The Jacket rewards a hot week; the Suitor rewards a class season. Both are worth chasing.')
+      el('li', null, '**THE BIG PICTURE** — no single event crowns the season. Your Hive Rating is a rolling, precision-weighted average of every rated event; top it (with the eligibility met) and you\'re crowned the **Royal Suitor** — the year\'s proven best. The Jacket rewards a hot week; the Suitor rewards a class season. Both are worth chasing. (Run one on the Spectator screen — the SEASON CENTER lays out the calendar, the Top Pot fight-card, the Hive Rating board, the eligibility "what I need" surface, and how well the season actually sorted skill.)')
     )
   );
   view.appendChild(seasonCtx);
@@ -16984,7 +17207,7 @@ const SpectatorState = {
   feedLog: [],                             // complete broadcast log for the exported CSV/JSON (uncapped up to a memory ceiling) — v69.75
   logSeen: {},                             // tableId -> last h.log index harvested
   bracketStudy: { n: 100, holes: 18, running: false, phase: null, result: null, history: [] },   // v69.79/80/86 — offline skill-seeded-vs-random bracket A/B (Spectator UI); `holes` = holes/round for the sweep; history holds the last ~25 runs for pooling + CSV export
-  seasonStudy: { holes: 18, majorHoles: 72, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 1, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [] },   // v69.87+ — Tour de Bourdon (the Nectour) season engine (Spectator UI)
+  seasonStudy: { holes: 18, majorHoles: 72, nReg: 52, nMaj: 12, universe: 1024, regularField: 256, majorField: 320, mainField: 384, curve: 2.5, nSeasons: 1, theta: 0.30, spread: 'wide', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 6, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [], live: null },   // v69.99+ — Tour de Bourdon (the Nectour) season engine + production Season Center (Spectator UI). Defaults = the locked production config (ρ_active ≈ 0.23).
   scoreboard: { zoom: 1.0 },               // v69.81 — Live Scoreboard (golf-scorecard grid) view state
   scorecardOpen: false,                    // v69.46 — featured panel toggle (felt ↔ full scorecard) for liveTourney
   // Setup form state (persisted across view re-renders)
@@ -20767,19 +20990,21 @@ Views.spectator = function() {
 
   // v69.87 — Tour de Bourdon (colloq. 'the Nectour'): the season engine (Kalman-rated multi-event tour).
   if (SpectatorState.mode === 'liveTourney') {
-    if (!SpectatorState.seasonStudy) SpectatorState.seasonStudy = { holes: 18, majorHoles: 72, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 1, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [] };
+    if (!SpectatorState.seasonStudy) SpectatorState.seasonStudy = { holes: 18, majorHoles: 72, nReg: 52, nMaj: 12, universe: 1024, regularField: 256, majorField: 320, mainField: 384, curve: 2.5, nSeasons: 1, theta: 0.30, spread: 'wide', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 6, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [], live: null };
     const ss = SpectatorState.seasonStudy;
     if (!Array.isArray(ss.history)) ss.history = [];
     if (ss.careerYrs == null) ss.careerYrs = 1;
     if (ss.finaleM == null) ss.finaleM = 'none';
     if (ss.omega == null) ss.omega = 0.006;
     if (ss.tau0 == null) ss.tau0 = 3;
+    if (ss.curve == null) ss.curve = 2.5;
     if (ss.majorHoles == null) ss.majorHoles = 72;
-    const SPREADS = [{ v: 'main', l: 'Main (0.30–0.95) — widest' }, { v: 'regular', l: 'Regular (0.40–0.90)' }, { v: 'wide', l: 'Wide (0.20–0.95)' }];
+    const SPREADS = [{ v: 'wide', l: 'Wide (0.20–0.95) — production default' }, { v: 'main', l: 'Main (0.30–0.95)' }, { v: 'regular', l: 'Regular (0.40–0.90)' }];
     const seasonCard = el('div', { class: 'card', style: 'padding:14px; margin-bottom:14px;' });
-    seasonCard.appendChild(el('h2', { text: '🐝 Tour de Bourdon  ·  the season engine  ·  a.k.a. the Nectour', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
+    seasonCard.appendChild(el('h2', { text: '🐝 Tour de Bourdon  ·  the season engine  +  the Season Center  ·  a.k.a. the Nectour', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
     seasonCard.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.65; line-height:1.5; margin-bottom:10px;', text:
-      'A full season (or career) as a measurement instrument for skill. REGULARS are retail-heavy 4-round 72-hole tournaments (recreational players + casual pros); MAJORS are the prestigious flock — 4 staged "mountain stages" with cuts (Tour-de-France style, the stages that separate the men from the boys), each stage a full tournament\'s worth of golf, lowest total wins; the MAIN EVENT plays 4 such stages then narrows to the TOP POT — a heads-up final showdown whose winner takes the Yellow Jacket (the Kill-Bill jumper) + the Bumblebee plushie. A Kalman/Glicko filter folds every event\'s field-relative performance into a "Hive Rating" (precision ∝ tier × √holes × √field × rounds-played; cut-blind smoothing + Glicko volatility), with process noise between events (form fades, OWGR-style). At season\'s end the top-rated player (with the multi-criteria eligibility met) is crowned THE ROYAL SUITOR — the season skill title, distinct from the chaotic Yellow Jacket. With ~18-hole rounds the per-event skill signal is weak; the longer Major/Main stages carry it, so the Royal Suitor ends up Major-driven (push "Major/Main holes/round" up, run a multi-season career, or lengthen the Regulars too). The STUDY runs your config + the classic-18-everything baseline + a no-skill reference, chunked (responsive, with progress + Stop), with capped fields (it measures the rating mechanism — WSOP-scale fields are for "Run a season"). Uses the left-panel honey-cap + AI-curve.' }));
+      'A full season (or career) as a measurement instrument for skill, presented through the SEASON CENTER — a tabbed broadcast (the two honors, the Top Pot fight-card, the event calendar, the Hive Rating board, who\'s eligible & "what they need", the skill-check diagnostics). REGULARS are retail-heavy 4-round tournaments (recreational players + casual pros); MAJORS are the prestigious flock — 4 staged "mountain stages" with cuts (Tour-de-France style, the stages that separate the men from the boys), each stage a full tournament\'s worth of golf, lowest total wins; the MAIN EVENT plays 4 such stages then narrows to the TOP POT — a heads-up final showdown whose winner takes the Yellow Jacket (the Kill-Bill jumper) + the Bumblebee plushie. A Kalman/Glicko filter folds every event\'s field-relative performance into a "Hive Rating" (precision ∝ tier × √holes × √field × rounds-played; cut-blind smoothing + Glicko volatility), with process noise between events (form fades, OWGR-style). At season\'s end the top-rated player meeting the multi-criteria eligibility is crowned THE ROYAL SUITOR — the season skill title, distinct from the chaotic Yellow Jacket. The defaults below are the locked PRODUCTION CONFIG (1024-player universe · 52 Regulars + 12 Majors + the Main · hybrid 18h Regular rounds / 72h Major-&-Main stages · AI curve ×2.5 · ω 0.006 · τ₀ 3 — ρ_active ≈ 0.23, Royal Suitor ≈ top-third skill). The STUDY runs your config + the classic-18-everything baseline + a no-skill reference, chunked (responsive, with progress + Stop), with capped fields (it measures the rating mechanism — WSOP-scale fields are for "Run a season").' }));
+    if ((+ss.curve || 2.5) < 2) seasonCard.appendChild(el('div', { style: 'font-size:10px; padding:7px 10px; border-radius:5px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.30); color:#F0C75E; margin-bottom:10px;', text: '⚠ AI skill curve is set to ×' + (+ss.curve || 2.5).toFixed(1) + ' below — at ×1 the bots barely differ in actual play quality (a "wide" skill SPREAD doesn\'t help on its own), so the rating has almost nothing to sort (ρ ≈ 0). The production default is ×2.5: the spread sets the authored-skill RANGE, the curve sets how badly the low end actually plays. Bump it back up unless you\'re deliberately exploring.' }));
     const mkNum = (label, key, min, max, step, w) => {
       const box = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
       box.appendChild(el('span', { style: 'font-size:9px; opacity:0.6;', text: label }));
@@ -20797,6 +21022,7 @@ Views.spectator = function() {
     cfgRow1.appendChild(mkNum('Reg field', 'regularField', 16, 4096, 8, 70));
     cfgRow1.appendChild(mkNum('Major field', 'majorField', 16, 4096, 8, 70));
     cfgRow1.appendChild(mkNum('Main field', 'mainField', 16, 8192, 8, 70));
+    cfgRow1.appendChild(mkNum('AI skill curve ×', 'curve', 1, 3, 0.5, 64));
     seasonCard.appendChild(cfgRow1);
     if ((ss.holes | 0) === 18) seasonCard.appendChild(el('div', { style: 'font-size:9px; opacity:0.5; margin:-3px 0 7px 0; font-style:italic;', text: '18 holes/round × 4 = a 72-hole event — the classic golf major framing.' }));
     const cfgRow2 = el('div', { style: 'display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:9px;' });
@@ -20823,7 +21049,7 @@ Views.spectator = function() {
       holesPerRound: ss.holes | 0, nRegulars: ss.nReg | 0, nMajors: ss.nMaj | 0, universeSize: ss.universe | 0,
       regularField: ss.regularField | 0, majorField: ss.majorField | 0, mainField: ss.mainField | 0,
       finaleMode: ss.finaleM || 'none', finaleTargetWinProb: +ss.theta || 0.65, skillSpread: ss.spread, omega: +ss.omega || 0.006, tau0: +ss.tau0 || 3, majorHoles: ss.majorHoles | 0, mainHoles: ss.majorHoles | 0,
-      skillCurve: (typeof spectatorCurveMul === 'function') ? spectatorCurveMul() : 1,
+      skillCurve: +ss.curve || 2.5,
       honeyCapMode: (SpectatorState.setup && SpectatorState.setup.honeyCapMode === 'spec') ? 'spec' : 'calibrated',
     });
     if (ss.running && ss.studyJob) {
