@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.79-bracket-study-ui";
+const APP_VERSION = "2026.05.12-v69.80-bracket-study-csv";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -16147,7 +16147,7 @@ const SpectatorState = {
   log: [],                                 // rolling broadcast log for the UI (last ~500 lines) [{ts, tableId, line, kind}]
   feedLog: [],                             // complete broadcast log for the exported CSV/JSON (uncapped up to a memory ceiling) — v69.75
   logSeen: {},                             // tableId -> last h.log index harvested
-  bracketStudy: { n: 100, running: false, phase: null, result: null },   // v69.79 — offline skill-seeded-vs-random bracket A/B (Spectator UI)
+  bracketStudy: { n: 100, running: false, phase: null, result: null, history: [] },   // v69.79/80 — offline skill-seeded-vs-random bracket A/B (Spectator UI); history holds the last ~25 runs for pooling + CSV export
   scorecardOpen: false,                    // v69.46 — featured panel toggle (felt ↔ full scorecard) for liveTourney
   // Setup form state (persisted across view re-renders)
   setup: {
@@ -19145,6 +19145,40 @@ function renderBracketStudyResults(out) {
   return wrap;
 }
 
+// v69.80 — flatten an array of runBracketSkillStudy() results (newest-first)
+// into a CSV: a header block + one row per (run, metric) with seeded / random /
+// no-skill columns, so multiple runs drop straight into a spreadsheet.
+function bracketStudyToCsv(history) {
+  const esc = v => { const s = String(v == null ? '' : v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const row = arr => arr.map(esc).join(',') + '\r\n';
+  const r4 = x => Math.round((+x || 0) * 10000) / 10000;
+  let out = '';
+  out += row(['section', 'bracket_skill_study_export']);
+  out += row(['generated_at', new Date().toISOString()]);
+  out += row(['app_version', (typeof APP_VERSION === 'string') ? APP_VERSION : '']);
+  out += row(['runs', history.length]);
+  out += '\r\n';
+  out += row(['section', 'runs']);
+  out += row(['run', 'base_seed', 'n_per_arm', 'field_size', 'rounds', 'holes_per_round', 'event_type', 'honey_divisor', 'skill_curve', 'metric', 'seeded', 'random', 'no_skill']);
+  for (let i = history.length - 1; i >= 0; i--) {              // oldest run = #1
+    const h = history[i] || {}, cfg = h.config || {}, s = h.skill || {}, r = h.random || {};
+    const N = +cfg.fieldSize || 8;
+    const pre = [history.length - i, cfg.baseSeed || '', cfg.n || '', cfg.fieldSize || '', cfg.rounds || '', cfg.holesPerRound || '', cfg.eventType || '', cfg.honeyDivisor || '', cfg.skillCurve || ''];
+    const metrics = [
+      ['best_is_champion',        s.bestIsChampion,       r.bestIsChampion,       1 / N],
+      ['best_reaches_final_2',    s.bestReachesFinal2,    r.bestReachesFinal2,    2 / N],
+      ['best_reaches_final_4',    s.bestReachesFinal4,    r.bestReachesFinal4,    4 / N],
+      ['champ_skill_pct',         s.champSkillPct,        r.champSkillPct,        0.50],
+      ['champ_skill_rank',        s.champSkillRank,       r.champSkillRank,       (N + 1) / 2],
+      ['best_player_mean_place',  s.bestPlayerMeanPlace,  r.bestPlayerMeanPlace,  (N + 1) / 2],
+      ['worst_player_mean_place', s.worstPlayerMeanPlace, r.worstPlayerMeanPlace, (N + 1) / 2],
+      ['spearman',                s.spearman,             r.spearman,             0],
+    ];
+    metrics.forEach(m => out += row(pre.concat([m[0], m[1] == null ? '' : r4(m[1]), m[2] == null ? '' : r4(m[2]), r4(m[3])])));
+  }
+  return out;
+}
+
 Views.spectator = function() {
   const view = $('[data-view="spectator"]'); clear(view);
   view.appendChild(el('div', { class: 'crumb' }, el('a', { href: '#dashboard', text: 'Tour Home' }), ' · Spectator'));
@@ -19472,7 +19506,8 @@ Views.spectator = function() {
   // reports how much seeding lifts skill→finish. Uses the Event type / Honey
   // cap / AI skill curve dropdowns from the left panel.
   if (SpectatorState.mode === 'liveTourney') {
-    if (!SpectatorState.bracketStudy) SpectatorState.bracketStudy = { n: 100, running: false, phase: null, result: null };
+    if (!SpectatorState.bracketStudy) SpectatorState.bracketStudy = { n: 100, running: false, phase: null, result: null, history: [] };
+    if (!Array.isArray(SpectatorState.bracketStudy.history)) SpectatorState.bracketStudy.history = [];
     const bs = SpectatorState.bracketStudy;
     const evtNow = SpectatorState.setup.eventType;
     const fieldNow = (evtNow === 'main') ? 32 : (evtNow === 'major') ? 16 : 8;
@@ -19510,7 +19545,9 @@ Views.spectator = function() {
             let r2 = null;
             try { r2 = runBracketSkillStudy({ n: n, fieldSize: fieldSize, eventType: evt, honeyCapMode: honeyCapMode, skillCurve: skillCurve, baseSeed: baseSeed, arms: ['random'] }); }
             catch (e) { SpectatorState.bracketStudy.running = false; SpectatorState.bracketStudy.phase = 'Error: ' + (e && e.message ? e.message : e); Views.spectator(); return; }
-            SpectatorState.bracketStudy.result = { config: (r1 && r1.config) || (r2 && r2.config), skill: r1 && r1.skill, random: r2 && r2.random };
+            const result = { config: (r1 && r1.config) || (r2 && r2.config), skill: r1 && r1.skill, random: r2 && r2.random };
+            SpectatorState.bracketStudy.result = result;
+            SpectatorState.bracketStudy.history = [result].concat((SpectatorState.bracketStudy.history || []).slice(0, 24));   // newest-first, keep ~25
             SpectatorState.bracketStudy.running = false;
             SpectatorState.bracketStudy.phase = null;
             Views.spectator();
@@ -19518,11 +19555,41 @@ Views.spectator = function() {
         }, 60);
       };
       ctrlRow.appendChild(runBtn);
+      if (bs.history.length) {
+        const csvBtn = el('button', { class: 'btn ghost', style: 'font-size:11px;', text: '↓ CSV (' + bs.history.length + ' run' + (bs.history.length === 1 ? '' : 's') + ')' });
+        csvBtn.onclick = () => {
+          try {
+            const txt = bracketStudyToCsv(bs.history);
+            const blob = new Blob(['﻿' + txt], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'bracket_skill_study_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.csv';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 1500);
+          } catch (e) { alert('CSV export failed: ' + (e && e.message ? e.message : e)); }
+        };
+        ctrlRow.appendChild(csvBtn);
+      }
       ctrlRow.appendChild(el('span', { style: 'font-size:9.5px; opacity:0.5;', text: '· n=100 ≈ a few seconds; n≥500 freezes the tab 10s+' }));
       studyCard.appendChild(ctrlRow);
     }
     if (bs.result && bs.result.skill && bs.result.random) {
       try { studyCard.appendChild(renderBracketStudyResults(bs.result)); } catch (e) { studyCard.appendChild(el('div', { style: 'color:#E08070; font-size:11px;', text: 'render error: ' + (e && e.message ? e.message : e) })); }
+    }
+    // v69.80 — pooled summary across all logged runs (cuts the per-run n=100 noise).
+    if (bs.history.length > 1) {
+      const valid = bs.history.filter(h => h && h.skill && h.random);
+      if (valid.length) {
+        const avg = (arm, key) => valid.reduce((a, h) => a + (h[arm][key] || 0), 0) / valid.length;
+        const pc = x => (x * 100).toFixed(0) + '%';
+        const N0 = (valid[0].config && +valid[0].config.fieldSize) || 8;
+        studyCard.appendChild(el('div', { style: 'margin-top:10px; font-size:10px; opacity:0.7; line-height:1.5; border-top:1px dashed rgba(255,255,255,0.10); padding-top:8px;', text:
+          'Pooled over ' + valid.length + ' run' + (valid.length === 1 ? '' : 's') + ' (cuts the n-per-run noise) — '
+          + 'seeded: champ %ile ' + avg('skill', 'champSkillPct').toFixed(2) + ', title ' + pc(avg('skill', 'bestIsChampion')) + ', reach-final ' + pc(avg('skill', 'bestReachesFinal2')) + '  ·  '
+          + 'random: ' + avg('random', 'champSkillPct').toFixed(2) + ', ' + pc(avg('random', 'bestIsChampion')) + ', ' + pc(avg('random', 'bestReachesFinal2')) + '  ·  '
+          + 'no-skill baseline: 0.50, ' + pc(1 / N0) + ', ' + pc(2 / N0) }));
+      }
     }
     center.appendChild(studyCard);
   }
