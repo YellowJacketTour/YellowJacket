@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.78-skill-curve";
+const APP_VERSION = "2026.05.12-v69.79-bracket-study-ui";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5005,6 +5005,11 @@ function runBracketSkillStudy(opts) {
   // v69.78 — AI skill-curve width: 'standard' | 'wide' | a raw multiplier ≥ 1.
   const skillCurve = (Number.isFinite(+opts.skillCurve)) ? Math.max(1, +opts.skillCurve)
     : (opts.skillCurve === 'wide') ? 'wide' : 'standard';
+  // v69.79 — which arms to run (default both). Lets the UI run one arm at a
+  // time (with a repaint between) so it can show progress instead of one freeze.
+  const arms = (Array.isArray(opts.arms) ? opts.arms.filter(a => a === 'skill' || a === 'random') : null);
+  const runSkill  = !arms || arms.indexOf('skill')  !== -1;
+  const runRandom = !arms || arms.indexOf('random') !== -1;
   // Match the Live-Tournament scoring stack; restore the globals afterward.
   const _capMode    = (typeof CurrentHoneyCapMode === 'string') ? CurrentHoneyCapMode : 'calibrated';
   const _loserBogey = (typeof CurrentLoserBogey !== 'undefined') ? CurrentLoserBogey : true;
@@ -5097,15 +5102,16 @@ function runBracketSkillStudy(opts) {
     };
   }
 
-  const skillArm = runArm('skill');
-  const randomArm = runArm('random');
+  const skillArm  = runSkill  ? runArm('skill')  : null;
+  const randomArm = runRandom ? runArm('random') : null;
   setHoneyCapMode(_capMode);
   if (typeof setLoserBogey === 'function') setLoserBogey(_loserBogey);
   const out = {
     config: { n: n, fieldSize: fieldSize, rounds: rounds, holesPerRound: holes, eventType: eventType, honeyDivisor: divisor, skillCurve: skillCurve, baseSeed: baseSeed },
-    skill: skillArm, random: randomArm,
   };
-  try { console.log('[runBracketSkillStudy]', JSON.stringify(out.config)); console.table([skillArm, randomArm]); }
+  if (skillArm)  out.skill  = skillArm;
+  if (randomArm) out.random = randomArm;
+  try { console.log('[runBracketSkillStudy]', JSON.stringify(out.config)); console.table([skillArm, randomArm].filter(Boolean)); }
   catch (_) { console.log(JSON.stringify(out, null, 2)); }
   console.log('higher↑ = better: spearman, champSkillPct, bestReachesFinal2/4, bestIsChampion, worstPlayerMeanPlace · lower↓ = better: champSkillRank, bestPlayerMeanPlace');
   return out;
@@ -16141,6 +16147,7 @@ const SpectatorState = {
   log: [],                                 // rolling broadcast log for the UI (last ~500 lines) [{ts, tableId, line, kind}]
   feedLog: [],                             // complete broadcast log for the exported CSV/JSON (uncapped up to a memory ceiling) — v69.75
   logSeen: {},                             // tableId -> last h.log index harvested
+  bracketStudy: { n: 100, running: false, phase: null, result: null },   // v69.79 — offline skill-seeded-vs-random bracket A/B (Spectator UI)
   scorecardOpen: false,                    // v69.46 — featured panel toggle (felt ↔ full scorecard) for liveTourney
   // Setup form state (persisted across view re-renders)
   setup: {
@@ -19076,6 +19083,68 @@ function refreshSpectatorBroadcastUI() {
 function startSpectatorRefreshLoop() {}
 function stopSpectatorRefreshLoop() {}
 
+// v69.79 — render a human-legible card for a runBracketSkillStudy() result.
+// `out` = { config, skill, random } (the shape returned by runBracketSkillStudy).
+function renderBracketStudyResults(out) {
+  const cfg = out.config || {}, s = out.skill || {}, r = out.random || {};
+  const N = +cfg.fieldSize || 8;
+  const pct = x => (x * 100).toFixed(0) + '%';
+  const f1  = x => (Math.round(x * 10) / 10).toFixed(1);
+  const f2  = x => (Math.round(x * 100) / 100).toFixed(2);
+  const wrap = el('div', { style: 'margin-top:12px; border-top:1px solid rgba(255,255,255,0.12); padding-top:10px;' });
+  wrap.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.7; line-height:1.5; margin-bottom:8px;', text:
+    (cfg.n || 0).toLocaleString() + ' events/arm  ·  ' + N + '-player field  ·  ' + (cfg.eventType || 'regular') + ' skill spread  ·  honey ÷' + (cfg.honeyDivisor || 9) + '  ·  AI curve: ' + (cfg.skillCurve || 'standard') + '  ·  seed ' + (cfg.baseSeed || '?') }));
+  // table
+  const cols = '1fr 52px 52px 52px';
+  const tbl = el('div', { style: 'font-size:11px; line-height:1.7;' });
+  const hdr = el('div', { style: 'display:grid; grid-template-columns:' + cols + '; gap:6px; font-weight:700; opacity:0.65; border-bottom:1px solid rgba(255,255,255,0.14); padding-bottom:3px; margin-bottom:3px;' });
+  hdr.appendChild(el('div', { text: '' }));
+  ['Seeded', 'Random', 'No-skill'].forEach(h => hdr.appendChild(el('div', { style: 'text-align:right;', text: h })));
+  tbl.appendChild(hdr);
+  const addRow = (label, sv, rv, bv, hint) => {
+    const row = el('div', { style: 'display:grid; grid-template-columns:' + cols + '; gap:6px; align-items:baseline;' });
+    const lab = el('div', { style: 'opacity:0.9;' }); lab.appendChild(el('span', { text: label }));
+    if (hint) lab.appendChild(el('span', { style: 'opacity:0.45; font-size:9px;', text: '  ' + hint }));
+    row.appendChild(lab);
+    row.appendChild(el('div', { style: 'text-align:right; color:#9FD79F; font-weight:600;', text: sv }));
+    row.appendChild(el('div', { style: 'text-align:right; opacity:0.8;', text: rv }));
+    row.appendChild(el('div', { style: 'text-align:right; opacity:0.4;', text: bv }));
+    tbl.appendChild(row);
+  };
+  addRow('Strongest player won the event',  pct(s.bestIsChampion || 0),    pct(r.bestIsChampion || 0),    pct(1 / N));
+  addRow('…reached the final 2',            pct(s.bestReachesFinal2 || 0), pct(r.bestReachesFinal2 || 0), pct(2 / N));
+  addRow('…reached the semis (final 4)',    pct(s.bestReachesFinal4 || 0), pct(r.bestReachesFinal4 || 0), pct(4 / N));
+  addRow("Champion's avg skill percentile", f2(s.champSkillPct || 0),      f2(r.champSkillPct || 0),      '0.50');
+  addRow("Strongest player's avg finish",   f1(s.bestPlayerMeanPlace || 0),  f1(r.bestPlayerMeanPlace || 0),  f1((N + 1) / 2), 'of ' + N + ', lower = better');
+  addRow("Weakest player's avg finish",     f1(s.worstPlayerMeanPlace || 0), f1(r.worstPlayerMeanPlace || 0), f1((N + 1) / 2), 'of ' + N + ', higher = correct');
+  addRow('Skill ↔ finish correlation (ρ)',  f2(s.spearman || 0),           f2(r.spearman || 0),           '0.00');
+  wrap.appendChild(tbl);
+  // auto-narrative
+  const dFinal = (s.bestReachesFinal2 || 0) - (r.bestReachesFinal2 || 0);
+  const narr = [];
+  narr.push('Skill-seeding takes the strongest player to champion from ' + pct(r.bestIsChampion || 0) + ' → ' + pct(s.bestIsChampion || 0)
+    + ' and into the final from ' + pct(r.bestReachesFinal2 || 0) + ' → ' + pct(s.bestReachesFinal2 || 0)
+    + ' (Δ ' + (dFinal >= 0 ? '+' : '') + (dFinal * 100).toFixed(0) + ' pts).');
+  if ((s.bestReachesFinal2 || 0) < 0.55) {
+    narr.push('Even seeded, the top player misses the final ' + pct(1 - (s.bestReachesFinal2 || 0)) + ' of the time — the format\'s variance (deal luck + a mostly-flat loser rule + the ÷' + (cfg.honeyDivisor || 9)
+      + ' honey cap) still dominates. To move skill→finish further you\'d want a wider AI curve and/or a longer-round format, not just the bracket.');
+  } else {
+    narr.push('Seeded, the top player reaches the final in a clear majority of events — the bracket is doing real work.');
+  }
+  if (Math.abs((r.champSkillPct || 0) - 0.50) < 0.04) {
+    narr.push('(The random arm sits at the no-skill baseline (0.50), as it should — confirms an unseeded draw isn\'t smuggling in a skill signal.)');
+  } else {
+    narr.push('(Note: the random arm is at champ-skill ' + f2(r.champSkillPct || 0) + ' vs the 0.50 no-skill baseline — even an unseeded draw is expressing some skill; worth a look.)');
+  }
+  wrap.appendChild(el('div', { style: 'font-size:10px; opacity:0.78; line-height:1.55; margin-top:10px; font-style:italic;', text: narr.join(' ') }));
+  // raw dump
+  const det = el('details', { style: 'margin-top:8px; font-size:9.5px; opacity:0.55;' });
+  det.appendChild(el('summary', { style: 'cursor:pointer;', text: 'raw numbers (JSON)' }));
+  det.appendChild(el('pre', { style: 'white-space:pre-wrap; word-break:break-word; margin:4px 0 0 0; font-size:9px; line-height:1.4;', text: JSON.stringify(out, null, 2) }));
+  wrap.appendChild(det);
+  return wrap;
+}
+
 Views.spectator = function() {
   const view = $('[data-view="spectator"]'); clear(view);
   view.appendChild(el('div', { class: 'crumb' }, el('a', { href: '#dashboard', text: 'Tour Home' }), ' · Spectator'));
@@ -19397,6 +19466,67 @@ Views.spectator = function() {
 
   // ============ CENTER: featured + grid =================================
   const center = el('div', null);
+
+  // v69.79 — Bracket Skill Study (offline A/B), liveTourney mode only. Runs N
+  // tournaments skill-seeded + N with the same fields drawn randomly, then
+  // reports how much seeding lifts skill→finish. Uses the Event type / Honey
+  // cap / AI skill curve dropdowns from the left panel.
+  if (SpectatorState.mode === 'liveTourney') {
+    if (!SpectatorState.bracketStudy) SpectatorState.bracketStudy = { n: 100, running: false, phase: null, result: null };
+    const bs = SpectatorState.bracketStudy;
+    const evtNow = SpectatorState.setup.eventType;
+    const fieldNow = (evtNow === 'main') ? 32 : (evtNow === 'major') ? 16 : 8;
+    const studyCard = el('div', { class: 'card', style: 'padding:14px; margin-bottom:14px;' });
+    studyCard.appendChild(el('h2', { text: '🔬 Bracket Skill Study  ·  offline A/B', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
+    studyCard.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.65; line-height:1.5; margin-bottom:10px;', text:
+      'Runs N tournaments with the field skill-seeded and N with the same fields drawn in random order, then reports how much the seeding lifts skill→finish. Will use: ' + fieldNow + '-player ' + evtNow + ' field · honey ' + (SpectatorState.setup.honeyCapMode === 'spec' ? '÷18 (Spec)' : '÷9 (Calibrated)') + ' · AI curve ' + (SpectatorState.setup.skillCurve === 'wide' ? 'Wide' : 'Standard') + ' — change those in the left panel before running.' }));
+    if (bs.running) {
+      studyCard.appendChild(el('div', { style: 'padding:10px 12px; border-radius:5px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.28); font-size:12px; color:#F0C75E;', text: '⏳ ' + (bs.phase || 'Running…') + '  (the tab is unresponsive while this runs)' }));
+    } else {
+      const ctrlRow = el('div', { style: 'display:flex; align-items:center; gap:8px; flex-wrap:wrap;' });
+      ctrlRow.appendChild(el('span', { style: 'font-size:11px; opacity:0.75;', text: 'Events / arm:' }));
+      const nInput = el('input', { type: 'number', class: 'form-control', style: 'width:90px; font-size:12px;', value: String(bs.n || 100), min: '10', max: '5000' });
+      nInput.oninput = () => { const v = parseInt(nInput.value, 10); if (Number.isFinite(v)) SpectatorState.bracketStudy.n = Math.max(10, Math.min(5000, v)); };
+      ctrlRow.appendChild(nInput);
+      const runBtn = el('button', { class: 'btn gold', style: 'font-size:11px;', text: '▶ Run study' });
+      runBtn.onclick = () => {
+        const n = Math.max(10, Math.min(5000, SpectatorState.bracketStudy.n || 100));
+        const evt = SpectatorState.setup.eventType;
+        const fieldSize = (evt === 'main') ? 32 : (evt === 'major') ? 16 : 8;
+        const honeyCapMode = (SpectatorState.setup.honeyCapMode === 'spec') ? 'spec' : 'calibrated';
+        const skillCurve = (SpectatorState.setup.skillCurve === 'wide') ? 'wide' : 'standard';
+        const baseSeed = 'ui-study-' + Date.now();
+        SpectatorState.bracketStudy.running = true;
+        SpectatorState.bracketStudy.result = null;
+        SpectatorState.bracketStudy.phase = 'Running skill-seeded arm (' + n + ' events)…';
+        Views.spectator();
+        setTimeout(() => {
+          let r1 = null;
+          try { r1 = runBracketSkillStudy({ n: n, fieldSize: fieldSize, eventType: evt, honeyCapMode: honeyCapMode, skillCurve: skillCurve, baseSeed: baseSeed, arms: ['skill'] }); }
+          catch (e) { SpectatorState.bracketStudy.running = false; SpectatorState.bracketStudy.phase = 'Error: ' + (e && e.message ? e.message : e); Views.spectator(); return; }
+          SpectatorState.bracketStudy.phase = 'Running random-draw arm (' + n + ' events)…';
+          Views.spectator();
+          setTimeout(() => {
+            let r2 = null;
+            try { r2 = runBracketSkillStudy({ n: n, fieldSize: fieldSize, eventType: evt, honeyCapMode: honeyCapMode, skillCurve: skillCurve, baseSeed: baseSeed, arms: ['random'] }); }
+            catch (e) { SpectatorState.bracketStudy.running = false; SpectatorState.bracketStudy.phase = 'Error: ' + (e && e.message ? e.message : e); Views.spectator(); return; }
+            SpectatorState.bracketStudy.result = { config: (r1 && r1.config) || (r2 && r2.config), skill: r1 && r1.skill, random: r2 && r2.random };
+            SpectatorState.bracketStudy.running = false;
+            SpectatorState.bracketStudy.phase = null;
+            Views.spectator();
+          }, 60);
+        }, 60);
+      };
+      ctrlRow.appendChild(runBtn);
+      ctrlRow.appendChild(el('span', { style: 'font-size:9.5px; opacity:0.5;', text: '· n=100 ≈ a few seconds; n≥500 freezes the tab 10s+' }));
+      studyCard.appendChild(ctrlRow);
+    }
+    if (bs.result && bs.result.skill && bs.result.random) {
+      try { studyCard.appendChild(renderBracketStudyResults(bs.result)); } catch (e) { studyCard.appendChild(el('div', { style: 'color:#E08070; font-size:11px;', text: 'render error: ' + (e && e.message ? e.message : e) })); }
+    }
+    center.appendChild(studyCard);
+  }
+
   center.appendChild(el('div', { 'data-spectator-featured': '1', style: 'margin-bottom:14px;' }));
   // v69.46 — Tournament scorecard strip (auto-shows only for liveTourney mode).
   center.appendChild(el('div', { 'data-spectator-scorecard-strip': '1' }));
