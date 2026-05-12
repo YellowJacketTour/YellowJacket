@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.74-tourney-export-cleanup";
+const APP_VERSION = "2026.05.12-v69.75-carry-doublecount-fix";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -4850,19 +4850,24 @@ function playMatch(pA, pB, numHoles, opts) {
       if (carryEnabled) {
         consecTies++;
         const bonus = Math.min(5, consecTies);
-        carryPot += (r.strokes || 0) + bonus;
+        // r.strokes on a tie = openerHoney + (the carryPot we passed into
+        // playHole) + betting — it ALREADY contains the running carry. So
+        // assign, don't +=: re-adding carryPot here double-counts it (and
+        // triple-counts it across a multi-tie streak). The v45 streak premium
+        // is still cumulative — each tie's bonus is folded into the carry and
+        // hence into the next hole's strokes: 1, 1+2, 1+2+3, … (fixed v69.75).
+        carryPot = (r.strokes || 0) + bonus;
       }
     } else {
       consecTies = 0;
-      const aSk = r.aHoneyCredit || 0;
-      const bSk = r.bHoneyCredit || 0;
-      totalHoneyA += aSk;
-      totalHoneyB += bSk;
-      if (carryEnabled && carryPot > 0) {
-        if (aSk > 0)      totalHoneyA += carryPot;
-        else if (bSk > 0) totalHoneyB += carryPot;
-        if (aSk > 0 || bSk > 0) carryPot = 0;
-      }
+      // On a decisive showdown or a fold, r.aHoneyCredit / r.bHoneyCredit is
+      // the hole's full `strokes` for the winner — which already includes any
+      // carried pot that was passed into playHole. Credit it once here; do NOT
+      // also add carryPot (that was the ≤v69.74 double-count). The carry is now
+      // fully resolved, so clear it. (fixed v69.75)
+      totalHoneyA += (r.aHoneyCredit || 0);
+      totalHoneyB += (r.bHoneyCredit || 0);
+      if (carryEnabled) carryPot = 0;
     }
     updatePlayerHoleStats(pA, r, 'a'); updatePlayerHoleStats(pB, r, 'b');
   };
@@ -5786,23 +5791,22 @@ function runFinals(p1, p2) {
   let p1Scorecard = 0, p2Scorecard = 0;
   let p1HoneyTotal = 0, p2HoneyTotal = 0;
   let carryPot = 0;
-  // v45 compound-tie premium (matches strokePlay applyHole)
+  // v45 compound-tie premium (matches strokePlay applyHole). v69.75 — fixed the
+  // carry double-count: r.strokes (and r.aHoneyCredit / r.bHoneyCredit on a
+  // win/fold) already include the carry passed into playHole, so we assign the
+  // carry (not +=) on a tie and credit the winner once (no extra += carryPot).
   let consecTies = 0;
   const applyHole = (r) => {
     p1Scorecard += r.aScore; p2Scorecard += r.bScore;
     if (r.tie) {
       consecTies++;
       const bonus = Math.min(5, consecTies);
-      carryPot += (r.strokes || 0) + bonus;
+      carryPot = (r.strokes || 0) + bonus;
     } else {
       consecTies = 0;
-      const aSk = r.aHoneyCredit || 0;
-      const bSk = r.bHoneyCredit || 0;
-      p1HoneyTotal += aSk;
-      p2HoneyTotal += bSk;
-      if (aSk > 0)      p1HoneyTotal += carryPot;
-      else if (bSk > 0) p2HoneyTotal += carryPot;
-      if (aSk > 0 || bSk > 0) carryPot = 0;
+      p1HoneyTotal += (r.aHoneyCredit || 0);
+      p2HoneyTotal += (r.bHoneyCredit || 0);
+      carryPot = 0;
     }
     updatePlayerHoleStats(p1, r, 'a'); updatePlayerHoleStats(p2, r, 'b');
   };
@@ -15972,7 +15976,8 @@ const SpectatorState = {
   tableIds: [],                            // active live tables (cash or tourney)
   featuredTableId: null,                   // current "main camera" table
   director: { on: true, lastSwitchAt: 0, intervalMs: 8000 },
-  log: [],                                 // universal broadcast log [{ts, tableId, line, kind}]
+  log: [],                                 // rolling broadcast log for the UI (last ~500 lines) [{ts, tableId, line, kind}]
+  feedLog: [],                             // complete broadcast log for the exported CSV/JSON (uncapped up to a memory ceiling) — v69.75
   logSeen: {},                             // tableId -> last h.log index harvested
   scorecardOpen: false,                    // v69.46 — featured panel toggle (felt ↔ full scorecard) for liveTourney
   // Setup form state (persisted across view re-renders)
@@ -16279,12 +16284,17 @@ function spectatorSeatTourneyRound() {
   }
   // v69.48 — "Final Table" naming. The championship round is THE Final Table
   // (HU in this format — the engine is HU-native). The round before is the
-  // semi-final pair of matches. Earlier rounds are numbered. Match labels
+  // semi-final pair of matches; the one before that (the round of 8) is the
+  // quarter-final (v69.75). Any rounds before that are numbered. Match labels
   // pick up the right name so the featured panel + scorecard + log read as
   // a real tour final.
-  const isFinal = (tour.round === tour.totalRounds);
-  const isSemi  = (tour.round === tour.totalRounds - 1);
-  const roundName = isFinal ? '🏆 Final Table' : (isSemi ? '🥇 Semi-Final' : ('Round ' + tour.round));
+  const isFinal   = (tour.round === tour.totalRounds);
+  const isSemi    = (tour.round === tour.totalRounds - 1);
+  const isQuarter = (tour.round === tour.totalRounds - 2);
+  const roundName = isFinal ? '🏆 Final Table'
+    : isSemi    ? '🥇 Semi-Final'
+    : isQuarter ? '🎱 Quarter-Final'
+    : ('Round ' + tour.round);
   pairs.forEach((pair, idx) => {
     const matchId = tour.nextMatchId++;
     const dealer = (cashRng() < 0.5) ? 'a' : 'b';
@@ -16374,23 +16384,23 @@ function spectatorTourneyMatchTick(match) {
   }
   // Apply the same accounting playMatch uses: ties accumulate carry pot with
   // a consecutive-tie bonus, decisive resolutions sweep carry to the winner.
+  // NOTE (v69.75): playHole was called with eng.carryPot as its carry, so
+  // r.strokes — and therefore r.aHoneyCredit / r.bHoneyCredit on a win or fold
+  // — ALREADY contains that carry. It must not be added a second time.
   eng.totalGolfA += r.aScore; eng.totalGolfB += r.bScore;
   let carryToNext = 0;
   if (r.tie) {
     eng.consecTies += 1;
     const bonus = Math.min(5, eng.consecTies);
-    carryToNext = eng.carryPot + (r.strokes || 0) + bonus;
+    // r.strokes already includes the prior carry; add only the streak bonus.
+    // Earlier bonuses ride along via the carry → strokes chain: 1, 1+2, 1+2+3, …
+    carryToNext = (r.strokes || 0) + bonus;
   } else {
     eng.consecTies = 0;
-    const aSk = r.aHoneyCredit || 0;
-    const bSk = r.bHoneyCredit || 0;
-    let netA = aSk, netB = bSk;
-    if (eng.carryPot > 0) {
-      if (aSk > 0)      netA += eng.carryPot;
-      else if (bSk > 0) netB += eng.carryPot;
-    }
-    eng.totalHoneyA += netA;
-    eng.totalHoneyB += netB;
+    // Winner's honey credit is the full pot (incl. any swept carry) — credit it
+    // once. carryToNext stays 0, so eng.carryPot resets below.
+    eng.totalHoneyA += (r.aHoneyCredit || 0);
+    eng.totalHoneyB += (r.bHoneyCredit || 0);
   }
   // Per-player scorecard rows. Each player sees their own perspective.
   const carryIn = eng.carryPot;
@@ -16580,7 +16590,23 @@ function spectatorFinishTourneyMatch(match) {
 function spectatorApplyTournamentCut() {
   const tour = SpectatorState.tournament;
   if (!tour) return;
-  const sorted = tour.surviving.slice().sort((a, b) => spectatorPlayerFinal(a) - spectatorPlayerFinal(b));
+  // v69.75 — explicit, documented cut tiebreakers (golf-cut convention).
+  // When two players' Honey-adjusted finals are equal:
+  //   1) the lower cumulative GOLF total survives — a tighter pure-golf event
+  //      beats a honey-padded one;
+  //   2) then the one who LOST fewer holes across the event;
+  //   3) then the lower seed (player.id = -1000-i, so the lower i / higher id
+  //      survives) as a deterministic final fallback that matches the
+  //      bracket-pairing order, so a re-run on the same seed can't reorder.
+  const holesLost = (p) => (p.scorecard || []).reduce((n, row) => n + ((row.role === 'lost-sd' || row.role === 'folded') ? 1 : 0), 0);
+  const sorted = tour.surviving.slice().sort((a, b) => {
+    const fa = spectatorPlayerFinal(a), fb = spectatorPlayerFinal(b);
+    if (fa !== fb) return fa - fb;
+    if (a.golfCum !== b.golfCum) return a.golfCum - b.golfCum;
+    const la = holesLost(a), lb = holesLost(b);
+    if (la !== lb) return la - lb;
+    return (b.id || 0) - (a.id || 0);
+  });
   const cutCount = Math.max(1, Math.floor(sorted.length / 2));
   const survivors = sorted.slice(0, sorted.length - cutCount);
   const cuts = sorted.slice(sorted.length - cutCount);
@@ -16753,6 +16779,7 @@ function spectatorTeardown() {
   SpectatorState.broadcast = null;
   SpectatorState.scorecardOpen = false;
   SpectatorState.log = [];
+  SpectatorState.feedLog = [];
   SpectatorState.logSeen = {};
   SpectatorState.stats = {
     handsPlayed: 0, biggestPot: 0, biggestPotHand: null, biggestPotTableId: null,
@@ -17201,6 +17228,7 @@ function spectatorExportCSV() {
         tour.history.forEach(h => {
           const name = (h.round === tour.totalRounds) ? 'Final Table'
             : (h.round === tour.totalRounds - 1) ? 'Semi-Final'
+            : (h.round === tour.totalRounds - 2) ? 'Quarter-Final'
             : ('Round ' + h.round);
           chunks.push(row([
             h.round,
@@ -17234,10 +17262,11 @@ function spectatorExportCSV() {
       });
       chunks.push('\r\n');
     }
-    // --- Section: broadcast feed (last 500 lines, for context) ---
+    // --- Section: broadcast feed (complete record of the run) ---
     chunks.push(row(['section', 'feed']));
     chunks.push(row(['idx', 'ts', 'table_id', 'kind', 'line']));
-    (SpectatorState.log || []).forEach((e, i) => chunks.push(row([i, new Date(e.ts).toISOString(), e.tableId == null ? '' : e.tableId, e.kind, e.line])));
+    const feedRows = (SpectatorState.feedLog && SpectatorState.feedLog.length) ? SpectatorState.feedLog : (SpectatorState.log || []);
+    feedRows.forEach((e, i) => chunks.push(row([i, new Date(e.ts).toISOString(), e.tableId == null ? '' : e.tableId, e.kind, e.line])));
     const blob = new Blob(['﻿', ...chunks], { type: 'text/csv;charset=utf-8' });
     const name = spectatorExportFilenameBase() + '.csv';
     const url = URL.createObjectURL(blob);
@@ -17265,7 +17294,7 @@ function spectatorExportJSON() {
       session: { mode: sess.mode, startedAt: sess.startedAt, endedAt: sess.endedAt, status: sess.status, endReason: sess.endReason, seed: sess.seed, seedNumeric: sess.seedNumeric, runLimit: sess.runLimit, settings: sess.settings },
       summary: sess.summary || spectatorComputeSummary(),
       hands: SpectatorState.handLog,
-      feed: SpectatorState.log,
+      feed: (SpectatorState.feedLog && SpectatorState.feedLog.length) ? SpectatorState.feedLog : SpectatorState.log,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const name = spectatorExportFilenameBase() + '.json';
@@ -17285,8 +17314,17 @@ function spectatorExportJSON() {
 
 // --- Universal broadcast log -----------------------------------------------
 function spectatorPushLog(tableId, line, kind) {
-  SpectatorState.log.push({ ts: Date.now(), tableId: tableId, line: line, kind: kind || 'action' });
+  const entry = { ts: Date.now(), tableId: tableId, line: line, kind: kind || 'action' };
+  SpectatorState.log.push(entry);
   if (SpectatorState.log.length > 500) SpectatorState.log.splice(0, SpectatorState.log.length - 500);
+  // v69.75 — also append to the complete feed used by the CSV/JSON export. The
+  // `log` array above is a 500-line rolling window for the UI; the exported
+  // record must not silently drop the opening of the session (the earlier
+  // behavior lost ~the first round when feeds exceeded 500 lines). Bounded only
+  // by a generous memory ceiling so endless sessions can't grow without limit.
+  if (!Array.isArray(SpectatorState.feedLog)) SpectatorState.feedLog = [];
+  SpectatorState.feedLog.push(entry);
+  if (SpectatorState.feedLog.length > 100000) SpectatorState.feedLog.splice(0, SpectatorState.feedLog.length - 100000);
 }
 
 // Harvest new lines from each table's h.log into the universal feed.
