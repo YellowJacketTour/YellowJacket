@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.87-hive-tour-season-engine";
+const APP_VERSION = "2026.05.12-v69.88-hive-tour-careers-and-finale";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5169,10 +5169,11 @@ const Season = {
     fieldStrengthLambda: 0.7,   // how much a strong field upweights your result (OWGR-style)
     marginWeight: 0.25,         // (1-w)·rank-z + w·winsorized-stroke-margin-z
     minEventsForCrown: 8,       // # rated events required to hold the Hive Crown / a Tour card
-    finaleMode: 'calibrated',   // 'calibrated' (solve β for the target #1-seed win prob) | 'fixed' (use finaleBeta)
-    finaleTargetWinProb: 0.30,  // θ*: target win probability of the season's #1 seed in the Main Event
-    finaleBeta: 0.15,           // used when finaleMode==='fixed' (z-units of stroke head-start per z-unit above median)
-    finaleModelNoiseVar: 1.15,  // model variance of a Main finishing-z used by the β solver
+    finaleMode: 'none',         // 'none' (Main = pure cut chaos, the real Yellow-Jacket flavor) | 'fixed' (β) | 'calibrated'
+                                // (Tour-Championship style: Main runs NO-CUT with a stroke head-start ∝ rating-above-median, β solved for the target #1-seed win prob)
+    finaleTargetWinProb: 0.30,  // θ*: target win probability of the season's #1 seed in the Main Event (calibrated mode only)
+    finaleBeta: 0.30,           // used when finaleMode==='fixed' (z-units of stroke head-start per z-unit above median)
+    finaleModelNoiseVar: 1.0,   // model variance of a (no-cut) Main finishing-z used by the β solver
     skillSpread: 'main',        // 'main' [0.30,0.95] | 'regular' [0.40,0.90] | 'wide' [0.20,0.95] | [lo,hi]
     skillCurve: 1.0,            // AI skill-curve width multiplier (see makeProfileForSkill)
     honeyCapMode: 'spec',       // 'spec' (÷N) | 'calibrated' (÷stepped) — locked for the run
@@ -5236,7 +5237,7 @@ const Season = {
   // tier ∈ {'regular','major','main'}. Returns { finishers (by raw aggregate),
   // champion, sigma }. The rating update uses the RAW (pre-reset) finishing
   // order — the Main's competitive head-start is applied by the caller, not here.
-  runEvent(field, cfg, tier, prizePool) {
+  runEvent(field, cfg, tier, prizePool, noCuts) {
     const holes = (tier === 'main' && +cfg.mainHoles > 0) ? +cfg.mainHoles
       : (tier === 'major' && +cfg.majorHoles > 0) ? +cfg.majorHoles : cfg.holesPerRound;
     const N = field.length, R = Math.max(1, cfg.nRounds || 4);
@@ -5252,7 +5253,7 @@ const Season = {
         pA.cum += (m.aTotal || 0); pB.cum += (m.bTotal || 0);
       }
       surviving.sort((a, b) => (a.cum - b.cum) || (a.id - b.id));
-      if (!(rnd === 1 || rnd >= R)) {                                   // ~50% cut after R2 & R3 (no cut after R1 or R)
+      if (!noCuts && !(rnd === 1 || rnd >= R)) {                        // ~50% cut after R2 & R3 (no cut after R1 or R, or if noCuts — Tour-Championship style)
         const target = Math.max(2, Math.ceil(len / 2));
         surviving.slice(target).forEach(p => { p._cutAfter = rnd; });
         surviving = surviving.slice(0, target);
@@ -5319,7 +5320,7 @@ const Season = {
   },
   _solveFinaleBeta(seeded, medMu, cfg) {
     const target = Math.max(0.02, Math.min(0.95, +cfg.finaleTargetWinProb || 0.3));
-    let lo = 0, hi = 3, pLo = this._modelNo1WinProb(seeded, medMu, lo, cfg), pHi = this._modelNo1WinProb(seeded, medMu, hi, cfg);
+    let lo = 0, hi = 25, pLo = this._modelNo1WinProb(seeded, medMu, lo, cfg), pHi = this._modelNo1WinProb(seeded, medMu, hi, cfg);
     if (pHi < target) return { beta: hi, p: pHi };                 // even a huge head-start can't reach the target (tiny field?)
     if (pLo > target) return { beta: lo, p: pLo };                 // already above target with no reset
     for (let it = 0; it < 16; it++) {
@@ -5349,21 +5350,25 @@ const Season = {
       (isMajor ? majorWinners : regularWinners).push(r.champion);
       evIdx++;
     }
+    // snapshot ratings just before the Main (so Jacket-vs-season-rating isn't contaminated by the Main's own update)
+    U.forEach(p => { p._muPreMain = p.rating.mu; });
+    const ratedPreMain = U.slice().sort((a, b) => (b.rating.mu - a.rating.mu) || (a.id - b.id));
+    const ratingRankPreMain = new Map(); ratedPreMain.forEach((p, i) => ratingRankPreMain.set(p.id, i + 1));
     // ---- the Main Event (season finale) ----
     U.forEach(p => this.driftRating(p.rating, cfg, 1));
     const mainField = this._pickField(U, cfg.mainField, cfg.qualifierSlotsMain);
     const seeded = mainField.slice().sort((a, b) => (b.rating.mu - a.rating.mu) || (a.id - b.id));
     const medMu = seeded[Math.floor(seeded.length / 2)].rating.mu;
-    let beta, modeledP;
-    if (cfg.finaleMode === 'calibrated') { const s = this._solveFinaleBeta(seeded, medMu, cfg); beta = s.beta; modeledP = s.p; }
-    else { beta = +cfg.finaleBeta || 0; modeledP = this._modelNo1WinProb(seeded, medMu, beta, cfg, 3000); }
-    const Rr = Math.max(1, cfg.nRounds || 4);
-    const mr = this.runEvent(mainField, cfg, 'main', 5.0);     // ratings update off the RAW (pre-reset) order in here
+    // 'none' = pure cut chaos (the real Yellow-Jacket flavor — no head-start). 'fixed'/'calibrated' = Tour-Championship
+    // style: the Main runs NO-CUT and each qualifier gets a stroke head-start ∝ rating-above-median (β fixed, or solved
+    // so the #1 seed wins ≈ the target probability — a tunable "how much should the season matter in the finale" dial).
+    const noCutMain = cfg.finaleMode !== 'none';
+    let beta = 0, modeledP = NaN;
+    if (cfg.finaleMode === 'calibrated') { const sol = this._solveFinaleBeta(seeded, medMu, cfg); beta = sol.beta; modeledP = sol.p; }
+    else if (cfg.finaleMode === 'fixed') { beta = +cfg.finaleBeta || 0; modeledP = this._modelNo1WinProb(seeded, medMu, beta, cfg, 3000); }
+    const mr = this.runEvent(mainField, cfg, 'main', 5.0, noCutMain);     // ratings update off the RAW (pre-head-start) order in here
     const sigma = mr.sigma || 1;
-    // Competitive head-start ∝ rating-above-median, applied to the FINAL standing
-    // (a bonus to your aggregate total). The cut tiers still rule — you can't win
-    // the Jacket if you missed the Main's final cut, head-start or no.
-    mainField.forEach(p => { p._adj = p.cum - beta * (p.rating.mu - medMu) * sigma; });
+    mainField.forEach(p => { p._adj = p.cum - beta * (p.rating.mu - medMu) * sigma; });   // head-start in strokes (β=0 ⇒ _adj = cum)
     const mainFinish = mainField.slice().sort((a, b) => (b._cutAfter - a._cutAfter) || (a._adj - b._adj) || (a.cum - b.cum) || (a.id - b.id));
     const jacket = mainFinish[0]; jacket.jacketWins++;
     const mainRankOf = (() => { const m = new Map(); mainFinish.forEach((p, i) => m.set(p.id, i + 1)); return id => m.get(id); })();
@@ -5376,33 +5381,38 @@ const Season = {
     const skillRankM = new Map(); bySkill.forEach((p, i) => skillRankM.set(p.id, i + 1));
     const ratingRankM = new Map(); ratedAll.forEach((p, i) => ratingRankM.set(p.id, i + 1));
     const Npop = U.length, pct = rk => (Npop > 1) ? (1 - (rk - 1) / (Npop - 1)) : 1;
-    const rhoSeason = (eligible.length >= 3) ? this._spearman(eligible.map(p => p.skill), eligible.map(p => p.rating.mu)) : 0;
+    // ρ(rating, skill): over a broad population (anyone who started ≥3 events) — the honest measure of "does the
+    // rating track skill". `rhoEligible` is the same over the Crown-eligible set (range-restricted ⇒ pessimistic).
+    const rhoPool = U.filter(p => p.rating.events >= 3);
+    const rhoSeason = (rhoPool.length >= 3) ? this._spearman(rhoPool.map(p => p.skill), rhoPool.map(p => p.rating.mu)) : 0;
+    const rhoEligible = (eligible.length >= 3) ? this._spearman(eligible.map(p => p.skill), eligible.map(p => p.rating.mu)) : 0;
     const rhoMain = this._spearman(mainFinish.map(p => p.skill), mainFinish.map(p => -(mainRankOf(p.id))));
     const nCards = cfg.cardTour || Math.max(8, Math.round(cfg.universeSize / 4));
-    const tourCardIds = ratedAll.filter(p => p.rating.events >= cfg.minEventsForCrown).slice(0, nCards).map(p => p.id);
-    // biggest mover this season (rating-mu delta)
+    const tourCardIds = eligible.slice(0, nCards).map(p => p.id);
     let riser = U[0], faller = U[0];
     U.forEach(p => { if ((p._muEnd - p._muStart) > (riser._muEnd - riser._muStart)) riser = p; if ((p._muEnd - p._muStart) < (faller._muEnd - faller._muStart)) faller = p; });
     const pinfo = p => ({ id: p.id, name: p.name, skill: +p.skill.toFixed(3), skillRank: skillRankM.get(p.id), skillPct: +pct(skillRankM.get(p.id)).toFixed(3) });
+    const jacketSeasonRank = ratingRankPreMain.get(jacket.id);
     return {
       year: year,
       ratingTop: ratedAll.slice(0, 25).map(p => ({ id: p.id, name: p.name, skill: +p.skill.toFixed(3), skillRank: skillRankM.get(p.id), hiveRating: this.hiveRating(p.rating), rd: Math.round(400 * this.rdOf(p.rating)), events: p.rating.events, earnings: +p.earnings.toFixed(2), bestFinish: p.bestFinish, jacketWins: p.jacketWins, majorWins: p.majorWins })),
       hiveCrown: Object.assign(pinfo(crown), { hiveRating: this.hiveRating(crown.rating), rd: Math.round(400 * this.rdOf(crown.rating)), events: crown.rating.events, ratingRank: ratingRankM.get(crown.id) }),
-      yellowJacket: Object.assign(pinfo(jacket), { seasonRatingRank: ratingRankM.get(jacket.id), mainSeedRank: seeded.findIndex(p => p.id === jacket.id) + 1, wasNo1Seed: seeded[0].id === jacket.id, hiveRating: this.hiveRating(jacket.rating) }),
+      yellowJacket: Object.assign(pinfo(jacket), { seasonRatingRank: jacketSeasonRank, mainSeedRank: seeded.findIndex(p => p.id === jacket.id) + 1, wasNo1Seed: seeded[0].id === jacket.id, hiveRating: this.hiveRating(jacket.rating) }),
       majorWinners: majorWinners.map(pinfo),
-      finale: { mode: cfg.finaleMode, beta: +beta.toFixed(3), targetWinProb: +(+cfg.finaleTargetWinProb || 0.3).toFixed(2), modeledNo1WinProb: +modeledP.toFixed(3), no1SeedId: seeded[0].id, no1SeedName: seeded[0].name, no1SeedWonRealized: seeded[0].id === jacket.id ? 1 : 0, mainFieldSize: mainField.length },
+      finale: { mode: cfg.finaleMode, beta: +beta.toFixed(3), targetWinProb: +(+cfg.finaleTargetWinProb || 0.3).toFixed(2), modeledNo1WinProb: isFinite(modeledP) ? +modeledP.toFixed(3) : null, no1SeedId: seeded[0].id, no1SeedName: seeded[0].name, no1SeedWonRealized: seeded[0].id === jacket.id ? 1 : 0, mainFieldSize: mainField.length },
       mover: { riser: Object.assign(pinfo(riser), { delta: +(riser._muEnd - riser._muStart).toFixed(3), hiveRating: this.hiveRating(riser.rating) }), faller: Object.assign(pinfo(faller), { delta: +(faller._muEnd - faller._muStart).toFixed(3), hiveRating: this.hiveRating(faller.rating) }) },
       promotion: { nCards: nCards, tourCardIds: tourCardIds },
       skill: {
-        rhoSeason: +rhoSeason.toFixed(3), rhoMain: +rhoMain.toFixed(3),
+        rhoSeason: +rhoSeason.toFixed(3), rhoEligible: +rhoEligible.toFixed(3), rhoMain: +rhoMain.toFixed(3),
+        nRated: U.filter(p => p.rating.events >= 1).length, nEligible: eligible.length,
         crownSkillPct: +pct(skillRankM.get(crown.id)).toFixed(3),
         trueNo1IsCrown: bySkill[0].id === crown.id ? 1 : 0,
         top5SkillIsCrown: bySkill.slice(0, 5).some(p => p.id === crown.id) ? 1 : 0,
         bestPlayerRatingRank: ratingRankM.get(bySkill[0].id),
         bestPlayerRatingPct: +(Npop > 1 ? 1 - (ratingRankM.get(bySkill[0].id) - 1) / (Npop - 1) : 1).toFixed(3),
         jacketSkillPct: +pct(skillRankM.get(jacket.id)).toFixed(3),
-        jacketSeasonRank: ratingRankM.get(jacket.id),
-        jacketSeasonPct: +(Npop > 1 ? 1 - (ratingRankM.get(jacket.id) - 1) / (Npop - 1) : 1).toFixed(3),
+        jacketSeasonRank: jacketSeasonRank,
+        jacketSeasonPct: +(Npop > 1 ? 1 - (jacketSeasonRank - 1) / (Npop - 1) : 1).toFixed(3),
         no1SeedWinsFinale: seeded[0].id === jacket.id ? 1 : 0,
       },
     };
@@ -5427,8 +5437,10 @@ const Season = {
     // short demo calendar doesn't lock everyone out — the UI doesn't expose it.
     cfg.minEventsForCrown = Math.max(3, Math.min(cfg.nRegulars + cfg.nMajors + 1, Math.round((cfg.nRegulars + cfg.nMajors + 1) * 0.45)));
     cfg.skillCurve = Number.isFinite(+cfg.skillCurve) ? Math.max(1, Math.min(3, +cfg.skillCurve)) : 1;
+    cfg.omega = Math.max(0.0005, Math.min(0.3, +cfg.omega || 0.03));    // rating memory: ↓ = longer memory = higher ρ in a static-skill model (but slower to track real form)
+    cfg.tau0 = Math.max(0.05, Math.min(20, +cfg.tau0 || 1.0));
     cfg.finaleTargetWinProb = Math.max(0.02, Math.min(0.95, +cfg.finaleTargetWinProb || 0.3));
-    if (cfg.finaleMode !== 'fixed') cfg.finaleMode = 'calibrated';
+    if (['none', 'fixed', 'calibrated'].indexOf(cfg.finaleMode) < 0) cfg.finaleMode = 'none';
     if (cfg.honeyCapMode !== 'calibrated') cfg.honeyCapMode = 'spec';
     return cfg;
   },
@@ -5467,45 +5479,53 @@ const Season = {
     });
   },
 
-  // ---- public: the validation STUDY — S seasons × {arm holes} ------------
-  // opts: { s, holesArm:[h1,h2,...] (default [configuredHoles, 18]), + a config
-  // (universeSize, nRegulars, nMajors, regularField, majorField, mainField,
-  // skillSpread, skillCurve, honeyCapMode, finaleMode, finaleTargetWinProb),
-  // baseSeed, includeNoSkill (default true) }.  Reports the pooled per-arm
-  // skill diagnostics + a no-skill reference column.
+  // ---- public: the validation STUDY ------------------------------------------
+  // opts: { s (careers per arm, default 8), careerSeasons (default 1 — set >1 to
+  // measure ρ at the end of a multi-year career, the OWGR-style accumulation),
+  // holesArm:[h1,h2,...] (default [configuredHoles, 18]), + a config (universeSize,
+  // nRegulars, nMajors, regularField, majorField, mainField, skillSpread,
+  // skillCurve, honeyCapMode, finaleMode, finaleTargetWinProb), baseSeed,
+  // includeNoSkill (default true) }. Reports pooled per-arm skill diagnostics at
+  // career-end (+ ρ_season-by-year curve when careerSeasons>1) + a no-skill column.
   runStudy(opts) {
     opts = opts || {};
     const s = Math.max(1, Math.round(+opts.s || 8));
+    const careerSeasons = Math.max(1, Math.min(40, Math.round(+opts.careerSeasons || 1)));
     const baseCfg = this._norm(opts);
     let arms = Array.isArray(opts.holesArm) ? opts.holesArm.map(h => Math.max(9, Math.min(216, Math.round(+h || 18)))) : [baseCfg.holesPerRound, 18];
     arms = arms.filter((h, i) => arms.indexOf(h) === i);                     // dedupe
     const baseSeed = String(opts.baseSeed || ('season-study-' + Date.now()));
-    const KEYS = ['rhoSeason', 'rhoMain', 'crownSkillPct', 'trueNo1IsCrown', 'top5SkillIsCrown', 'bestPlayerRatingPct', 'jacketSkillPct', 'jacketSeasonPct', 'no1SeedWinsFinale'];
+    const KEYS = ['rhoSeason', 'rhoEligible', 'rhoMain', 'crownSkillPct', 'trueNo1IsCrown', 'top5SkillIsCrown', 'bestPlayerRatingPct', 'jacketSkillPct', 'jacketSeasonPct', 'no1SeedWinsFinale'];
     const runArm = (holes, spreadOverride) => {
       const cfg = Object.assign({}, baseCfg, { holesPerRound: holes });
       if (spreadOverride) cfg.skillSpread = spreadOverride;
       const acc = {}; KEYS.forEach(k => acc[k] = 0); let betaSum = 0;
+      const rhoYr = new Array(careerSeasons).fill(0);
       for (let i = 0; i < s; i++) {
-        let res = null;
+        let lastSeason = null;
         setCashRngSeed(baseSeed + '/' + holes + (spreadOverride ? '/' + spreadOverride : '') + '/' + i);
-        withCashRng(() => { res = this._runSeasonInner(cfg, this.makeUniverse(cfg), 1); });
-        if (!res) continue;
-        KEYS.forEach(k => acc[k] += (+res.skill[k] || 0));
-        betaSum += (+res.finale.beta || 0);
+        withCashRng(() => {
+          const U = this.makeUniverse(cfg);
+          for (let y = 1; y <= careerSeasons; y++) { const sr = this._runSeasonInner(cfg, U, y); rhoYr[y - 1] += (+sr.skill.rhoSeason || 0); lastSeason = sr; }
+        });
+        if (!lastSeason) continue;
+        KEYS.forEach(k => acc[k] += (+lastSeason.skill[k] || 0));
+        betaSum += (+lastSeason.finale.beta || 0);
       }
       const out = { holesPerRound: holes, totalHoles: holes * (cfg.nRounds || 4), avgFinaleBeta: +(betaSum / s).toFixed(3) };
       KEYS.forEach(k => out[k] = +(acc[k] / s).toFixed(3));
+      if (careerSeasons > 1) out.rhoByYear = rhoYr.map(v => +(v / s).toFixed(3));
       return out;
     };
     return this._withEngineEnv(baseCfg, () => {
       const armsOut = arms.map(h => runArm(h));
-      const baseline = (opts.includeNoSkill === false) ? null : runArm(arms[0], 'flat');     // everyone identical → the "skill irrelevant" reference
+      const baseline = (opts.includeNoSkill === false) ? null : runArm(arms[0], 'flat');     // everyone (near-)identical → the "skill irrelevant" reference
       const out = {
-        config: { s: s, holesArm: arms, nRounds: baseCfg.nRounds, nRegulars: baseCfg.nRegulars, nMajors: baseCfg.nMajors, universeSize: baseCfg.universeSize, regularField: baseCfg.regularField, majorField: baseCfg.majorField, mainField: baseCfg.mainField, minEventsForCrown: baseCfg.minEventsForCrown, finaleMode: baseCfg.finaleMode, finaleTargetWinProb: baseCfg.finaleTargetWinProb, skillSpread: baseCfg.skillSpread, skillCurve: baseCfg.skillCurve, honeyCapMode: baseCfg.honeyCapMode, baseSeed: baseSeed },
+        config: { s: s, careerSeasons: careerSeasons, holesArm: arms, nRounds: baseCfg.nRounds, nRegulars: baseCfg.nRegulars, nMajors: baseCfg.nMajors, universeSize: baseCfg.universeSize, regularField: baseCfg.regularField, majorField: baseCfg.majorField, mainField: baseCfg.mainField, minEventsForCrown: baseCfg.minEventsForCrown, omega: baseCfg.omega, tau0: baseCfg.tau0, finaleMode: baseCfg.finaleMode, finaleTargetWinProb: baseCfg.finaleTargetWinProb, skillSpread: baseCfg.skillSpread, skillCurve: baseCfg.skillCurve, honeyCapMode: baseCfg.honeyCapMode, baseSeed: baseSeed },
         arms: armsOut, noSkill: baseline,
       };
       try { console.log('[Season.runStudy]', JSON.stringify(out.config)); console.table(armsOut.concat(baseline ? [Object.assign({ holesPerRound: 'no-skill' }, baseline)] : [])); } catch (_) {}
-      console.log('higher↑ = better: rhoSeason, rhoMain, crownSkillPct, trueNo1IsCrown, top5SkillIsCrown, bestPlayerRatingPct  ·  jacketSeasonPct LOWER = more chaotic (good)  ·  no1SeedWinsFinale should ≈ the finale target');
+      console.log('higher↑ = better: rhoSeason, rhoEligible, rhoMain, crownSkillPct, trueNo1IsCrown, top5SkillIsCrown, bestPlayerRatingPct  ·  jacketSeasonPct LOWER = more chaotic (good)  ·  no1SeedWinsFinale ≈ the finale target (calibrated mode)  ·  rhoByYear = ρ_season climbing over a career');
       return out;
     });
   },
@@ -5525,17 +5545,21 @@ function seasonStudyToCsv(history) {
   line(['runs', history.length]);
   rows.push('');
   line(['section', 'runs']);
-  const METRICS = ['rhoSeason', 'rhoMain', 'avgFinaleBeta', 'crownSkillPct', 'trueNo1IsCrown', 'top5SkillIsCrown', 'bestPlayerRatingPct', 'jacketSkillPct', 'jacketSeasonPct', 'no1SeedWinsFinale'];
-  line(['run', 'base_seed', 'seasons_per_arm', 'n_regulars', 'n_majors', 'universe', 'regular_field', 'major_field', 'main_field', 'min_events', 'finale_mode', 'finale_target', 'skill_spread', 'skill_curve', 'honey_cap', 'metric', ...history[0] && history[0].arms ? history[0].arms.map(a => 'holes_' + a.holesPerRound + '_x' + (history[0].config.nRounds || 4)) : ['armA', 'armB'], 'no_skill']);
+  const METRICS = ['rhoSeason', 'rhoEligible', 'rhoMain', 'avgFinaleBeta', 'crownSkillPct', 'trueNo1IsCrown', 'top5SkillIsCrown', 'bestPlayerRatingPct', 'jacketSkillPct', 'jacketSeasonPct', 'no1SeedWinsFinale'];
+  line(['run', 'base_seed', 'careers_per_arm', 'career_seasons', 'n_regulars', 'n_majors', 'universe', 'regular_field', 'major_field', 'main_field', 'min_events', 'omega', 'tau0', 'finale_mode', 'finale_target', 'skill_spread', 'skill_curve', 'honey_cap', 'metric', ...history[0] && history[0].arms ? history[0].arms.map(a => 'holes_' + a.holesPerRound + '_x' + (history[0].config.nRounds || 4)) : ['armA', 'armB'], 'no_skill']);
   history.forEach((h, idx) => {
     if (!h || !h.arms) return;
     const c = h.config || {};
     const armCols = h.arms;
+    const pre = [history.length - idx, c.baseSeed || '', c.s || '', c.careerSeasons || 1, c.nRegulars || '', c.nMajors || '', c.universeSize || '', c.regularField || '', c.majorField || '', c.mainField || '', c.minEventsForCrown || '', c.omega != null ? c.omega : '', c.tau0 != null ? c.tau0 : '', c.finaleMode || '', c.finaleTargetWinProb || '', Array.isArray(c.skillSpread) ? c.skillSpread.join('-') : (c.skillSpread || ''), c.skillCurve || '', c.honeyCapMode || ''];
     METRICS.forEach(m => {
-      const vals = armCols.map(a => (a[m] != null ? a[m] : ''));
-      const ns = (h.noSkill && h.noSkill[m] != null) ? h.noSkill[m] : '';
-      line([history.length - idx, c.baseSeed || '', c.s || '', c.nRegulars || '', c.nMajors || '', c.universeSize || '', c.regularField || '', c.majorField || '', c.mainField || '', c.minEventsForCrown || '', c.finaleMode || '', c.finaleTargetWinProb || '', Array.isArray(c.skillSpread) ? c.skillSpread.join('-') : (c.skillSpread || ''), c.skillCurve || '', c.honeyCapMode || '', m, ...vals, ns]);
+      line([...pre, m, ...armCols.map(a => (a[m] != null ? a[m] : '')), (h.noSkill && h.noSkill[m] != null) ? h.noSkill[m] : '']);
     });
+    // ρ_season-by-year curve (career mode), if present
+    if (armCols[0] && armCols[0].rhoByYear) {
+      const K = armCols[0].rhoByYear.length;
+      for (let y = 0; y < K; y++) line([...pre, 'rhoSeason_year_' + (y + 1), ...armCols.map(a => (a.rhoByYear && a.rhoByYear[y] != null ? a.rhoByYear[y] : '')), (h.noSkill && h.noSkill.rhoByYear && h.noSkill.rhoByYear[y] != null) ? h.noSkill.rhoByYear[y] : '']);
+    }
   });
   return rows.join('\n');
 }
@@ -5553,7 +5577,7 @@ function renderSeasonRunCard(out) {
     + ' · ' + c.holesPerRound + ' holes/round × ' + (last.finale ? 4 : 4) + ' rounds'
     + ' · fields ' + c.regularField + '/' + c.majorField + '/' + c.mainField
     + ' · honey ' + (c.honeyCapMode === 'spec' ? '÷N (Spec)' : '÷stepped (Calib)') + ' · AI curve ×' + (+c.skillCurve || 1).toFixed(1)
-    + ' · finale: ' + c.finaleMode + (c.finaleMode === 'calibrated' ? ' (target #1-seed win-prob ' + f2(c.finaleTargetWinProb) + ')' : '') }));
+    + ' · finale: ' + (c.finaleMode === 'none' ? 'pure cut (the Yellow Jacket is anyone\'s week)' : (c.finaleMode === 'calibrated' ? 'Tour-Championship — no-cut, head-start, β solved for #1-seed win-prob ' + f2(c.finaleTargetWinProb) : 'Tour-Championship — no-cut, fixed head-start β')) }));
   // the two crowns
   const crownRow = el('div', { style: 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;' });
   crownRow.appendChild(el('div', { style: 'flex:1 1 260px; padding:9px 11px; border-radius:6px; background:rgba(212,160,23,0.12); border:1px solid rgba(212,160,23,0.32);' },
@@ -5567,11 +5591,14 @@ function renderSeasonRunCard(out) {
   wrap.appendChild(crownRow);
   // majors line
   if (last.majorWinners && last.majorWinners.length) wrap.appendChild(el('div', { style: 'font-size:10px; opacity:0.75; margin-bottom:8px;', text: '🏆 Majors: ' + last.majorWinners.map(w => w.name + ' (' + pc(w.skillPct) + 'ile)').join('  ·  ') }));
-  // finale calibration line
-  if (last.finale) wrap.appendChild(el('div', { style: 'font-size:9.5px; opacity:0.6; margin-bottom:8px; font-style:italic;', text: '⚖ Finale reset: β = ' + last.finale.beta + ' (head-start strokes ∝ rating above the field median) · modeled #1-seed win-prob ≈ ' + f2(last.finale.modeledNo1WinProb) + ' · #1 seed was ' + last.finale.no1SeedName + (last.finale.no1SeedWonRealized ? ' — and won it.' : ' — did not win.') }));
+  // finale line
+  if (last.finale) wrap.appendChild(el('div', { style: 'font-size:9.5px; opacity:0.6; margin-bottom:8px; font-style:italic;', text:
+    (last.finale.mode === 'none'
+      ? '⚖ Main Event: pure cut — no head-start. #1 seed was ' + last.finale.no1SeedName + (last.finale.no1SeedWonRealized ? ' — and took the Jacket.' : ' — did not win.')
+      : '⚖ Finale head-start: β = ' + last.finale.beta + ' (strokes ∝ rating above the field median, no-cut Main)' + (last.finale.modeledNo1WinProb != null ? ' · modeled #1-seed win-prob ≈ ' + f2(last.finale.modeledNo1WinProb) : '') + ' · #1 seed was ' + last.finale.no1SeedName + (last.finale.no1SeedWonRealized ? ' — and won it.' : ' — did not win.')) }));
   // skill check
   wrap.appendChild(el('div', { style: 'font-size:11px; padding:7px 10px; border-radius:5px; background:rgba(255,255,255,0.04); margin-bottom:10px;', text:
-    '🎯 Skill check — ρ(season rating, true skill) = ' + last.skill.rhoSeason + '   vs   single-Main-event ρ = ' + last.skill.rhoMain
+    '🎯 Skill check — ρ(season rating, true skill) = ' + last.skill.rhoSeason + ' over ' + (last.skill.nRated || '?') + ' rated players (' + last.skill.rhoEligible + ' among the ' + (last.skill.nEligible || '?') + ' Crown-eligible) · single-Main-event ρ = ' + last.skill.rhoMain
     + '  ·  the best player finished season #' + last.skill.bestPlayerRatingRank + ' (' + pc(last.skill.bestPlayerRatingPct) + 'ile)'
     + '  ·  true #1 ' + (last.skill.trueNo1IsCrown ? 'WON' : 'did not win') + ' the Crown; top-5 skill ' + (last.skill.top5SkillIsCrown ? 'did' : 'did not') }));
   // rating leaderboard
@@ -5606,20 +5633,23 @@ function renderSeasonStudyCard(out) {
   const wrap = el('div', { style: 'margin-top:12px;' });
   if (!out || !out.arms || !out.arms.length) { wrap.appendChild(el('div', { style: 'color:#E08070; font-size:11px;', text: 'no study result' })); return wrap; }
   const c = out.config, pc = x => Math.round((+x || 0) * 100) + '%';
+  const careerN = (+c.careerSeasons || 1);
   wrap.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.7; margin-bottom:8px; line-height:1.5;', text:
-    out.config.s + ' seasons/arm · universe ' + c.universeSize + ' · ' + c.nRegulars + ' Regulars + ' + c.nMajors + ' Majors + Main · fields ' + c.regularField + '/' + c.majorField + '/' + c.mainField
-    + ' · finale ' + c.finaleMode + (c.finaleMode === 'calibrated' ? ' (target ' + (+c.finaleTargetWinProb).toFixed(2) + ')' : '') + ' · ' + (Array.isArray(c.skillSpread) ? c.skillSpread.join('–') : c.skillSpread) + ' skill spread · honey ' + (c.honeyCapMode === 'spec' ? '÷N' : '÷stepped') + ' · AI curve ×' + (+c.skillCurve || 1).toFixed(1) }));
+    out.config.s + (careerN > 1 ? ' careers/arm × ' + careerN + ' seasons each' : ' seasons/arm') + ' · universe ' + c.universeSize + ' · ' + c.nRegulars + ' Regulars + ' + c.nMajors + ' Majors + Main · fields ' + c.regularField + '/' + c.majorField + '/' + c.mainField
+    + ' · finale ' + (c.finaleMode === 'none' ? 'pure cut' : c.finaleMode + (c.finaleMode === 'calibrated' ? ' (target ' + (+c.finaleTargetWinProb).toFixed(2) + ')' : '')) + ' · ' + (Array.isArray(c.skillSpread) ? c.skillSpread.join('–') : c.skillSpread) + ' skill spread · honey ' + (c.honeyCapMode === 'spec' ? '÷N' : '÷stepped') + ' · AI curve ×' + (+c.skillCurve || 1).toFixed(1)
+    + (careerN > 1 ? '   ·   metrics are at the END of year ' + careerN + ' (rating accumulates across the career)' : '') }));
   const ROWS = [
-    ['ρ(season rating, true skill)', 'rhoSeason', 'pct2', '↑ the headline — how well the year sorts the field'],
+    ['ρ(rating, true skill) — broad pool', 'rhoSeason', 'pct2', '↑ THE headline — does the ' + (careerN > 1 ? careerN + '-season-career ' : 'season ') + 'rating track skill (over players with ≥3 events)'],
+    ['ρ(rating, true skill) — Crown-eligible only', 'rhoEligible', 'pct2', 'range-restricted (pessimistic) — the perma-exempt set'],
     ['ρ(Main finish, true skill) — one event', 'rhoMain', 'pct2', 'for contrast: a single event stays chaotic'],
-    ['Hive Crown holder — skill %ile', 'crownSkillPct', 'pct', '↑ the season #1 is usually one of the genuine best'],
+    ['Hive Crown holder — skill %ile', 'crownSkillPct', 'pct', '↑ the #1 is usually one of the genuine best'],
     ['true #1 wins the Crown', 'trueNo1IsCrown', 'pct', '↑'],
     ['top-5 skill wins the Crown', 'top5SkillIsCrown', 'pct', '↑'],
     ['best player — final rating %ile', 'bestPlayerRatingPct', 'pct', '↑ where the universe-best ended up'],
-    ['Yellow Jacket winner — skill %ile', 'jacketSkillPct', 'pct', 'should be LOWER than the Crown — the Jacket is anyone\'s week'],
-    ['Yellow Jacket winner — season-rating %ile', 'jacketSeasonPct', 'pct', 'LOWER = more chaotic finale (good — upsets live here)'],
-    ['#1 seed wins the Main (finale)', 'no1SeedWinsFinale', 'pct', 'should land near the finale target ' + (c.finaleMode === 'calibrated' ? '(' + (+c.finaleTargetWinProb).toFixed(2) + ')' : '')],
-    ['avg finale β (head-start strength)', 'avgFinaleBeta', 'raw3', 'the solved reset coefficient'],
+    ['Yellow Jacket winner — skill %ile', 'jacketSkillPct', 'pct', 'lower than the Crown — the Jacket is anyone\'s week'],
+    ['Yellow Jacket winner — pre-Main season-rating %ile', 'jacketSeasonPct', 'pct', 'LOWER = more chaotic finale (good — upsets live here)'],
+    ['#1 seed wins the Main (finale)', 'no1SeedWinsFinale', 'pct', c.finaleMode === 'calibrated' ? 'should land near the target (' + (+c.finaleTargetWinProb).toFixed(2) + ')' : (c.finaleMode === 'none' ? 'pure cut — no head-start, so this is just the base rate' : 'fixed-β head-start')],
+    ['avg finale β (head-start strength)', 'avgFinaleBeta', 'raw3', c.finaleMode === 'none' ? 'n/a (pure cut)' : 'the head-start coefficient'],
   ];
   const tbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10.5px;' });
   const thr = el('tr', { style: 'opacity:0.6; text-align:left;' });
@@ -5639,14 +5669,33 @@ function renderSeasonStudyCard(out) {
     tbl.appendChild(tr);
   });
   wrap.appendChild(tbl);
+  // ρ_season-by-year curve (career mode)
+  if (careerN > 1 && out.arms[0] && out.arms[0].rhoByYear) {
+    const span = 16;
+    wrap.appendChild(el('div', { style: 'margin-top:10px; font-size:10px; opacity:0.6; text-transform:uppercase; letter-spacing:1px;', text: 'ρ(rating, true skill) climbing over the career' }));
+    const yt = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10px; margin-top:3px;' });
+    const yh = el('tr', { style: 'opacity:0.6; text-align:left;' });
+    yh.appendChild(el('th', { style: 'padding:2px 6px; border-bottom:1px solid rgba(255,255,255,0.12);', text: 'arm' }));
+    for (let y = 1; y <= careerN; y++) yh.appendChild(el('th', { style: 'padding:2px 5px; border-bottom:1px solid rgba(255,255,255,0.12); text-align:right;', text: 'Y' + y }));
+    yt.appendChild(yh);
+    out.arms.concat(out.noSkill ? [Object.assign({ holesPerRound: 'no-skill', _ns: 1 }, out.noSkill)] : []).forEach((a, i) => {
+      if (!a.rhoByYear) return;
+      const tr = el('tr', { style: (a._ns ? 'opacity:0.6;' : '') + (i % 2 ? 'background:rgba(255,255,255,0.02);' : '') });
+      tr.appendChild(el('td', { style: 'padding:2px 6px; border-bottom:1px solid rgba(255,255,255,0.05);', text: a._ns ? 'no-skill' : (a.totalHoles + 'h') }));
+      a.rhoByYear.forEach(v => tr.appendChild(el('td', { style: 'padding:2px 5px; border-bottom:1px solid rgba(255,255,255,0.05); text-align:right; font-variant-numeric:tabular-nums;', text: (+v).toFixed(2) })));
+      yt.appendChild(tr);
+    });
+    wrap.appendChild(yt);
+  }
   // narrative
   const a0 = out.arms[0], a18 = out.arms.find(a => a.holesPerRound === 18) || out.arms[out.arms.length - 1];
   const lift = (a18 && a0 !== a18) ? (a0.rhoSeason - a18.rhoSeason) : 0;
-  wrap.appendChild(el('div', { style: 'margin-top:8px; font-size:10px; opacity:0.7; line-height:1.5; border-top:1px dashed rgba(255,255,255,0.10); padding-top:7px;', text:
-    'At ' + a0.totalHoles + ' holes/event the season sorts skill at ρ ≈ ' + a0.rhoSeason + ' (vs ρ ≈ ' + a0.rhoMain + ' for a single Main event — the year is the instrument, not the event). '
-    + 'The Hive Crown lands on a ' + pc(a0.crownSkillPct) + 'ile player on average; the Yellow Jacket on a ' + pc(a0.jacketSkillPct) + 'ile player (season-rating ' + pc(a0.jacketSeasonPct) + 'ile) — the event stays an upset machine while the season does not. '
-    + (a18 && a0 !== a18 ? ('Dropping to the classic 18-hole framing (' + a18.totalHoles + 'h/event) ' + (Math.abs(lift) < 0.01 ? 'barely moves ρ_season (' + (lift >= 0 ? '+' : '') + lift.toFixed(3) + ').' : 'changes ρ_season by ' + (lift >= 0 ? '+' : '') + lift.toFixed(3) + ' — round length ' + (lift > 0.03 ? 'is a real lever; keep rounds long' : 'matters less than calendar volume at the season level') + '.')) : '')
-    + (out.noSkill ? ' (No-skill reference: ρ_season ≈ ' + out.noSkill.rhoSeason + ', Crown ' + pc(out.noSkill.crownSkillPct) + 'ile — i.e. random.)' : '') }));
+  const careerBit = (careerN > 1 && a0.rhoByYear) ? ('Over the ' + careerN + '-season career it climbs from ρ ≈ ' + a0.rhoByYear[0] + ' (year 1) to ρ ≈ ' + a0.rhoByYear[careerN - 1] + ' (year ' + careerN + ') — the OWGR-style accumulation; ' + (a0.rhoByYear[careerN - 1] >= 0.6 ? 'this is "skill clearly sorts the field" territory.' : 'keep adding years (or use longer rounds) to push it toward 0.7.')) : ('A single ' + (careerN === 1 ? 'season' : 'career') + ' at ' + a0.totalHoles + ' holes/event ' + (a0.rhoSeason >= 0.4 ? 'sorts skill at ρ ≈ ' + a0.rhoSeason + '.' : 'gets ρ_season ≈ ' + a0.rhoSeason + ' — too low; the per-event skill signal at this round length needs many more events (a multi-year career) or longer rounds to compound past the noise. Bump "career seasons" and/or "holes/round" and re-run.'));
+  wrap.appendChild(el('div', { style: 'margin-top:8px; font-size:10px; opacity:0.75; line-height:1.5; border-top:1px dashed rgba(255,255,255,0.10); padding-top:7px;', text:
+    careerBit + ' (a single Main event sits at ρ ≈ ' + a0.rhoMain + ' — the year/career is the instrument, not the event.) '
+    + 'The Hive Crown lands on a ' + pc(a0.crownSkillPct) + 'ile player; the Yellow Jacket on a ' + pc(a0.jacketSkillPct) + 'ile player (pre-Main season-rating ' + pc(a0.jacketSeasonPct) + 'ile) — the event stays an upset machine. '
+    + (a18 && a0 !== a18 ? ('Classic 18-hole framing (' + a18.totalHoles + 'h/event): ρ_season ≈ ' + a18.rhoSeason + ' — ' + (Math.abs(lift) < 0.015 ? 'about the same' : (lift > 0 ? 'so ' + a0.totalHoles + 'h rounds are worth +' + lift.toFixed(2) + ' here' : a18.totalHoles + 'h actually edges it by ' + (-lift).toFixed(2))) + '. ') : '')
+    + (out.noSkill ? '(No-skill reference: ρ ≈ ' + out.noSkill.rhoSeason + ', Crown ' + pc(out.noSkill.crownSkillPct) + 'ile — i.e. random.)' : '') }));
   return wrap;
 }
 
@@ -16681,7 +16730,7 @@ const SpectatorState = {
   feedLog: [],                             // complete broadcast log for the exported CSV/JSON (uncapped up to a memory ceiling) — v69.75
   logSeen: {},                             // tableId -> last h.log index harvested
   bracketStudy: { n: 100, holes: 18, running: false, phase: null, result: null, history: [] },   // v69.79/80/86 — offline skill-seeded-vs-random bracket A/B (Spectator UI); `holes` = holes/round for the sweep; history holds the last ~25 runs for pooling + CSV export
-  seasonStudy: { holes: 18, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', studyS: 6, running: false, phase: null, lastRun: null, lastStudy: null, history: [] },   // v69.87 — The Hive Tour season engine (Spectator UI)
+  seasonStudy: { holes: 18, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', finaleM: 'none', omega: 0.03, studyS: 6, careerYrs: 1, running: false, phase: null, lastRun: null, lastStudy: null, history: [] },   // v69.87/88 — The Hive Tour season engine (Spectator UI)
   scoreboard: { zoom: 1.0 },               // v69.81 — Live Scoreboard (golf-scorecard grid) view state
   scorecardOpen: false,                    // v69.46 — featured panel toggle (felt ↔ full scorecard) for liveTourney
   // Setup form state (persisted across view re-renders)
@@ -20464,14 +20513,17 @@ Views.spectator = function() {
 
   // v69.87 — The Hive Tour: the season engine (Kalman-rated multi-event tour).
   if (SpectatorState.mode === 'liveTourney') {
-    if (!SpectatorState.seasonStudy) SpectatorState.seasonStudy = { holes: 18, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', studyS: 6, running: false, phase: null, lastRun: null, lastStudy: null, history: [] };
+    if (!SpectatorState.seasonStudy) SpectatorState.seasonStudy = { holes: 18, nReg: 12, nMaj: 3, universe: 384, regularField: 48, majorField: 64, mainField: 96, nSeasons: 1, theta: 0.30, spread: 'main', finaleM: 'none', studyS: 6, careerYrs: 1, running: false, phase: null, lastRun: null, lastStudy: null, history: [] };
     const ss = SpectatorState.seasonStudy;
     if (!Array.isArray(ss.history)) ss.history = [];
+    if (ss.careerYrs == null) ss.careerYrs = 1;
+    if (ss.finaleM == null) ss.finaleM = 'none';
+    if (ss.omega == null) ss.omega = 0.03;
     const SPREADS = [{ v: 'main', l: 'Main (0.30–0.95) — widest' }, { v: 'regular', l: 'Regular (0.40–0.90)' }, { v: 'wide', l: 'Wide (0.20–0.95)' }];
     const seasonCard = el('div', { class: 'card', style: 'padding:14px; margin-bottom:14px;' });
     seasonCard.appendChild(el('h2', { text: '🏆 The Hive Tour  ·  season engine', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
     seasonCard.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.65; line-height:1.5; margin-bottom:10px;', text:
-      'A full season as a measurement instrument for skill. Each event is the v69.84 golf-major (R1 free, ~50% cut after R2 & R3, lowest 4-round total wins); a Kalman/Glicko-style filter folds every event\'s field-relative performance into a "Hive Rating" with precision weighted by event tier × √holes × √field-size, plus process noise between events (form fades). The Main Event closes the season with a stroke head-start ∝ rating-above-median, the coefficient β solved so the #1 seed wins it ≈ the target probability. Two crowns: the Yellow Jacket (Main winner — chaotic) and the Hive Crown (season #1 rating — the skill title). Run a season (or a multi-year career), or run the validation study at your round-length vs the classic 18. Uses the left-panel honey-cap + AI-curve.' }));
+      'A full season (or career) as a measurement instrument for skill. Each event is the v69.84 golf-major (R1 free, ~50% cut after R2 & R3, lowest 4-round total wins, golf-true cut tiers); a Kalman/Glicko-style filter folds every event\'s field-relative performance into a "Hive Rating" with precision weighted by event tier × √holes × √field-size, plus process noise between events (form fades — so a career accumulates like the OWGR 2-year window). The Main Event closes the season. Two crowns: the Yellow Jacket (Main winner — chaotic) and the Hive Crown (season #1 rating — the skill title). NOTE: with ~18-hole rounds the per-event skill signal is weak, so a single season caps ρ_season ≈ 0.2–0.3 — push "career seasons" up (the rating accumulates) and/or "holes/round" up to drive it toward 0.7. Run a season/career, or the validation study (your holes vs the classic 18, optionally over an N-season career, + a no-skill reference). Uses the left-panel honey-cap + AI-curve.' }));
     const mkNum = (label, key, min, max, step, w) => {
       const box = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
       box.appendChild(el('span', { style: 'font-size:9px; opacity:0.6;', text: label }));
@@ -20491,20 +20543,28 @@ Views.spectator = function() {
     seasonCard.appendChild(cfgRow1);
     if ((ss.holes | 0) === 18) seasonCard.appendChild(el('div', { style: 'font-size:9px; opacity:0.5; margin:-3px 0 7px 0; font-style:italic;', text: '18 holes/round × 4 = a 72-hole event — the classic golf major framing.' }));
     const cfgRow2 = el('div', { style: 'display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:9px;' });
-    cfgRow2.appendChild(mkNum('Seasons (career)', 'nSeasons', 1, 50, 1, 92));
-    cfgRow2.appendChild(mkNum('Finale #1-seed win-prob target θ*', 'theta', 0.05, 0.9, 0.05, 78));
+    cfgRow2.appendChild(mkNum('Run-career seasons', 'nSeasons', 1, 50, 1, 88));
+    cfgRow2.appendChild(mkNum('Study career seasons', 'careerYrs', 1, 40, 1, 92));
+    cfgRow2.appendChild(mkNum('Study seasons/arm', 'studyS', 1, 200, 1, 88));
+    cfgRow2.appendChild(mkNum('Rating memory ω  (↓ = longer)', 'omega', 0.002, 0.2, 0.002, 96));
     const spreadBox = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
     spreadBox.appendChild(el('span', { style: 'font-size:9px; opacity:0.6;', text: 'Skill spread' }));
     const spreadSel = el('select', { class: 'form-control', style: 'font-size:11.5px;' });
     SPREADS.forEach(o => { const opt = el('option', { value: o.v, text: o.l }); if (ss.spread === o.v) opt.selected = true; spreadSel.appendChild(opt); });
     spreadSel.onchange = () => { ss.spread = spreadSel.value; };
     spreadBox.appendChild(spreadSel); cfgRow2.appendChild(spreadBox);
-    cfgRow2.appendChild(mkNum('Study seasons/arm', 'studyS', 1, 200, 1, 88));
+    const finBox = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
+    finBox.appendChild(el('span', { style: 'font-size:9px; opacity:0.6;', text: 'Main finale' }));
+    const finSel = el('select', { class: 'form-control', style: 'font-size:11.5px;' });
+    [{ v: 'none', l: 'Pure cut — chaotic Jacket (default)' }, { v: 'calibrated', l: 'Tour-Championship — no-cut, β solved for θ*' }, { v: 'fixed', l: 'Tour-Championship — fixed head-start β' }].forEach(o => { const opt = el('option', { value: o.v, text: o.l }); if (ss.finaleM === o.v) opt.selected = true; finSel.appendChild(opt); });
+    finSel.onchange = () => { ss.finaleM = finSel.value; Views.spectator(); };
+    finBox.appendChild(finSel); cfgRow2.appendChild(finBox);
+    if (ss.finaleM === 'calibrated') cfgRow2.appendChild(mkNum('θ*  (#1-seed win-prob target)', 'theta', 0.05, 0.9, 0.05, 80));
     seasonCard.appendChild(cfgRow2);
     const buildCfg = () => ({
       holesPerRound: ss.holes | 0, nRegulars: ss.nReg | 0, nMajors: ss.nMaj | 0, universeSize: ss.universe | 0,
       regularField: ss.regularField | 0, majorField: ss.majorField | 0, mainField: ss.mainField | 0,
-      finaleMode: 'calibrated', finaleTargetWinProb: +ss.theta || 0.3, skillSpread: ss.spread,
+      finaleMode: ss.finaleM || 'none', finaleTargetWinProb: +ss.theta || 0.3, skillSpread: ss.spread, omega: +ss.omega || 0.03,
       skillCurve: (typeof spectatorCurveMul === 'function') ? spectatorCurveMul() : 1,
       honeyCapMode: (SpectatorState.setup && SpectatorState.setup.honeyCapMode === 'spec') ? 'spec' : 'calibrated',
     });
@@ -20523,14 +20583,14 @@ Views.spectator = function() {
         }, 60);
       };
       btnRow.appendChild(runBtn);
-      const studyBtn = el('button', { class: 'btn gold', style: 'font-size:11px;', text: '🔬 Run study  (' + (ss.studyS | 0) + ' seasons × {' + (ss.holes | 0) + 'h vs 18h})' });
+      const studyBtn = el('button', { class: 'btn gold', style: 'font-size:11px;', text: '🔬 Run study  (' + (ss.studyS | 0) + (ss.careerYrs > 1 ? '×' + (ss.careerYrs | 0) + 'yr careers' : ' seasons') + '/arm · {' + (ss.holes | 0) + 'h' + ((ss.holes | 0) === 18 ? '' : ' vs 18h') + '})' });
       studyBtn.onclick = () => {
-        const S = ss.studyS | 0, holesA = ss.holes | 0;
-        ss.running = true; ss.phase = 'Season study — ' + S + ' seasons × ' + (holesA === 18 ? '1 arm (18h)' : '2 arms (' + holesA + 'h, 18h)') + ' + a no-skill reference…'; ss.lastStudy = null;
+        const S = ss.studyS | 0, holesA = ss.holes | 0, K = ss.careerYrs | 0;
+        ss.running = true; ss.phase = 'Season study — ' + S + (K > 1 ? '×' + K + '-season careers' : ' seasons') + ' × ' + (holesA === 18 ? '1 arm (18h)' : '2 arms (' + holesA + 'h, 18h)') + ' + a no-skill reference…'; ss.lastStudy = null;
         Views.spectator();
         setTimeout(() => {
           let out = null;
-          try { out = Season.runStudy(Object.assign(buildCfg(), { s: S, holesArm: [holesA, 18], baseSeed: 'ui-season-' + Date.now() })); }
+          try { out = Season.runStudy(Object.assign(buildCfg(), { s: S, careerSeasons: K, holesArm: [holesA, 18], baseSeed: 'ui-season-' + Date.now() })); }
           catch (e) { ss.running = false; ss.phase = 'Error: ' + (e && e.message ? e.message : e); Views.spectator(); return; }
           ss.lastStudy = out;
           ss.history = [out].concat((ss.history || []).slice(0, 19));
