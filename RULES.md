@@ -1,10 +1,13 @@
 <!--
   Copyright (c) 2026 Blank Canvas, Inc. All Rights Reserved.
   Author: Dalton Graham. "Yellow Jacket Tour", "Yellow Jacket", "Honey-Stroke",
-  "Sweet Stroke", "Bumblebee", and the eight-beat hand-flow lexicon (Tea Box,
-  Fairway, Lay-Up, Hazard, Approach, Green, Putt, The Cup) are trademarks of
-  Blank Canvas, Inc. The scoring law and rule set described herein are
-  proprietary. Unauthorized reproduction prohibited.
+  "Sweet Stroke", "Bumblebee", the eight-beat hand-flow lexicon (Tea Box,
+  Fairway, Lay-Up, Hazard, Approach, Green, Putt, The Cup), and the
+  Tour de Bourdon season-system marks ("Tour de Bourdon", "Tour of the
+  Bumblebee", "the Nectour", "the Royal Suitor", "the Pollen Trail",
+  "the Top Pot", "the Hive Rating") are trademarks of Blank Canvas, Inc.
+  The scoring law and rule set described herein are proprietary.
+  Unauthorized reproduction prohibited.
 -->
 
 # Yellow Jacket Tour — Complete Rules Manual
@@ -31,6 +34,7 @@ This document is the canonical, plain-language manual. Every primary brand term,
 6. [What's Shared vs What's Different](#6-whats-shared-vs-whats-different)
 7. [Hand Class → Golf Score Reference](#7-hand-class--golf-score-reference)
 8. [Tournament Structure](#8-tournament-structure)
+9. [Tour de Bourdon — The Canonical Season ("the Nectour")](#9-tour-de-bourdon--the-canonical-season-the-nectour)
 
 ---
 
@@ -743,6 +747,129 @@ If two or more players are tied after the scheduled holes, a short 2–4 hole ag
 
 ---
 
+## 9. Tour de Bourdon — The Canonical Season ("the Nectour")
+
+Tour de Bourdon — "Tour of the Bumblebee," evoking the Tour de France; colloquially **"the Nectour"** — is the production season layer of Yellow Jacket Tour. It sits **above** the per-event Honey-Stroke engine (§3) and gives the year a shape: a fixed calendar of events, one rolling skill rating, and three named year-end honors. The live engine is on the Spectator screen → "Tour de Bourdon" card; the validation study is on the same card; console aliases `runBourdonStudy(opts)` / `runNectourStudy(opts)` / `runBourdonCareer(cfg, seed, nSeasons)`.
+
+### 9.1 The calendar — three tiers
+
+A production season is a fixed slate of **65 events** in a 1024-player universe:
+
+| Tier | # / season | Field size | Open-qualifier slots | Format | Prestige multiplier |
+|---|---|---|---|---|---|
+| **Regulars** | 52 | 256 | ~50% (retail-heavy) | classic 4-round 72-hole tournament | 1.0 |
+| **Majors — "the stages"** | 12 | 320 | ~15% (mostly exempt elite) | 4 staged **72-hole** "mountain stages" with cuts (288-hole championship); no heads-up final | 1.35 |
+| **The Main Event → the Top Pot** | 1 | 384 | ~25% (longest qualifier chain) | 4 staged 72-hole legs to crown a standing; then the top 2 advance to **the Top Pot — a 72-hole heads-up final** | 1.6 |
+
+The **Tour-de-France framing** is deliberate: Regulars are the weekly stages; Majors are the mountain stages where the field separates; the Main is the climactic time-trial-into-finale; the Top Pot is the closing sprint. The Majors *are* called "the stages" inside the engine and in the broadcast.
+
+### 9.2 The Hive Rating — the season's skill rating
+
+Every rated event feeds the **Hive Rating** — a Kalman / Glicko-2-flavored filter on each player's latent skill. The published rating is an Elo-style integer: `clamp(800, 3200, round(2000 + 400·μ))`, with a ± confidence band (RD) and a Glicko-2-flavored volatility term (streaky players keep a wider band, anti-bank).
+
+Per event, two signals feed the rating, blended at **α = 0.6**:
+
+1. **OUTCOME signal** — a field-relative performance z: `(1 − marginWeight)·z_rank + marginWeight·z_margin + fieldStrengthLambda·μ̄_field`, where `z_rank` is the rankit (probit) transform of a **cut-blind smooth per-round-average order** (so a strong player who got cut on a near-coin-flip cut still measures well), `z_margin` is the winsorized stroke margin, and the final term is the OWGR-style strength-of-field bump.
+2. **DECISION-QUALITY signal (Phase C, v69.103+)** — an observed-action / **EV-loss skill credit**: per hand, the engine computes the EV-gap between the action a player took and the action a game-theoretic-optimal solver would have taken at that decision node. The gap (in bb/100) is z-normalized across the event's field and fed into the rating. For AI play, the formula is analytical (`true_EVloss = K·(1−skill)^p`, with measurement noise scaled by √(18/holes) so longer events measure with proportionally lower noise). For a real-player tour, a per-hand solver pass against the player's strategy posterior fills the same slot (the same metric every modern poker training tool — PioSolver, GTOWizard, MonkerSolver — uses for poker skill measurement; chess engine analysis and golf's strokes-gained metric do the equivalent in their sports).
+
+The per-event update precision is `τ_event = τ₀ · prestige(tier) · √(holes/72) · √(min(N,400)/64) · (rounds_played / R) · sofMul`, where `sofMul = 0.6` if the field is weak (the strength-of-field floor — anti-farming guard). Between events the rating drifts (1/P += ω·f, where f is volatility-scaled); between seasons the off-season drift widens the band further (form fades, OWGR-style).
+
+### 9.3 The three honors
+
+At season's end the rating board produces three named honors. They are **deliberately usually different people**.
+
+#### 🧥 The Yellow Jacket + 🧸 the Bumblebee plushie — the chaotic week
+
+Won by **the Top Pot heads-up champion** — i.e. whoever wins the heads-up final at the end of the Main Event. The trophy is the Kill-Bill-style yellow jumper plus a Bumblebee plushie companion gift. The Top Pot is single-match, so the Jacket stays close to a coin-flip between the two finalists, though both finalists are fed by the Main's standings, so the Jacket winner is still typically a high-rated player even when not the highest-skill on the day.
+
+Three Top-Pot finale modes (`finaleMode`):
+- **`none`** (production default) — straight heads-up, lowest score wins, anyone's game.
+- **`fixed`** — the higher-rated finalist gets a stroke head-start ∝ rating advantage (β fixed).
+- **`calibrated`** — β is Monte-Carlo-solved per event to hit a target favorite-win probability θ*.
+
+#### 👑 The Royal Suitor — class confirmed
+
+Won by **the player atop the Hive Rating** at season's end who meets all three eligibility criteria:
+
+1. **Events:** played ≥ `minEventsForCrown` of the season's events (production: ~45% of the calendar, ≥3).
+2. **Majors:** played ≥ **rating-tier-scaled** fraction of Majors:
+   - Top-1%-by-rating need **≥ 90%** of Majors (≥11 of 12)
+   - Top-10%-by-rating need **≥ 70%** of Majors (≥9 of 12)
+   - Everyone else needs **≥ 50%** of Majors (≥6 of 12)
+   This is the **anti-coasting rule** (v69.105 default): a dynasty player can't bank a Y2 lead by skipping the late Majors of the schedule — elite status is also a participation obligation.
+3. **Confidence:** rating deviation (RD) ≤ `crownRdCap` (~ 160 Hive-Rating points).
+
+**LCB fallback:** if NO player clears all three criteria in a given season, the title falls to the player with the highest **lower-confidence-bound rating** `μ − 1.5·RD` among those who played enough events. This is "good AND trusted" — never a fluky-few-events spike.
+
+The Royal Suitor is the maillot jaune of the bumblebee — the season's skill verdict, analogous to golf's OWGR year-end #1 / cycling's GC winner / tennis's year-end ATP #1. Measured production behavior: **a top-quartile (often top-10%) player in a typical year; the literal #1 wins ~12% of years** (matching golf's actual OWGR year-end-#1 rate); a top-5-skill player wins ~40%.
+
+#### 🌼 The Pollen Trail — the form champion
+
+A **third honor**, deliberately subordinate to the two headlines. Won by the leader of a **parallel decaying-points race** that runs alongside but separate from the Hive Rating (the rating math is *not* touched).
+
+Mechanics:
+- Each event awards points to the top finishers on a Tour-de-France-jersey-style curve (top-15 in Regulars, top-16 in Majors, top-16 in the Main; bigger weights for bigger tiers).
+- Every event a player participates in, **all their prior points are multiplied by 0.92** before that event's points are added. Decay-on-participation means dormancy doesn't penalize; recent form does.
+- Season-end leader = the **Pollen Trail** — the year's "form champion." A player who was sharpest most recently rather than across the whole season.
+
+Mirrors the Tour de France's three jerseys: yellow (GC) → green (points) → polka-dot (mountains). Here: gold-Jacket / blue-Suitor / green-Pollen-Trail. The Pollen Trail can and often does crown a different player than the Suitor — that's the design.
+
+### 9.4 Field selection — the qualifier ladder
+
+Each event's field is built by `_pickField(U, size, slots)`:
+- Top `(size − slots)` players by Hive Rating = **exempt**.
+- Remaining `slots` are picked from outside the exempt set by `μ + qualifierNoise·N(0,1)` (with `qualifierNoise = 1.4` z-SD).
+- For **Majors**, the qualifier-q also includes a `formWeight·formΔ` term (default 0.7) — so a hot streak earns Major spots over a slightly higher-rated but cold player. The "breakthrough qualifier" narrative.
+
+Qualifier-slot fractions by tier are derived in `_norm` from field size: Regulars 50%, Majors 15%, Main 25%.
+
+### 9.5 Off-season + multi-year careers
+
+Between calendar years:
+- Each player's rating drifts (`driftRating(dt = offSeasonGap = 2)`) — extra process noise, form fades.
+- Volatility relaxes toward typical (`vol ← 0.5·vol + 0.5`).
+- All other state (earnings, wins, majorsPlayed, Pollen Trail points if you keep the flag on across seasons) carries forward at the engine's choice.
+
+A 6-season `runCareer` is the production default — long enough to see legacies emerge, short enough to run in seconds in the validation study.
+
+### 9.6 Anti-gaming
+
+1. **Field-strength floor (SOF)** — a weak field (mean rating below `sofFloorMu = −0.10` z) has its results carry only 60% of the normal information weight (`τ × 0.6`). Can't farm rating off soft fields.
+2. **Glicko volatility** — wildly-swinging results widen the drift band, so a hot streak can't be banked permanently.
+3. **Multi-criteria Suitor eligibility** — events + tier-scaled Majors + RD-tightness, all three. A deep run in 2 events does not crown anyone.
+4. **Anti-coasting Majors floor (v69.105)** — top-rated players have to play MORE Majors, not fewer. Elite participation is mandatory.
+5. **Volume cap (dormant)** — `volumeCapPerWindow` / `volumeWindow` are built into the engine for a future multi-track calendar where a player could enter overlapping events. Disabled by default because the current sim is sequential.
+
+### 9.7 The validation study
+
+`Season.makeStudyJob(opts)` runs **chunked** (non-freezing) multi-arm validation studies that the user can drive from the Spectator UI:
+- Each arm is a (RegHoles, MajHoles, MainHoles) tuple plus optional flag overrides.
+- Production sweeps compare the locked default config vs the classic-18-everything baseline vs a no-skill reference (`skillSpread='flat'`).
+- Outputs a full metric table: ρ_active / ρ_season / ρ_eligible / ρ_main / crownSkillPct / trueNo1IsCrown / top5SkillIsCrown / jacketSkillPct / jacketSeasonPct / topPotFavoriteWon / topPotNo1InFinal / rhoByYear.
+- CSV export with full config snapshot. Deterministic per seed.
+
+The latest deep sweep (8 arms × 12 careers × 6 seasons = 576 season-runs, in `research/AUDIT-AND-STUDY-v69.103.md`) confirmed the v69.103+ production rating's measured behavior:
+- **ρ_active ≈ 0.49** (rating vs true skill, over the regulars)
+- **Royal Suitor skill ≈ top quartile** (often top-10%)
+- **Literal #1 crowned ~12% of years** (matching golf's OWGR rate)
+- **Top-5-skill crowned ~40%**
+- **Top Pot stays near coin-flip** (the Jacket is fed by standings but heads-up is heads-up)
+
+### 9.8 The Season Center (broadcast UI)
+
+A finished `runCareer` opens the **Season Center** on the Spectator screen — a tabbed broadcast over the season result:
+
+- **🏁 The Season** — the two headline honors as hero cards (with a "▶ Play the ceremony" reveal animation), the championships strip (every Major's winner), biggest riser / faller, the Pollen Trail strip, at-a-glance stats.
+- **⚔ The Top Pot** — the heads-up final as a fight-card. Favorite vs underdog (named), Hive Ratings, skill %iles, the score line + head-start (if any), the Jacket awarded.
+- **📅 Calendar** — every event in order, with **broadcast playback** (▶ / ⏸ / step / speed 0.5×–5×) that reveals events one at a time, with a "now-playing" card highlighting the most recent reveal.
+- **📊 Hive Rating** — the rating board, with a sub-board toggle: **📊 Hive Rating** (the skill rating) / **🌼 Pollen Trail** (the form-champion points board) / **💰 Money List** (season earnings standings).
+- **🎟 Eligibility** — the three Suitor criteria + the LCB fallback explainer + the "on the bubble — what I need" headline + the **Bubble Watch** board (top 5 just-missed players with their specific shortfalls).
+- **🎯 Skill Check** — the ρ diagnostics + the honest "skill-dominant with chaotic Jacket" framing + the year-by-year career arc in multi-season mode.
+
+The Spectator card also includes the **validation study** (chunked, non-freezing) with arm-comparison + a CSV export for off-line analysis.
+
+---
+
 ## Quick Reference Cheat Sheet
 
 ```
@@ -774,5 +901,6 @@ If two or more players are tied after the scheduled holes, a short 2–4 hole ag
 - **Tour Honey-Stroke** (also marketed as **Sweet Stroke**): 8-beat Hold'em hole (Tea Box → The Fairway → The Lay-Up → The Hazard → The Approach → The Green → The Putt → The Cup) + bounded golf score per hole + honey pot that converts to strokes via the honey cap at each round end. Two variants (Yellow Jacket / Bumblebee) differ only on decisive-showdown loser score.
 - **Pure NLHE Cash**: Standard online poker, no strokes, no honey, just chip P/L.
 - **YJ Stroke / Bumblebee Stroke Cash**: Pure NLHE wagering + a *separate* golf scorecard scored per showdown from hand class (true golf convention, lower = better; YJ loser posts +1 bogey, Bumblebee loser posts own hand). The scorecard is a pure skill record — it does not convert to Nectar; cashout pays your chip stack only.
+- **Tour de Bourdon** ("the Nectour"): the canonical SEASON layer — a fixed calendar of 52 Regulars + 12 Majors + the Main Event, with a single rolling Hive Rating (Kalman/Glicko on latent skill, blending outcome + decision-quality EV-loss credit at α=0.6) and three year-end honors — 🧥 the Yellow Jacket (chaotic week, the Top Pot heads-up champion) + 👑 the Royal Suitor (class confirmed, the season-rating crown, multi-criteria eligibility) + 🌼 the Pollen Trail (form champion, the decaying-points race). ρ ≈ 0.49 over the regulars, literal #1 wins ~12% of years (OWGR-equivalent).
 
-That's the entire game in three sentences.
+That's the entire game in four sentences.

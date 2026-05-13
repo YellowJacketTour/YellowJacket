@@ -1,9 +1,11 @@
 <!--
   Copyright (c) 2026 Blank Canvas, Inc. All Rights Reserved.
   Author: Dalton Graham. "Yellow Jacket Tour", "Yellow Jacket", "Honey-Stroke",
-  "Sweet Stroke", "Bumblebee", and the eight-beat hand-flow lexicon (Tea Box,
-  Fairway, Lay-Up, Hazard, Approach, Green, Putt, The Cup) are trademarks of
-  Blank Canvas, Inc.
+  "Sweet Stroke", "Bumblebee", the eight-beat hand-flow lexicon (Tea Box,
+  Fairway, Lay-Up, Hazard, Approach, Green, Putt, The Cup), and the
+  Tour de Bourdon season-system marks ("Tour de Bourdon", "Tour of the
+  Bumblebee", "the Nectour", "the Royal Suitor", "the Pollen Trail",
+  "the Top Pot", "the Hive Rating") are trademarks of Blank Canvas, Inc.
 -->
 
 # Yellow Jacket Tour
@@ -84,6 +86,26 @@ A season is a fixed slate of **4 majors + 40 regular tour events + 1 Main Event 
 
 Heads-up (`tableSize: 2`) is the canonical engine and the default. Aggregate stroke play also runs **multi-way** (table size 4 / 6 / 9): rounds R1–R3 play at tables of N with matched-contribution wagering (real-poker pot construction), then R4 collapses to a heads-up final between the top-2 survivors; caps scale down with N, the opener doubles to 2 honey at N > 6, and the cut cushion tightens. The bracket-knockout format is heads-up only. Spectator Mode's "Live Tournament" runs a separate **golf-cut heads-up bracket** (50% of the field cut each round, the round before the championship labelled "Semi-Final" and the championship "Final Table"; field caps Regular 8 / Major 16 / Main 32).
 
+## Tour de Bourdon — the canonical season ("the Nectour")
+
+The production season system (Spectator → "Tour de Bourdon" card, v69.87+) is **Tour de Bourdon** — "Tour of the Bumblebee," evoking the Tour de France; colloquially **"the Nectour."** A 1024-player universe plays a fixed 65-event calendar of three tiers:
+
+- **52 Regulars** — the weekly grind. Retail-heavy fields (~50% open qualifiers), classic 4-round 72-hole tournaments. Prestige multiplier 1.0.
+- **12 Majors — "the stages"** — the prestigious flock (Masters / U.S. Open vibe). ~15% open-qualifier slots; 4 staged 72-hole "mountain stages" with cuts between (288-hole championships). Lowest aggregate wins; no heads-up final. Prestige multiplier 1.35.
+- **The Main Event → the Top Pot** — the season finale. ~25% open-qualifier slots, 4 staged legs to crown a standing, then the top 2 advance to **the Top Pot** — a heads-up final showdown over 72 holes. Prestige multiplier 1.6.
+
+Every rated event feeds the **Hive Rating** — a Kalman / Glicko-2-flavored filter on latent skill that blends two signals at α = 0.6: the OUTCOME signal (event finishes, OWGR-style strength-of-field bump, cut-blind smooth performance order) and a DECISION-QUALITY signal (Phase C: an observed-action / EV-loss skill credit — the same metric PioSolver / GTOWizard / MonkerSolver use to measure poker skill, computed analytically for AI play and via a per-hand solver pass for the eventual real-player tour). The rating is published as a friendly Elo-style number (2000 ≈ tour-average, +400 per z-unit of skill) with a ± confidence band (RD) and Glicko volatility (streaky players keep a wider band).
+
+At season's end, **three honors** are awarded:
+
+- 🧥 **The Yellow Jacket** + 🧸 the Bumblebee plushie — won by the Top Pot heads-up champion. The chaotic week — anyone in the final 2 can take it. Trophy is the Kill-Bill-style yellow jumper.
+- 👑 **The Royal Suitor** — won by the player atop the Hive Rating who meets all three eligibility criteria: ≥ minEventsForCrown events played, ≥ tier-scaled fraction of Majors (top-1%-rated need 90%, top-10% need 70%, everyone else 50% — anti-coasting), and rating deviation (RD) ≤ crownRdCap. Falls back to the highest lower-confidence-bound rating (μ − 1.5·RD) if nobody clears all three — a good-and-trusted pick, never a fluky-few-events spike. The season-long skill verdict; the maillot jaune of the bumblebee.
+- 🌼 **The Pollen Trail** — won by the leader of the parallel decaying-points race (×0.92/event), a Tour-de-France-style points jersey running alongside but separate from the Hive Rating. The form champion, deliberately subordinate to the two headline honors. The maillot vert of the bumblebee.
+
+**Measured production behavior** (v69.103+ deep validation sweep, 12 careers × 8 arms × 6 seasons): ρ(rating, true skill) over the regulars ≈ **0.49**; the Royal Suitor lands on a top-quartile (often top-10%) player; the literal #1 wins ~12% of years (matching golf's OWGR year-end-#1 rate); a top-5-skill player wins ~40%; the Top Pot stays near a coin-flip (the Jacket is standings-fed but heads-up is heads-up). Anti-gaming: an OWGR-style field-strength floor, Glicko volatility, multi-criteria Suitor eligibility with the tier-scaled Majors floor, and a dormant volume cap for a future multi-track calendar.
+
+The Spectator screen's **Season Center** is a tabbed broadcast over a completed run: 🏁 The Season (hero honors + a playable ceremony reveal animation) · ⚔ The Top Pot (heads-up fight-card) · 📅 Calendar (with broadcast playback: ▶ / ⏸ / step / speed) · 📊 Hive Rating (with sub-board toggle to 🌼 Pollen Trail and 💰 Money List) · 🎟 Eligibility (the criteria + the "on the bubble — what I need" Bubble Watch board) · 🎯 Skill Check (the ρ diagnostics). Plus a chunked validation study (`Season.makeStudyJob` → `runNextChunk`) for arm-comparison studies. Console aliases: `runBourdonStudy(opts)` / `runNectourStudy(opts)` / `runBourdonCareer(cfg, seed, nSeasons)`.
+
 ## Currencies
 
 Two distinct denominations with strictly separated roles:
@@ -95,10 +117,11 @@ Cash tables do NOT use honey. Chip stacks at cash are Nectar 1:1. The "YJ Stroke
 
 ## State of the build
 
+- **Current version: v69.105** (2026-05-13). The skill / scoring / rating stack is at its highest-known-good state — full formula audit committed in `research/AUDIT-AND-STUDY-v69.103.md`, with 14 ✅ formulas verified, 5 calibration notes documented, and 1 runtime-vs-docs gap (brick-penalty mode not propagated into the Season-engine wrapper) found and fixed. Production rating is **Phase C @ α=0.6 (Phase 1 noise)** with event-length-noise scaling; measured ρ_active ≈ 0.49 / crownSkillPct ≈ 0.83 / trueNo1IsCrown ≈ 12% (matching golf's OWGR rate).
 - Self-contained: one HTML file. Two optional CDN dependencies — Three.js (loaded synchronously for the 3D atmospheric felt) and Rapier WASM (loaded on demand for physics-based chip stacking). Both gracefully degrade if blocked; the 2D felt and tween chips take over.
 - Save state is browser-local via the unified `yellowJacketSave` key; a smart-refresh banner handles version drift across deploys.
-- CSV export with full config snapshot ships with every simulator run for reproducible audits.
-- Calibrated against an in-build audit suite: skill expression, tier ROI separation, and late-registration handling all verified for the heads-up engine; the multi-way runner (table sizes 4 / 6 / 9, aggregate format) is live with its own per-table-size calibration (caps, fold-discipline slack, opener scaling).
+- CSV export with full config snapshot ships with every simulator run for reproducible audits. Tour de Bourdon's validation study has its own CSV export (`tour_de_bourdon_study_*.csv`) with per-arm metrics.
+- Calibrated against an in-build audit suite: skill expression, tier ROI separation, and late-registration handling all verified for the heads-up engine; the multi-way runner (table sizes 4 / 6 / 9, aggregate format) is live with its own per-table-size calibration (caps, fold-discipline slack, opener scaling). Tour de Bourdon's per-event statistics (ρ_active / crownSkillPct / trueNo1IsCrown / top5IsCrown / jacketSeasonPct / etc.) are continuously validated against a deterministic-seeded chunked study.
 
 ## How to use
 
@@ -124,14 +147,18 @@ Replace `index.html` in the repo. Pages redeploys within ~60 seconds. The smart-
 
 ## Companion docs
 
-- [`RULES.md`](./RULES.md) — every game mode's rules in plain language with ASCII diagrams. Read this if you want to know exactly what each mode does.
+- [`RULES.md`](./RULES.md) — every game mode's rules in plain language with ASCII diagrams. Read this if you want to know exactly what each mode does. **§9 covers Tour de Bourdon — the canonical season system.**
 - [`LICENSE.md`](./LICENSE.md) — the full proprietary license. Read this before doing anything beyond looking.
 - [`IP/`](./IP/) — the IP-protection scaffold: master inventory, brand lexicon, copyright/trademark filing briefs, NDA template, and ongoing-protection checklist.
+- [`research/AUDIT-AND-STUDY-v69.103.md`](./research/AUDIT-AND-STUDY-v69.103.md) — the full formula audit (Honey-Stroke layer, AI profile, Kalman/Glicko math, Phase C EV-loss credit) + the deep 576-season-run statistical study measuring the production rating's behavior.
+- [`research/STUDY-observed-action-gto-ev-loss.md`](./research/STUDY-observed-action-gto-ev-loss.md) — the feasibility analysis for Phase C: the GTO-EV-loss skill credit, with the digital-game / RFID-table-requirement discussion and the two-phase rollout roadmap.
+- [`specs/`](./specs/) — design specs for individual interventions (`SPEC-eligibility-scales-with-rating.md`, `SPEC-eurovision-points-carry.md`).
+- [`GROK_RESEARCH_BRIEF.md`](./GROK_RESEARCH_BRIEF.md) — the standing research brief used to direct external state-of-the-art evaluation against our design DNA.
 - The build's in-app **Rulebook**, **Codex**, **Decision Tree**, and **Buzz's Corner** tabs duplicate and extend this content live, with the current config snapshot.
 
 ## License & credits
 
-**Source-available, not open-source.** Yellow Jacket Tour is the proprietary intellectual property of Blank Canvas, Inc. (a Wyoming corporation). The source code, design documents, eight-beat hand structure (Tea Box → The Fairway → The Lay-Up → The Hazard → The Approach → The Green → The Putt → The Cup), Honey-Stroke / Sweet Stroke scoring law, dual-variant (Yellow Jacket / Bumblebee) loss-rule system, Buzz mascot, and all related brand assets are all rights reserved. You may read this repository for personal study, security review, or evaluation. You may not copy it, redistribute it, deploy it, derive from it, or use the brand or rule system commercially without an executed license from Blank Canvas, Inc. Full terms in [`LICENSE.md`](./LICENSE.md).
+**Source-available, not open-source.** Yellow Jacket Tour is the proprietary intellectual property of Blank Canvas, Inc. (a Wyoming corporation). The source code, design documents, eight-beat hand structure (Tea Box → The Fairway → The Lay-Up → The Hazard → The Approach → The Green → The Putt → The Cup), Honey-Stroke / Sweet Stroke scoring law, dual-variant (Yellow Jacket / Bumblebee) loss-rule system, Buzz mascot, the Tour de Bourdon ("Tour of the Bumblebee" / "the Nectour") season system + its three honors (the Yellow Jacket, the Royal Suitor, the Pollen Trail) + the Top Pot heads-up finale + the Hive Rating + the Phase C observed-action EV-loss skill-credit term, and all related brand assets are all rights reserved. You may read this repository for personal study, security review, or evaluation. You may not copy it, redistribute it, deploy it, derive from it, or use the brand or rule system commercially without an executed license from Blank Canvas, Inc. Full terms in [`LICENSE.md`](./LICENSE.md).
 
 The bumblebee mascot, the lore, the Honey-Stroke scoring law, and the audit-driven calibration are original to this build. Three.js (MIT) is used for the optional 3D atmospheric scene; Rapier (Apache 2.0) for the optional physics chip stacking. Both are loaded from CDN at runtime; neither is redistributed.
 
