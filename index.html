@@ -2092,6 +2092,29 @@
     border-color: var(--honey-gold);
     background: linear-gradient(135deg, rgba(255, 204, 77, 0.12), rgba(255, 238, 126, 0.08));
   }
+  /* v69.105 — Season Center ceremony reveal animations */
+  @keyframes yj-cer-rise {
+    0%   { opacity: 0; transform: translateY(28px) scale(0.94); }
+    60%  { opacity: 1; transform: translateY(-6px) scale(1.03); }
+    100% { opacity: 1; transform: translateY(0) scale(1.00); }
+  }
+  @keyframes yj-cer-shimmer {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(240, 199, 94, 0.00), 0 0 38px 4px rgba(240, 199, 94, 0.10); }
+    50%      { box-shadow: 0 0 0 0 rgba(240, 199, 94, 0.00), 0 0 56px 10px rgba(240, 199, 94, 0.35); }
+  }
+  @keyframes yj-cer-rotate {
+    0%   { transform: rotate(-6deg) scale(0.6); opacity: 0; }
+    50%  { transform: rotate(6deg) scale(1.20); opacity: 1; }
+    100% { transform: rotate(0deg) scale(1.00); opacity: 1; }
+  }
+  @keyframes yj-cer-fall {
+    0%   { transform: translateY(-20px); opacity: 0; }
+    20%  { opacity: 1; }
+    100% { transform: translateY(110px); opacity: 0; }
+  }
+  .yj-cer-card     { animation: yj-cer-rise 0.95s cubic-bezier(0.18, 0.89, 0.32, 1.28) both, yj-cer-shimmer 3.2s ease-in-out 0.95s infinite; will-change: transform, opacity, box-shadow; }
+  .yj-cer-trophy   { display:inline-block; animation: yj-cer-rotate 0.75s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+  .yj-cer-confetti { position: absolute; top: 0; font-size: 18px; pointer-events: none; animation: yj-cer-fall 1.6s linear forwards; }
 </style>
 <!-- Three.js (Phase B atmospheric layer · loaded async; gracefully degrades if blocked) -->
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js" crossorigin="anonymous" onload="window._yj3dReady = true;" onerror="window._yj3dReady = false; console.warn('YJ: Three.js CDN load failed — 3D atmospheric layer disabled.');"></script>
@@ -2207,7 +2230,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.104-evloss-noise-scaling-and-docs";
+const APP_VERSION = "2026.05.13-v69.105-finalized-defaults-and-product-completion";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5196,12 +5219,12 @@ const Season = {
     // --- multi-criteria Royal Suitor eligibility (all must hold; if NO ONE qualifies, the title falls to the player with the highest LOWER-confidence-bound rating μ − 1.5·RD — a good-AND-trusted pick, not a fluky-few-events one) ---
     crownRdCap: 0.40,           // rating deviation must be ≤ this (z-units; ≈ 160 Hive-Rating points) — the number must be confident enough
     crownMinMajorsFrac: 0.5,    // must have played ≥ this fraction of the season's Majors (the base floor for everyone)
-    // --- v69.102 Phase B-1: rating-tier-scaled Majors requirement (anti-coasting) ---
-    crownTierMajors: false,     // if true, top-1%-rated players need ≥crownTierMajorsTop1Frac of Majors, top-10% need ≥crownTierMajorsTop10Frac (anti-coasting at the top — a dynasty player can't bank a Y2 lead by skipping late Majors)
+    // --- Phase B-1 (v69.102, default-ON since v69.105): rating-tier-scaled Majors requirement (anti-coasting) ---
+    crownTierMajors: true,      // top-1%-rated players need ≥crownTierMajorsTop1Frac of Majors, top-10% need ≥crownTierMajorsTop10Frac (anti-coasting at the top — a dynasty player can't bank a Y2 lead by skipping late Majors). Rating-neutral by design; the constraint only binds when an elite player actually skips Majors (which happens when humans choose, not in the all-play-everything sim).
     crownTierMajorsTop1Frac: 0.90,
     crownTierMajorsTop10Frac: 0.70,
-    // --- v69.102 Phase B-2: Eurovision-style decaying points carry (the Pollen Trail) ---
-    pointsCarryEnabled: false,   // if true, runs a parallel decaying-points ledger alongside the Hive Rating; the season-points leader at year-end is "The Pollen Trail" (third honor, subordinate to the Yellow Jacket and the Royal Suitor — the maillot vert of the bumblebee)
+    // --- Phase B-2 (v69.102, default-ON since v69.105): Eurovision-style decaying points carry (the Pollen Trail) ---
+    pointsCarryEnabled: true,    // a parallel decaying-points ledger runs alongside the Hive Rating; the season-points leader at year-end is "The Pollen Trail" — a third honor, subordinate to the Yellow Jacket and the Royal Suitor (the maillot vert of the bumblebee). The rating math is UNTOUCHED — this only adds a narrative ranking. Set false to disable.
     pointsDecayPerEvent: 0.92,   // ×decay applied to all prior points each event a player plays — keeps the race fresh
     pointsTableRegular: [25, 20, 16, 13, 11, 10, 8, 6, 5, 4, 3, 2, 2, 1, 1],
     pointsTableMajor:   [50, 40, 32, 26, 22, 20, 17, 14, 12, 10, 8, 6, 4, 3, 2, 1],
@@ -5940,7 +5963,42 @@ function renderSeasonRunCard(out) {
 
   function tabSeason() {
     const d = el('div', {});
-    d.appendChild(heroHonors());
+    // v69.105 — season-end ceremony reveal. A "🎉 Play the ceremony" button
+    // triggers an animated reveal of the two honors with a confetti shower,
+    // using CSS keyframes (.yj-cer-card / .yj-cer-trophy / .yj-cer-confetti).
+    // State on out._cerKey lets render() re-key the hero row so the animation
+    // restarts cleanly each play.
+    const cerRow = el('div', { style: 'display:flex; gap:8px; align-items:center; margin-bottom:8px; padding:6px 9px; border-radius:5px; background:rgba(212,160,23,0.05); border:1px solid rgba(212,160,23,0.15); font-size:10.5px;' });
+    cerRow.appendChild(el('span', { style: 'opacity:0.7;', text: '🎉 Season-end ceremony — replay the reveal of the two honors:' }));
+    const cerBtn = el('button', { style: 'font-size:11px; padding:4px 12px; border-radius:5px; cursor:pointer; border:1px solid rgba(212,160,23,0.45); background:rgba(212,160,23,0.18); color:' + GOLD + '; font-weight:700;', text: '▶ Play the ceremony' });
+    cerBtn.onclick = () => {
+      out._cerKey = Date.now();
+      out._cerActive = true;
+      render();
+      // Stop the confetti shower after 3s (the hero card's shimmer keeps pulsing).
+      setTimeout(() => { out._cerConfettiDone = true; const host = tabBar.parentNode; if (host) { /* render is closure-bound; the next render call will drop confetti */ } }, 3200);
+    };
+    cerRow.appendChild(cerBtn);
+    cerRow.appendChild(el('span', { style: 'flex:1; text-align:right; opacity:0.45; font-size:9.5px; font-style:italic;', text: 'a ceremonial reveal of the year\'s two honors' }));
+    d.appendChild(cerRow);
+    const ceremonyOn = !!out._cerActive;
+    const ceremonyConfettiOn = ceremonyOn && !out._cerConfettiDone;
+    // Wrap hero in a positioned container so confetti can layer over it
+    const heroWrap = el('div', { style: 'position:relative; overflow:hidden;' });
+    const hero = heroHonors();
+    if (ceremonyOn) hero.classList.add('yj-cer-card');
+    heroWrap.appendChild(hero);
+    if (ceremonyConfettiOn) {
+      const emojis = ['🐝', '🌼', '🍯', '🧥', '👑', '✨', '🐝', '🌼', '🍯', '✨', '🧸', '🏆'];
+      for (let i = 0; i < 16; i++) {
+        const e = emojis[i % emojis.length];
+        const left = Math.round(4 + 92 * Math.random());
+        const delay = (Math.random() * 1.0).toFixed(2);
+        const span = el('span', { class: 'yj-cer-confetti', style: 'left:' + left + '%; animation-delay:' + delay + 's;', text: e });
+        heroWrap.appendChild(span);
+      }
+    }
+    d.appendChild(heroWrap);
     // v69.102 Phase B-2: the Pollen Trail — third honor, deliberately SUBORDINATE to the
     // two headline honors above (the Yellow Jacket and the Royal Suitor). Only renders
     // when pointsCarryEnabled produced a winner. Mirrors the Tour de France maillot vert.
@@ -6040,45 +6098,190 @@ function renderSeasonRunCard(out) {
     d.appendChild(secHdr((multi ? 'Year ' + last.year + ' — ' : '') + 'the calendar — ' + c.nRegulars + ' Regulars · ' + c.nMajors + ' Majors · the Main'));
     const evs = cal.events || [];
     if (!evs.length) { d.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.6;', text: '(per-event log unavailable for this run)' })); return d; }
+    // v69.105 — broadcast playback: reveal events one at a time with play/pause/step/speed controls.
+    // State persists on out._cal so navigation between tabs preserves position.
+    if (!out._cal) out._cal = { revealed: evs.length, playing: false, speedMs: 700, timer: null };
+    const calSt = out._cal;
+    if (calSt.revealed > evs.length) calSt.revealed = evs.length;
+    if (calSt.revealed < 0) calSt.revealed = 0;
+
+    const ctrls = el('div', { style: 'display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:10px; padding:7px 11px; border-radius:6px; background:rgba(255,255,255,0.035); border:1px solid rgba(255,255,255,0.10);' });
+    const stopTimer = () => { if (calSt.timer) { clearTimeout(calSt.timer); calSt.timer = null; } };
+    const stepOnce = () => { if (calSt.revealed < evs.length) calSt.revealed++; render(); };
+    const stepBack = () => { stopTimer(); calSt.playing = false; if (calSt.revealed > 0) calSt.revealed--; render(); };
+    const tick = () => {
+      if (!calSt.playing) return;
+      if (calSt.revealed >= evs.length) { calSt.playing = false; stopTimer(); render(); return; }
+      stepOnce();
+      calSt.timer = setTimeout(tick, calSt.speedMs);
+    };
+    const playPause = () => {
+      calSt.playing = !calSt.playing;
+      stopTimer();
+      if (calSt.playing) {
+        if (calSt.revealed >= evs.length) calSt.revealed = 0;
+        calSt.timer = setTimeout(tick, 60);
+      }
+      render();
+    };
+    const resetToStart = () => { stopTimer(); calSt.playing = false; calSt.revealed = 0; render(); };
+    const revealAll = () => { stopTimer(); calSt.playing = false; calSt.revealed = evs.length; render(); };
+    const mkBtn = (lab, fn, opts) => { const b = el('button', { style: 'font-size:11px; padding:4px 10px; border-radius:4px; cursor:pointer; border:1px solid ' + ((opts && opts.primary) ? 'rgba(212,160,23,0.45)' : 'rgba(255,255,255,0.18)') + '; background:' + ((opts && opts.primary) ? 'rgba(212,160,23,0.18)' : 'rgba(255,255,255,0.05)') + '; color:' + ((opts && opts.primary) ? GOLD : '#cdd') + '; font-weight:' + ((opts && opts.primary) ? '700' : '500') + ';', text: lab }); b.onclick = fn; return b; };
+    ctrls.appendChild(mkBtn('⏮ Start', resetToStart));
+    ctrls.appendChild(mkBtn('⏪ Step', stepBack));
+    ctrls.appendChild(mkBtn(calSt.playing ? '⏸ Pause' : '▶ Play', playPause, { primary: true }));
+    ctrls.appendChild(mkBtn('⏩ Step', stepOnce));
+    ctrls.appendChild(mkBtn('⏭ Reveal all', revealAll));
+    const speedBox = el('div', { style: 'display:flex; gap:5px; align-items:center; font-size:9.5px; opacity:0.7; margin-left:6px;' });
+    speedBox.appendChild(el('span', { text: 'speed:' }));
+    [{ ms: 1500, l: '0.5×' }, { ms: 700, l: '1×' }, { ms: 350, l: '2×' }, { ms: 120, l: '5×' }].forEach(s => {
+      const active = calSt.speedMs === s.ms;
+      const b = el('button', { style: 'font-size:9px; padding:2px 6px; border-radius:3px; cursor:pointer; border:1px solid ' + (active ? 'rgba(212,160,23,0.4)' : 'transparent') + '; background:' + (active ? 'rgba(212,160,23,0.12)' : 'transparent') + '; color:' + (active ? GOLD : '#aab') + ';', text: s.l });
+      b.onclick = () => { calSt.speedMs = s.ms; render(); };
+      speedBox.appendChild(b);
+    });
+    ctrls.appendChild(speedBox);
+    const progress = calSt.revealed + ' / ' + evs.length + ' events';
+    ctrls.appendChild(el('span', { style: 'margin-left:auto; font-size:10px; opacity:0.6;', text: progress }));
+    d.appendChild(ctrls);
+
+    // Now-playing card: when revealed < total, highlight the NEXT-revealed event prominently
+    const lastIdx = calSt.revealed - 1;
+    if (lastIdx >= 0 && lastIdx < evs.length) {
+      const cur = evs[lastIdx];
+      const tmC = tierMeta(cur.tier);
+      const card = el('div', { style: 'padding:11px 14px; margin-bottom:11px; border-radius:7px; background:linear-gradient(135deg,' + tmC.col + '20,' + tmC.col + '08); border:1px solid ' + tmC.col + '55; animation:none;' });
+      card.appendChild(el('div', { style: 'display:flex; gap:8px; align-items:center; font-size:9px; opacity:0.6; text-transform:uppercase; letter-spacing:1.2px; margin-bottom:3px;' },
+        el('span', { text: 'just played · week ' + cur.week }),
+        chip(tmC.lab, tmC.col),
+        el('span', { style: 'opacity:0.7;', text: cur.label + '  ·  ' + cur.holes + 'h · field ' + cur.fieldSize })));
+      const ch = cur.champion || {}, ru = cur.runnerUp || {};
+      card.appendChild(el('div', { style: 'font-size:14px; font-weight:700; color:' + (cur.tier === 'main' ? GOLD : '#dde2e6') + ';' }, el('span', { text: tmC.ic + '  ' + (ch.name || '—') }), el('span', { style: 'opacity:0.6; font-size:11px; margin-left:6px;', text: 'takes it  ·  skill ' + pc(ch.skillPct) + 'ile' + (cur.tier === 'main' ? '  →  advances to the Top Pot' : '') })));
+      if (ru.name) card.appendChild(el('div', { style: 'font-size:10px; opacity:0.65; margin-top:4px;', text: 'runner-up: ' + ru.name + ' (' + pc(ru.skillPct) + 'ile)' }));
+      if (cur.tier === 'main' && cur.topPot) {
+        const t = cur.topPot;
+        card.appendChild(el('div', { style: 'margin-top:7px; padding:6px 10px; border-radius:5px; background:rgba(0,0,0,0.25); font-size:10.5px;' },
+          el('span', { style: 'opacity:0.7;', text: '⚔ Top Pot — ' }),
+          el('span', { style: 'font-weight:700; color:' + GOLD + ';', text: t.winnerName }),
+          el('span', { style: 'opacity:0.6;', text: ' takes the Yellow Jacket vs ' + (t.winnerName === t.favName ? t.dogName : t.favName) + ' (' + f1(t.favScore) + ' — ' + f1(t.dogScore) + ')' + (t.favoriteWon ? '' : '  ·  ⚡ underdog') })
+        ));
+      }
+      d.appendChild(card);
+    }
+
     const tbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10px;' });
     const thr = el('tr', { style: 'opacity:0.5; text-align:left;' });
     ['#', 'Event', 'Holes×4', 'Field', 'All 4', 'Champion', 'Runner-up'].forEach(h => thr.appendChild(el('th', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.12);', text: h })));
     tbl.appendChild(thr);
     evs.forEach((ev, i) => {
       const tm = tierMeta(ev.tier), isMain = ev.tier === 'main', isMaj = ev.tier === 'major';
-      const tr = el('tr', { style: (isMain ? 'background:rgba(212,160,23,0.11);' : isMaj ? 'background:rgba(212,160,23,0.04);' : (i % 2 ? 'background:rgba(255,255,255,0.02);' : '')) });
+      const isUpcoming = i >= calSt.revealed;
+      const isJustRevealed = i === calSt.revealed - 1;
+      const baseBg = isMain ? 'background:rgba(212,160,23,0.11);' : isMaj ? 'background:rgba(212,160,23,0.04);' : (i % 2 ? 'background:rgba(255,255,255,0.02);' : '');
+      const tr = el('tr', { style: baseBg + (isUpcoming ? 'opacity:0.25;' : '') + (isJustRevealed ? 'outline:1px solid ' + tm.col + '88; outline-offset:-1px;' : '') });
       tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.45;', text: String(ev.week) }));
       const ec = el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); white-space:nowrap;' });
       ec.appendChild(el('span', { style: 'margin-right:5px;', text: tm.ic })); ec.appendChild(chip(tm.lab, tm.col)); ec.appendChild(el('span', { style: 'opacity:0.5; font-size:9px; margin-left:6px;', text: ev.label }));
       tr.appendChild(ec);
       tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.7;', text: ev.holes + 'h' }));
       tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.65;', text: String(ev.fieldSize) }));
-      tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.55;', text: String(ev.surviveAll) }));
+      tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.55;', text: isUpcoming ? '—' : String(ev.surviveAll) }));
       const ch = ev.champion || {};
       const cc = el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05);' });
-      cc.appendChild(el('span', { style: 'font-weight:700;' + (isMain ? 'color:' + GOLD + ';' : ''), text: ch.name || '—' }));
-      cc.appendChild(el('span', { style: 'opacity:0.5; font-size:9px;', text: '  ' + pc(ch.skillPct) + 'ile' }));
-      if (isMain) cc.appendChild(el('span', { style: 'opacity:0.65; font-size:9px;', text: '  → the Top Pot' }));
+      if (isUpcoming) {
+        cc.appendChild(el('span', { style: 'opacity:0.4; font-style:italic; font-size:9.5px;', text: 'upcoming…' }));
+      } else {
+        cc.appendChild(el('span', { style: 'font-weight:700;' + (isMain ? 'color:' + GOLD + ';' : ''), text: ch.name || '—' }));
+        cc.appendChild(el('span', { style: 'opacity:0.5; font-size:9px;', text: '  ' + pc(ch.skillPct) + 'ile' }));
+        if (isMain) cc.appendChild(el('span', { style: 'opacity:0.65; font-size:9px;', text: '  → the Top Pot' }));
+      }
       tr.appendChild(cc);
       const ru = ev.runnerUp || {};
-      tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.65;', text: ru.name ? (ru.name + '  ' + pc(ru.skillPct) + 'ile') : '—' }));
+      tr.appendChild(el('td', { style: 'padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.05); opacity:0.65;', text: isUpcoming ? '—' : (ru.name ? (ru.name + '  ' + pc(ru.skillPct) + 'ile') : '—') }));
       tbl.appendChild(tr);
     });
     d.appendChild(tbl);
-    if (cal.regularChampAvgPct != null) d.appendChild(note('Average champion skill %ile this ' + (multi ? 'year' : 'season') + ': Regulars ≈ ' + pc(cal.regularChampAvgPct) + 'ile' + (cal.majorChampAvgPct != null ? ', Majors ≈ ' + pc(cal.majorChampAvgPct) + 'ile' : '') + '. The longer Major/Main stages carry more skill signal, so their winners trend higher; a single Regular is close to a coin-flip on who lifts the trophy — true to life (one PGA event isn\'t a skill referendum either). "All 4" = how many of the field survived both cuts to play the final stage.'));
+    if (cal.regularChampAvgPct != null) d.appendChild(note('Average champion skill %ile this ' + (multi ? 'year' : 'season') + ': Regulars ≈ ' + pc(cal.regularChampAvgPct) + 'ile' + (cal.majorChampAvgPct != null ? ', Majors ≈ ' + pc(cal.majorChampAvgPct) + 'ile' : '') + '. The longer Major/Main stages carry more skill signal, so their winners trend higher; a single Regular is close to a coin-flip on who lifts the trophy — true to life. "All 4" = how many of the field survived both cuts to play the final stage. Use the playback controls above to step or auto-reveal events one at a time.'));
     return d;
   }
 
   function tabRating() {
     const d = el('div', {});
-    const board = multi ? (out.finalTop || []) : (last.ratingTop || []);
-    d.appendChild(secHdr(multi ? 'career standings — cumulative Hive Rating (end of Year ' + last.year + ')' : 'the Hive Rating board — top ' + Math.min(25, board.length)));
+    const ratingBoard = multi ? (out.finalTop || []) : (last.ratingTop || []);
+    const pollenBoard = last.pointsBoard || [];
+    // money board = same as rating board but re-sorted by earnings
+    const moneyBoard = ratingBoard.slice().sort((a, b) => ((b.careerEarnings != null ? b.careerEarnings : b.earnings) || 0) - ((a.careerEarnings != null ? a.careerEarnings : a.earnings) || 0)).map((p, i) => Object.assign({}, p, { rank: i + 1 }));
+    if (!out._subBoard || ['hive', 'pollen', 'money'].indexOf(out._subBoard) < 0) out._subBoard = 'hive';
+    // v69.105 — multi-board toggle: Hive / Pollen / Money share one tab
+    const toggle = el('div', { style: 'display:flex; gap:6px; margin-bottom:8px; align-items:center;' });
+    const subTabs = [
+      { id: 'hive', label: '📊 Hive Rating', desc: 'the skill rating — what crowns the Royal Suitor' },
+      { id: 'pollen', label: '🌼 Pollen Trail', desc: 'parallel decaying-points race — the form champion', cond: pollenBoard.length > 0 },
+      { id: 'money', label: '💰 Money List', desc: 'season-earnings standings — the prize-money order' },
+    ].filter(t => t.cond !== false);
+    if (out._subBoard === 'pollen' && !pollenBoard.length) out._subBoard = 'hive';
+    let curDesc = '';
+    subTabs.forEach(t => {
+      const active = out._subBoard === t.id;
+      if (active) curDesc = t.desc;
+      const b = el('button', { style: 'font-size:10px; padding:4px 9px; border-radius:5px; cursor:pointer; border:1px solid ' + (active ? 'rgba(212,160,23,0.45)' : 'rgba(255,255,255,0.10)') + '; background:' + (active ? 'rgba(212,160,23,0.14)' : 'rgba(255,255,255,0.025)') + '; color:' + (active ? GOLD : '#aab') + '; font-weight:' + (active ? '700' : '400') + ';', text: t.label });
+      b.onclick = () => { out._subBoard = t.id; render(); };
+      toggle.appendChild(b);
+    });
+    toggle.appendChild(el('span', { style: 'font-size:9.5px; opacity:0.5; margin-left:4px; font-style:italic;', text: curDesc }));
+    d.appendChild(toggle);
+
+    if (out._subBoard === 'pollen') {
+      // === The Pollen Trail board ===
+      const pt = last.pollenTrail;
+      d.appendChild(secHdr('the Pollen Trail — decaying season-points (×' + ((last && last.skill && 0.92) || 0.92) + '/event)'));
+      if (pt) d.appendChild(el('div', { style: 'padding:9px 12px; border-radius:6px; background:linear-gradient(135deg,rgba(180,220,140,0.14),rgba(180,220,140,0.03)); border:1px solid rgba(180,220,140,0.30); margin-bottom:10px;' },
+        el('div', { style: 'font-size:8.5px; text-transform:uppercase; letter-spacing:1.4px; color:#B4DC8C; font-weight:700; margin-bottom:2px;', text: '🌼 the form champion' }),
+        el('div', { style: 'font-size:17px; font-weight:800; color:#B4DC8C;', text: pt.name }),
+        el('div', { style: 'font-size:10px; opacity:0.75; margin-top:3px;', text: (pt.points || 0).toLocaleString() + ' season points · skill ' + pc(pt.skillPct) + 'ile · Hive ' + (pt.hiveRating || '?') + '  ·  ' + pt.events + ' events' })
+      ));
+      const ptbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10px;' });
+      const phr = el('tr', { style: 'opacity:0.5; text-align:left;' });
+      ['#', 'Player', 'Points', 'Hive', 'True skill', 'Ev'].forEach(h => phr.appendChild(el('th', { style: 'padding:3px 5px; border-bottom:1px solid rgba(180,220,140,0.20);', text: h })));
+      ptbl.appendChild(phr);
+      pollenBoard.slice(0, 25).forEach((p, i) => {
+        const isPt = pt && p.id === pt.id;
+        const tr = el('tr', { style: isPt ? 'background:rgba(180,220,140,0.10);' : (i % 2 ? 'background:rgba(255,255,255,0.02);' : '') });
+        [String(p.rank || (i + 1)), (isPt ? '🌼 ' : '') + p.name, String(p.points || 0), String(p.hiveRating || '?'), (p.skillPct != null ? pc(p.skillPct) + 'ile' : '—') + (p.skillRank ? ' (#' + p.skillRank + ')' : ''), String(p.events || '?')].forEach((v, ci) => tr.appendChild(el('td', { style: 'padding:3px 5px; border-bottom:1px solid rgba(255,255,255,0.04);' + (ci === 0 ? 'opacity:0.45;' : '') + (ci === 2 ? 'font-weight:700; color:#B4DC8C;' : '') + (ci === 4 ? 'opacity:0.8;' : ''), text: v })));
+        ptbl.appendChild(tr);
+      });
+      d.appendChild(ptbl);
+      d.appendChild(note('Points are awarded by finish position (top-15 in Regulars, top-16 in Majors, top-16 in the Main), with all prior points multiplied by 0.92 each event a player plays. The race rewards CONSISTENT RECENT FORM — a single early-season win decays out by year-end; back-to-back top-5 finishes carry. The Pollen Trail is a third honor, deliberately SUBORDINATE to the Yellow Jacket (chaotic week) and the Royal Suitor (season-long Hive Rating). Mirrors the Tour de France\'s maillot vert — the points jersey, complementary to the maillot jaune.'));
+      return d;
+    }
+
+    if (out._subBoard === 'money') {
+      // === Money List board ===
+      d.appendChild(secHdr(multi ? 'career earnings — top by total prize money (end of Year ' + last.year + ')' : 'season earnings — the prize-money order'));
+      const mtbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10px;' });
+      const mhr = el('tr', { style: 'opacity:0.5; text-align:left;' });
+      ['#', 'Player', 'Earnings', 'Hive', 'True skill', 'Wins', 'Best'].forEach(h => mhr.appendChild(el('th', { style: 'padding:3px 5px; border-bottom:1px solid rgba(212,160,23,0.20);', text: h })));
+      mtbl.appendChild(mhr);
+      moneyBoard.slice(0, 25).forEach((p, i) => {
+        const isCrown = p.id === rs.id, isJk = p.id === yj.id;
+        const tr = el('tr', { style: isJk ? 'background:rgba(212,160,23,0.10);' : isCrown ? 'background:rgba(120,180,255,0.07);' : (i % 2 ? 'background:rgba(255,255,255,0.02);' : '') });
+        const wins = ((p.jacketWins || 0) ? ('🧥' + (p.jacketWins > 1 ? '×' + p.jacketWins : '') + ' ') : '') + ((p.majorWins || 0) ? ('🏆' + (p.majorWins > 1 ? '×' + p.majorWins : '') + ' ') : '') + ((p.regularWins || 0) ? ('•×' + p.regularWins) : '');
+        [String(p.rank || (i + 1)), (isJk ? '🧥 ' : isCrown ? '👑 ' : '') + p.name, f2(p.careerEarnings != null ? p.careerEarnings : p.earnings), String(p.hiveRating || '?'), (p.skillPct != null ? pc(p.skillPct) + 'ile' : '—') + (p.skillRank ? ' (#' + p.skillRank + ')' : ''), wins || '—', String(p.bestFinish === Infinity || p.bestFinish == null ? '—' : p.bestFinish)].forEach((v, ci) => tr.appendChild(el('td', { style: 'padding:3px 5px; border-bottom:1px solid rgba(255,255,255,0.04);' + (ci === 0 ? 'opacity:0.45;' : '') + (ci === 2 ? 'font-weight:700; color:' + GOLD + ';' : '') + (ci === 4 ? 'opacity:0.8;' : ''), text: v })));
+        mtbl.appendChild(tr);
+      });
+      d.appendChild(mtbl);
+      d.appendChild(note('Prize money awarded by finish position — top-60% of the field paid by a quadratic curve (winner gets the biggest share). Money correlates with skill at the SEASON level (good players cash often) but a single Main win or a single hot Major lights up the leaderboard quickly. Top-of-money is often top-of-rating but not always — a high-volume part-timer with one big result can place high here without contending for the Royal Suitor.'));
+      return d;
+    }
+
+    // === Default: the Hive Rating board ===
+    d.appendChild(secHdr(multi ? 'career standings — cumulative Hive Rating (end of Year ' + last.year + ')' : 'the Hive Rating board — top ' + Math.min(25, ratingBoard.length)));
     const minEv = last.eligibility ? last.eligibility.minEvents : 0;
     const tbl = el('table', { style: 'width:100%; border-collapse:collapse; font-size:10px;' });
     const thr = el('tr', { style: 'opacity:0.5; text-align:left;' });
     ['#', 'Player', 'Hive', '±RD', 'Form', 'True skill', 'Ev', 'Maj', 'Earnings', 'Best', 'Wins', 'Suitor'].forEach(h => thr.appendChild(el('th', { style: 'padding:3px 5px; border-bottom:1px solid rgba(255,255,255,0.12);', text: h })));
     tbl.appendChild(thr);
-    board.slice(0, 25).forEach((p, i) => {
+    ratingBoard.slice(0, 25).forEach((p, i) => {
       const isCrown = p.id === rs.id, isJk = p.id === yj.id;
       const tr = el('tr', { style: isCrown ? 'background:rgba(120,180,255,0.11);' : (i % 2 ? 'background:rgba(255,255,255,0.02);' : '') });
       const wins = ((p.jacketWins || 0) ? ('🧥' + (p.jacketWins > 1 ? '×' + p.jacketWins : '') + ' ') : '') + ((p.majorWins || 0) ? ('🏆' + (p.majorWins > 1 ? '×' + p.majorWins : '') + ' ') : '') + ((p.regularWins || 0) ? ('•×' + p.regularWins) : '');
@@ -6094,7 +6297,7 @@ function renderSeasonRunCard(out) {
       tbl.appendChild(tr);
     });
     d.appendChild(tbl);
-    d.appendChild(note('Hive Rating = a Kalman/Glicko filter on latent skill: 2000 ≈ tour-average, +400 per z-unit of skill. ±RD is the confidence band — it tightens with every event, re-widens between seasons (form fades) and for streaky players (high "form" volatility). Suitor column: ✓ met all three Royal-Suitor criteria · – not enough events yet · · played enough but rating not yet confident / Majors short.'));
+    d.appendChild(note('Hive Rating = a Kalman/Glicko filter on latent skill, blending OUTCOME (event finishes) and DECISION-QUALITY (Phase C: EV-loss skill credit) at α=0.6. 2000 ≈ tour-average, +400 per z-unit of skill. ±RD is the confidence band — it tightens with every event, re-widens between seasons (form fades) and for streaky players. Suitor column: ✓ met all three Royal-Suitor criteria · – not enough events yet · · played enough but rating not yet confident / Majors short.'));
     if (multi && out.careerLog) {
       d.appendChild(ruleLine());
       d.appendChild(secHdr('career arc — winners by year'));
@@ -17405,7 +17608,7 @@ const SpectatorState = {
   feedLog: [],                             // complete broadcast log for the exported CSV/JSON (uncapped up to a memory ceiling) — v69.75
   logSeen: {},                             // tableId -> last h.log index harvested
   bracketStudy: { n: 100, holes: 18, running: false, phase: null, result: null, history: [] },   // v69.79/80/86 — offline skill-seeded-vs-random bracket A/B (Spectator UI); `holes` = holes/round for the sweep; history holds the last ~25 runs for pooling + CSV export
-  seasonStudy: { holes: 18, majorHoles: 72, nReg: 52, nMaj: 12, universe: 1024, regularField: 256, majorField: 320, mainField: 384, curve: 2.5, honeyCap: 'calibrated', tierMajors: false, pollenTrail: false, evLossPhase: 'p1', evLossAlpha: 0.6, nSeasons: 1, theta: 0.30, spread: 'wide', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 6, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [], live: null },   // v69.99+ — Tour de Bourdon (the Nectour) season engine + production Season Center (Spectator UI). Defaults = the locked production config (ρ_active ≈ 0.49 with Phase C @ α=0.6).
+  seasonStudy: { holes: 18, majorHoles: 72, nReg: 52, nMaj: 12, universe: 1024, regularField: 256, majorField: 320, mainField: 384, curve: 2.5, honeyCap: 'calibrated', tierMajors: true, pollenTrail: true, evLossPhase: 'p1', evLossAlpha: 0.6, nSeasons: 1, theta: 0.30, spread: 'wide', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 6, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [], live: null },   // v69.99+ — Tour de Bourdon (the Nectour) season engine + production Season Center (Spectator UI). Defaults = the locked production config (ρ_active ≈ 0.49 with Phase C @ α=0.6).
   scoreboard: { zoom: 1.0 },               // v69.81 — Live Scoreboard (golf-scorecard grid) view state
   scorecardOpen: false,                    // v69.46 — featured panel toggle (felt ↔ full scorecard) for liveTourney
   // Setup form state (persisted across view re-renders)
@@ -21188,7 +21391,7 @@ Views.spectator = function() {
 
   // v69.87 — Tour de Bourdon (colloq. 'the Nectour'): the season engine (Kalman-rated multi-event tour).
   if (SpectatorState.mode === 'liveTourney') {
-    if (!SpectatorState.seasonStudy) SpectatorState.seasonStudy = { holes: 18, majorHoles: 72, nReg: 52, nMaj: 12, universe: 1024, regularField: 256, majorField: 320, mainField: 384, curve: 2.5, honeyCap: 'calibrated', tierMajors: false, pollenTrail: false, evLossPhase: 'p1', evLossAlpha: 0.6, nSeasons: 1, theta: 0.30, spread: 'wide', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 6, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [], live: null };
+    if (!SpectatorState.seasonStudy) SpectatorState.seasonStudy = { holes: 18, majorHoles: 72, nReg: 52, nMaj: 12, universe: 1024, regularField: 256, majorField: 320, mainField: 384, curve: 2.5, honeyCap: 'calibrated', tierMajors: true, pollenTrail: true, evLossPhase: 'p1', evLossAlpha: 0.6, nSeasons: 1, theta: 0.30, spread: 'wide', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 6, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [], live: null };
     const ss = SpectatorState.seasonStudy;
     if (!Array.isArray(ss.history)) ss.history = [];
     if (ss.careerYrs == null) ss.careerYrs = 1;
@@ -21254,16 +21457,17 @@ Views.spectator = function() {
     finBox.appendChild(finSel); cfgRow2.appendChild(finBox);
     if (ss.finaleM === 'calibrated') cfgRow2.appendChild(mkNum('θ*  (#1-seed win-prob target)', 'theta', 0.05, 0.9, 0.05, 80));
     seasonCard.appendChild(cfgRow2);
-    // v69.102 — experimental flags row (Phase B-1, Phase B-2, Phase C)
-    const cfgRow3 = el('div', { style: 'display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:9px; padding:7px 9px; border-radius:6px; background:rgba(180,140,255,0.05); border:1px dashed rgba(180,140,255,0.25);' });
-    cfgRow3.appendChild(el('span', { style: 'font-size:9px; opacity:0.55; text-transform:uppercase; letter-spacing:0.9px; align-self:center;', text: '🧪 experimental:' }));
+    // v69.105 — settled production toggles (Phase B-1, B-2, C). All three default ON.
+    // EV-loss credit dropdown lets you A/B against the legacy pure-outcome rating.
+    const cfgRow3 = el('div', { style: 'display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:9px; padding:7px 9px; border-radius:6px; background:rgba(212,160,23,0.04); border:1px solid rgba(212,160,23,0.18);' });
+    cfgRow3.appendChild(el('span', { style: 'font-size:9px; opacity:0.55; text-transform:uppercase; letter-spacing:0.9px; align-self:center;', text: '🐝 production toggles:' }));
     const mkChk = (label, key) => { const box = el('label', { style: 'display:flex; gap:5px; align-items:center; font-size:10.5px; cursor:pointer;' }); const cb = el('input', { type: 'checkbox' }); if (ss[key]) cb.checked = true; cb.onchange = () => { ss[key] = !!cb.checked; }; box.appendChild(cb); box.appendChild(el('span', { text: label })); return box; };
-    cfgRow3.appendChild(mkChk('Tier-scaled Majors floor (B-1: anti-coasting)', 'tierMajors'));
-    cfgRow3.appendChild(mkChk('The Pollen Trail (B-2: points-carry)', 'pollenTrail'));
+    cfgRow3.appendChild(mkChk('Tier-scaled Majors floor (anti-coasting)', 'tierMajors'));
+    cfgRow3.appendChild(mkChk('The Pollen Trail (parallel points-carry)', 'pollenTrail'));
     const evBox = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
     evBox.appendChild(el('span', { style: 'font-size:9px; opacity:0.6;', text: 'EV-loss credit (Phase C)' }));
     const evSel = el('select', { class: 'form-control', style: 'font-size:11.5px;' });
-    [{ v: 'off', l: 'Off (production)' }, { v: 'p1', l: 'Phase 1 — clean AI grading (noise 0.5)' }, { v: 'p2', l: 'Phase 2 — solver-fit (noise 1.2)' }].forEach(o => { const opt = el('option', { value: o.v, text: o.l }); if (ss.evLossPhase === o.v) opt.selected = true; evSel.appendChild(opt); });
+    [{ v: 'off', l: 'Off — pure outcome (legacy)' }, { v: 'p1', l: 'Phase 1 — clean AI grading (default)' }, { v: 'p2', l: 'Phase 2 — solver-fit (real-player)' }].forEach(o => { const opt = el('option', { value: o.v, text: o.l }); if (ss.evLossPhase === o.v) opt.selected = true; evSel.appendChild(opt); });
     evSel.onchange = () => { ss.evLossPhase = evSel.value; };
     evBox.appendChild(evSel); cfgRow3.appendChild(evBox);
     cfgRow3.appendChild(mkNum('α  (EV-loss blend weight)', 'evLossAlpha', 0, 1, 0.05, 64));
