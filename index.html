@@ -2230,7 +2230,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.105-finalized-defaults-and-product-completion";
+const APP_VERSION = "2026.05.13-v69.106-study-budget-cap-raised-to-500M";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5799,8 +5799,13 @@ const Season = {
     if (includeNoSkill) armSpecs.push({ regH: armSpecs[0].regH, majH: armSpecs[0].majH, mainH: armSpecs[0].mainH, spread: 'flat' });
     const handsOf = (rH, mH, mnH) => 1.55 * (baseCfg.nRegulars * baseCfg.regularField * rH + baseCfg.nMajors * baseCfg.majorField * mH + baseCfg.mainField * mnH);
     const handBudget = s * careerSeasons * armSpecs.reduce((t, a) => t + handsOf(a.regH, a.majH, a.mainH), 0);
-    if (handBudget > 1.6e8) {
-      const msg = 'Season study too large even chunked: ≈ ' + (handBudget / 1e6).toFixed(0) + 'M engine hands (cap ≈160M). Reduce: seasons/arm (' + s + '), career-seasons (' + careerSeasons + '), # Regulars (' + baseCfg.nRegulars + ')/# Majors (' + baseCfg.nMajors + '), Major-holes (' + baseCfg.majorHoles + '), or Regular-holes.';
+    // v69.106 — hand-budget cap raised 160M → 500M to support 20-30-career validation
+    // sweeps at production fields (1024 / 256·320·384 / hybrid 18-72). The chunked
+    // driver advances one season at a time and the tab stays responsive throughout;
+    // expect ~1-2 min per 100M hands on a modern machine. Override via cfg.handBudgetCap.
+    const HAND_BUDGET_CAP = (+opts.handBudgetCap || +baseCfg.handBudgetCap || 5e8);
+    if (handBudget > HAND_BUDGET_CAP) {
+      const msg = 'Season study too large even chunked: ≈ ' + (handBudget / 1e6).toFixed(0) + 'M engine hands (cap ≈' + Math.round(HAND_BUDGET_CAP / 1e6) + 'M). Reduce: seasons/arm (' + s + '), career-seasons (' + careerSeasons + '; the rating saturates inside Y1, so 2-3 captures most of the signal), # Regulars (' + baseCfg.nRegulars + ')/# Majors (' + baseCfg.nMajors + '), Major-holes (' + baseCfg.majorHoles + '), or Regular-holes. ALTERNATIVE: run 4-6 separate smaller batches (e.g. seasons/arm = 6 each) — the Spectator card pools across runs automatically and the CSV export carries all of them, so a 5×6-career sequence gives you 30 careers pooled without exceeding any single run\'s budget.';
       try { console.warn('[Season.makeStudyJob]', msg); } catch (_) {}
       throw new Error(msg);
     }
@@ -21511,6 +21516,13 @@ Views.spectator = function() {
       const studyBtn = el('button', { class: 'btn gold', style: 'font-size:11px;', text: '🔬 Run study  (' + (ss.studyS | 0) + (ss.careerYrs > 1 ? '×' + (ss.careerYrs | 0) + 'yr careers' : ' seasons') + '/arm · ' + _armA + (_showB ? ' vs classic-18h' : '') + ')  ▸ chunked' });
       studyBtn.onclick = () => {
         const S = ss.studyS | 0, holesA = ss.holes | 0, K = ss.careerYrs | 0;
+        // v69.106 — soft pre-flight heads-up for heavy studies (the engine accepts up to 500M
+        // hands chunked but warns over ~200M so the user can opt out of a 5-15 min run).
+        // Rough estimate of hands: 3 arms × careersPerArm × careerSeasons × per-season-hands.
+        const _estHandsM = Math.round(3 * S * K * 1.55 * (ss.nReg * ss.regularField * holesA + ss.nMaj * ss.majorField * ss.majorHoles + ss.mainField * ss.majorHoles) / 1e6);
+        if (_estHandsM >= 200) {
+          if (!confirm('Heavy study — ≈' + _estHandsM + 'M engine hands. Expected runtime: ~' + Math.max(1, Math.round(_estHandsM / 60)) + '-' + Math.max(2, Math.round(_estHandsM / 30)) + ' min (chunked, the tab stays responsive; ⏹ Stop available). Proceed?')) return;
+        }
         let job = null;
         try { job = Season.makeStudyJob(Object.assign(buildCfg(), { s: S, careerSeasons: K, holesArm: [holesA, 18], baseSeed: 'ui-season-' + Date.now() })); }
         catch (e) { ss.running = false; ss.studyJob = null; ss.phase = 'Error: ' + (e && e.message ? e.message : e); ss.lastStudy = null; Views.spectator(); /* show the error where lastRun-error shows? just alert too */ alert(e && e.message ? e.message : e); return; }
