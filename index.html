@@ -2207,7 +2207,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.12-v69.99-tour-de-bourdon-season-center";
+const APP_VERSION = "2026.05.13-v69.104-evloss-noise-scaling-and-docs";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5159,11 +5159,13 @@ const Season = {
     majorHoles: 72,             // MAJORS: holes per STAGE — 4 staged "mountain stages" with cuts (Tour-de-France style: the stages that separate the men from the boys; 72 ⇒ each stage is a full tournament's worth of golf, a 288-hole championship). 0/unset ⇒ same as holesPerRound (= the pure-18h tour). The HYBRID (18h Regular rounds + 72h Major/Main stages) is the default.
     mainHoles: 72,              // THE MAIN EVENT (the grandest Major): same idea. 0/unset ⇒ same as holesPerRound.
     nRounds: 4,                 // R1 free → ~50% cut after R2 & R3 → R4 (no cut); lowest aggregate wins
-    universeSize: 1024,         // the player population (tour pros + amateurs) — the production default; ρ_active ≈ 0.23 at this scale (a heavy calendar feeds the rating filter enough data)
+    universeSize: 1024,         // the player population (tour pros + amateurs) — the production default; ρ_active ≈ 0.49 at this scale with Phase C @ α=0.6 (the EV-loss skill credit added in v69.103, event-length-noise-calibrated in v69.104)
     nRegulars: 52, nMajors: 12, // calendar: Regulars + Majors interleaved, then the Main (a real-world season's worth — one Regular ≈ weekly, one Major ≈ monthly, the Main once a year)
     regularField: 256, majorField: 320, mainField: 384,                          // production fields; the very-real shape is even larger (~7000 at the Main) — scale up via the UI for a fuller tour
     qualifierSlotsRegular: 8, qualifierSlotsMajor: 12, qualifierSlotsMain: 28,    // outsider spots per field (overridden in _norm: ~50% of a Regular, ~15% of a Major, ~25% of the Main)
     qualifierNoise: 1.4,        // z-SD of the (rating + noise) score used to pick outsider qualifiers
+    formWindow: 8,              // rolling # of rated events used to compute "recent form" (per-player Δμ). Default 8 ≈ "last month" on a 52-event Regular cadence.
+    majorQualifierFormWeight: 0.7,  // for MAJORS only: qualifier-q = μ + this·formΔ + N(0, qualifierNoise). >0 ⇒ a hot streak earns Major spots over a slightly higher-rated but cold player ("breakthrough qualifier" narrative). 0 = pure rating + noise (legacy).
     prestige: { regular: 1.0, major: 1.35, main: 1.6 },                          // event-importance × on precision
     tau0: 3.0,                  // base measurement precision per Regular-equivalent — higher ⇒ the rating tightens faster (steady-state precision P* ∝ √tau0/√ω); the dominant in-engine lever for ρ besides round length & the AI-curve width
     P0: 0.8,                    // prior precision (1/var) of a fresh player's skill estimate
@@ -5193,7 +5195,23 @@ const Season = {
     offSeasonGap: 2,            // between-season process noise, in "events" (form from last year partly goes stale; vol also relaxes toward 1). ↑ ⇒ less carries over season-to-season
     // --- multi-criteria Royal Suitor eligibility (all must hold; if NO ONE qualifies, the title falls to the player with the highest LOWER-confidence-bound rating μ − 1.5·RD — a good-AND-trusted pick, not a fluky-few-events one) ---
     crownRdCap: 0.40,           // rating deviation must be ≤ this (z-units; ≈ 160 Hive-Rating points) — the number must be confident enough
-    crownMinMajorsFrac: 0.5,    // must have played ≥ this fraction of the season's Majors
+    crownMinMajorsFrac: 0.5,    // must have played ≥ this fraction of the season's Majors (the base floor for everyone)
+    // --- v69.102 Phase B-1: rating-tier-scaled Majors requirement (anti-coasting) ---
+    crownTierMajors: false,     // if true, top-1%-rated players need ≥crownTierMajorsTop1Frac of Majors, top-10% need ≥crownTierMajorsTop10Frac (anti-coasting at the top — a dynasty player can't bank a Y2 lead by skipping late Majors)
+    crownTierMajorsTop1Frac: 0.90,
+    crownTierMajorsTop10Frac: 0.70,
+    // --- v69.102 Phase B-2: Eurovision-style decaying points carry (the Pollen Trail) ---
+    pointsCarryEnabled: false,   // if true, runs a parallel decaying-points ledger alongside the Hive Rating; the season-points leader at year-end is "The Pollen Trail" (third honor, subordinate to the Yellow Jacket and the Royal Suitor — the maillot vert of the bumblebee)
+    pointsDecayPerEvent: 0.92,   // ×decay applied to all prior points each event a player plays — keeps the race fresh
+    pointsTableRegular: [25, 20, 16, 13, 11, 10, 8, 6, 5, 4, 3, 2, 2, 1, 1],
+    pointsTableMajor:   [50, 40, 32, 26, 22, 20, 17, 14, 12, 10, 8, 6, 4, 3, 2, 1],
+    pointsTableMain:    [100, 80, 64, 52, 44, 40, 35, 30, 26, 22, 18, 14, 10, 6, 4, 2],
+    // --- v69.102 Phase C: observed-action GTO-EV-loss skill-credit term in the rating-z ---
+    useEVLossCredit: true,      // v69.103: PUSHED ON as production default. The EV-loss-blended rating delivered the predicted ~+0.24 ρ_active lift in the v69.102 validation sweep. Set to false to A/B against the legacy pure-outcome rating.
+    evLossAlpha: 0.6,           // blend weight: z* = α·z_action + (1−α)·z_outcome ; 0=pure outcome (current), 1=pure decision-quality
+    evLossSignal: 2.0,          // K in the analytical model true_EVloss = K·(1−skill)^p (bb/100 units; calibrated so the elite-vs-rec gap is ~1.4 bb/100, matching the HU-NLHE literature)
+    evLossExponent: 1.5,        // p in the analytical model — curvature of the skill→EV-loss map
+    evLossNoise: 0.6,           // per-event measurement σ (bb/100): Phase 1 ≈ 0.4–0.6 (clean AI grading); Phase 2 ≈ 1.0–1.5 (solver-fit residual for real players). Tunable per study arm.
   },
 
   // ---- numeric helpers -----------------------------------------------------
@@ -5251,7 +5269,7 @@ const Season = {
         skill: skill, profile: makeProfileForSkill(skill, { skillCurve: cfg.skillCurve }),
         rating: this.newRating(cfg), earnings: 0, eventsPlayed: 0, bestFinish: Infinity,
         cum: 0, stats: this._mkStats(), majorWins: 0, regularWins: 0, jacketWins: 0, majorsPlayed: 0,
-        _muStart: 0, _muEnd: 0, _recent: [],
+        _muStart: 0, _muEnd: 0, _recent: [], _formWindow: [], _points: 0,
       });
     }
     U._evtCounter = 0;   // cumulative event index across the universe's lifetime (for the volume cap)
@@ -5317,6 +5335,43 @@ const Season = {
       if (rank < p.bestFinish) p.bestFinish = rank;
       if (prizePool > 0 && rank <= paid && wSum > 0) p.earnings += prizePool * ((paid - rank + 1) * (paid - rank + 1)) / wSum;
     });
+    // v69.102 Phase B-2: Eurovision-style decaying points carry (the Pollen Trail).
+    // Runs PARALLEL to the rating — does not touch p.rating at all. Decay applied first
+    // (so a player who didn't play simply doesn't decay further this event — dormancy is
+    // separately handled by the off-season drift on the rating side).
+    if (cfg.pointsCarryEnabled) {
+      const decay = +cfg.pointsDecayPerEvent || 0.92;
+      const table = (tier === 'main') ? (cfg.pointsTableMain || []) : (tier === 'major') ? (cfg.pointsTableMajor || []) : (cfg.pointsTableRegular || []);
+      field.forEach(pl => { pl._points = (pl._points || 0) * decay; });
+      finishers.slice(0, table.length).forEach((pl, i) => { pl._points = (pl._points || 0) + (table[i] || 0); });
+    }
+    // v69.102 Phase C: observed-action GTO-EV-loss as a skill-credit term.
+    // The bots' decisions are deterministic given makeProfileForSkill — so for AI-only
+    // play the EV-loss is computable analytically (true_EVloss = K·(1−skill)^p, bb/100).
+    // Phase 1: low noise (clean AI grading). Phase 2: higher noise (solver-fit residual
+    // for real human players). Same code path — the noise term is the dial. The term is
+    // z-normalized within the event field and blended into z* at evLossAlpha.
+    let evLossZMap = null;
+    if (cfg.useEVLossCredit) {
+      const evK = +cfg.evLossSignal || 2.0;
+      const evP = +cfg.evLossExponent || 1.5;
+      // v69.104 — EV-loss measurement SE scales with √(1/decisions). Longer events
+      // (e.g. 72h Major stages) measure each player's EV-loss with proportionally
+      // less noise than short events (18h Regulars). Reference point: evLossNoise is
+      // the SE for an 18-hole-per-round event; a 72h stage scales to half noise.
+      const evNoiseBase = +cfg.evLossNoise || 0.6;
+      const evNoise = evNoiseBase * Math.sqrt(18 / Math.max(9, holes));
+      const obs = new Map();
+      field.forEach(pl => {
+        const trueEV = evK * Math.pow(Math.max(0, 1 - pl.skill), evP);   // bb/100
+        obs.set(pl.id, trueEV + this._randn() * evNoise);                // observed = true + measurement noise
+      });
+      const evVals = Array.from(obs.values());
+      const evMean = evVals.reduce((s, x) => s + x, 0) / Math.max(1, evVals.length);
+      const evSD = Math.sqrt(evVals.reduce((s, x) => s + (x - evMean) * (x - evMean), 0) / Math.max(1, evVals.length - 1)) || 1;
+      evLossZMap = new Map();
+      field.forEach(pl => evLossZMap.set(pl.id, (evMean - obs.get(pl.id)) / evSD));   // lower EV-loss ⇒ higher z_action
+    }
     field.forEach(p => {                                                  // the rating update — smooth performance z, τ ∝ rounds played
       let volMul = 1.0;
       if (volCap > 0 && ei != null) {                                     // volume cap (disabled by default — a stub for a future multi-track calendar)
@@ -5327,21 +5382,42 @@ const Season = {
       const pr = perfRankM.get(p.id);
       const zRank = this._probit(1 - (pr - 0.5) / N);
       const zMargin = (mean - Math.max(loC, Math.min(hiC, prMap.get(p.id)))) / sdAll;
-      const zStar = (1 - cfg.marginWeight) * zRank + cfg.marginWeight * zMargin + cfg.fieldStrengthLambda * fieldMeanMu;
+      const zOutcome = (1 - cfg.marginWeight) * zRank + cfg.marginWeight * zMargin + cfg.fieldStrengthLambda * fieldMeanMu;
+      const zAction = (evLossZMap) ? (evLossZMap.get(p.id) || 0) : 0;
+      const alpha = (evLossZMap) ? Math.max(0, Math.min(1, +cfg.evLossAlpha || 0)) : 0;
+      const zStar = alpha * zAction + (1 - alpha) * zOutcome;
       this.updateRating(p.rating, zStar, tauEvent * (roundsOf(p) / R) * volMul, cfg);
       p.eventsPlayed++;
+      // rolling "form" window (post-update μ snapshots) — used by Major qualifier picks
+      // and by the Season Center's "Form leaders — last month" surface. Pure read-only;
+      // does not consume RNG and so does not affect determinism.
+      if (!Array.isArray(p._formWindow)) p._formWindow = [];
+      p._formWindow.push(p.rating.mu);
+      const W = Math.max(2, (cfg.formWindow | 0) || 8);
+      if (p._formWindow.length > W + 1) p._formWindow.shift();
     });
     const champion = finishers[0];
     if (tier === 'major') champion.majorWins++; else if (tier === 'regular') champion.regularWins++;
     return { finishers: finishers, champion: champion, sigma: sigmaFull };
   },
 
+  // ---- recent-form helper: μ now minus μ at the start of the rolling window
+  // (post-update snapshots are pushed in runEvent). Returns 0 until the window
+  // is at least 2 events deep. Used by Major-qualifier picks and by the Season
+  // Center's "Form leaders — last month" surface.
+  _formDelta(p) { const w = p && p._formWindow; return (w && w.length > 1) ? (w[w.length - 1] - w[0]) : 0; },
+
   // ---- field selection: top-by-rating exempt + outsider qualifiers ---------
-  _pickField(U, size, slots) {
+  // formWeight > 0 ⇒ qualifier-q = μ + formWeight·formΔ + N(0, qualifierNoise),
+  // so a player on a hot streak earns spots over a slightly higher-rated but
+  // cold player ("breakthrough qualifier" narrative — used for Majors only).
+  _pickField(U, size, slots, formWeight) {
+    const fw = +formWeight || 0;
     const ranked = U.slice().sort((a, b) => (b.rating.mu - a.rating.mu) || (a.id - b.id));
     size = Math.min(size, ranked.length); slots = Math.min(slots, Math.max(0, size - 1));
     const exempt = ranked.slice(0, size - slots), rest = ranked.slice(size - slots);
-    rest.forEach(p => { p._q = p.rating.mu + this._randn() * this.DEFAULTS.qualifierNoise; });
+    const self = this;
+    rest.forEach(p => { p._q = p.rating.mu + (fw > 0 ? fw * self._formDelta(p) : 0) + self._randn() * self.DEFAULTS.qualifierNoise; });
     rest.sort((a, b) => b._q - a._q);
     return exempt.concat(rest.slice(0, slots));
   },
@@ -5389,7 +5465,10 @@ const Season = {
       const isMajor = majorAt.has(evIdx), tier = isMajor ? 'major' : 'regular';
       const size = isMajor ? cfg.majorField : cfg.regularField;
       const slots = isMajor ? cfg.qualifierSlotsMajor : cfg.qualifierSlotsRegular;
-      const field = this._pickField(U, size, slots);
+      // Majors use FORM-weighted qualifier picks (v69.101) — a hot streak earns Major spots
+      // over a slightly higher-rated but cold player ("breakthrough qualifier"). Regulars
+      // stay pure-rating-plus-noise (the retail-heavy weekly grind shouldn't filter that way).
+      const field = this._pickField(U, size, slots, isMajor ? (+cfg.majorQualifierFormWeight || 0) : 0);
       const r = this.runEvent(field, cfg, tier, isMajor ? 2.5 : 1.0, false, U._evtCounter++);
       (isMajor ? majorWinners : regularWinners).push(r.champion);
       eventLog.push({ week: week, tier: tier, label: isMajor ? ('Major ' + (++majN)) : ('Regular ' + (++regN)), holes: isMajor ? cfg.majorHoles : cfg.holesPerRound, fieldSize: field.length, surviveAll: r.finishers.filter(p => (p._cutAfter || (R4 + 1)) > R4).length, _top: r.finishers.slice(0, 6) });
@@ -5432,9 +5511,28 @@ const Season = {
     const ratedAll = U.slice().sort((a, b) => (b.rating.mu - a.rating.mu) || (a.id - b.id));
     // Multi-criteria Royal Suitor eligibility (ALL must hold): enough rated events,
     // a confident-enough rating (RD ≤ cap), and ≥ a fraction of the season's Majors.
+    // v69.102 Phase B-1: when crownTierMajors is true, the Majors-fraction floor SCALES
+    // WITH RATING — top-1% rated need crownTierMajorsTop1Frac (default 0.90), top-10%
+    // need crownTierMajorsTop10Frac (default 0.70), everyone else the base floor (0.50).
+    // Anti-coasting at the top: a dynasty player can't bank a Y2 lead by skipping late
+    // Majors. The eligibility predicate needs rating-rank, so we build ratingRankM first.
+    const ratingRankM_e = new Map(); ratedAll.forEach((p, i) => ratingRankM_e.set(p.id, i + 1));
+    const Npop_e = U.length;
     const rdCapZ = (cfg.crownRdCap != null) ? cfg.crownRdCap : 0.22;
-    const minMaj = Math.max(0, Math.round((cfg.nMajors || 0) * ((cfg.crownMinMajorsFrac != null) ? cfg.crownMinMajorsFrac : 0.5)));
-    const isCrownEligible = p => (p.rating.events >= cfg.minEventsForCrown) && (this.rdOf(p.rating) <= rdCapZ) && ((p.majorsPlayed || 0) >= minMaj);
+    const baseFrac = (cfg.crownMinMajorsFrac != null) ? +cfg.crownMinMajorsFrac : 0.5;
+    const tierTop1 = (cfg.crownTierMajorsTop1Frac != null) ? +cfg.crownTierMajorsTop1Frac : 0.90;
+    const tierTop10 = (cfg.crownTierMajorsTop10Frac != null) ? +cfg.crownTierMajorsTop10Frac : 0.70;
+    const tierFracFor = p => {
+      if (!cfg.crownTierMajors) return baseFrac;
+      const r = ratingRankM_e.get(p.id) || ratedAll.length;
+      const pctile = (Npop_e > 1) ? (1 - (r - 1) / (Npop_e - 1)) : 1;
+      if (pctile >= 0.99) return Math.max(baseFrac, tierTop1);
+      if (pctile >= 0.90) return Math.max(baseFrac, tierTop10);
+      return baseFrac;
+    };
+    const minMajFor = p => Math.max(0, Math.round((cfg.nMajors || 0) * tierFracFor(p)));
+    const minMaj = Math.max(0, Math.round((cfg.nMajors || 0) * baseFrac));   // legacy single-value (used by some downstream surfaces)
+    const isCrownEligible = p => (p.rating.events >= cfg.minEventsForCrown) && (this.rdOf(p.rating) <= rdCapZ) && ((p.majorsPlayed || 0) >= minMajFor(p));
     const eligible = ratedAll.filter(isCrownEligible);
     const playedEnough = ratedAll.filter(p => p.rating.events >= cfg.minEventsForCrown);   // for cards (volume only)
     // If no one met the full criteria, the title falls to the highest LOWER-confidence-bound rating among those who played enough (μ − 1.5·RD) — good AND trusted, not a fluky-few-events spike.
@@ -5465,14 +5563,38 @@ const Season = {
     U.forEach(p => { if ((p._muEnd - p._muStart) > (riser._muEnd - riser._muStart)) riser = p; if ((p._muEnd - p._muStart) < (faller._muEnd - faller._muStart)) faller = p; });
     const pinfo = p => ({ id: p.id, name: p.name, skill: +p.skill.toFixed(3), skillRank: skillRankM.get(p.id), skillPct: +pct(skillRankM.get(p.id)).toFixed(3) });
     const jacketSeasonRank = ratingRankPreMain.get(jacket.id);
-    // "What I Need" — the top-rated player who just missed Crown eligibility, and why
-    const bubbleP = ratedAll.find(p => !isCrownEligible(p));
-    const bubble = bubbleP ? {
-      name: bubbleP.name, hiveRating: this.hiveRating(bubbleP.rating), ratingRank: ratingRankM.get(bubbleP.id), skillPct: +pct(skillRankM.get(bubbleP.id)).toFixed(3),
-      events: bubbleP.rating.events, needEvents: Math.max(0, cfg.minEventsForCrown - bubbleP.rating.events),
-      majorsPlayed: (bubbleP.majorsPlayed || 0), needMajors: Math.max(0, minMaj - (bubbleP.majorsPlayed || 0)),
-      rd: Math.round(400 * this.rdOf(bubbleP.rating)), rdCap: Math.round(400 * rdCapZ), rdOver: this.rdOf(bubbleP.rating) > rdCapZ,
-    } : null;
+    // "Bubble Watch" (v69.101) — the BOARD of top-rated players who just missed Crown
+    // eligibility, with each player's specific shortfall ("what I need"). The first
+    // (highest-rated) bubble player is the headline for the Eligibility tab; the rest
+    // populate the persistent season-long board.
+    const _bubbleInfo = p => {
+      const myMinMaj = minMajFor(p);
+      return {
+        id: p.id, name: p.name, hiveRating: this.hiveRating(p.rating), ratingRank: ratingRankM.get(p.id), skillPct: +pct(skillRankM.get(p.id)).toFixed(3),
+        events: p.rating.events, needEvents: Math.max(0, cfg.minEventsForCrown - p.rating.events),
+        majorsPlayed: (p.majorsPlayed || 0), needMajors: Math.max(0, myMinMaj - (p.majorsPlayed || 0)),
+        myMinMajors: myMinMaj,                              // per-player threshold (Phase B-1 — tier-scaled when crownTierMajors=true)
+        rd: Math.round(400 * this.rdOf(p.rating)), rdCap: Math.round(400 * rdCapZ), rdOver: this.rdOf(p.rating) > rdCapZ,
+      };
+    };
+    const bubbleListAll = ratedAll.filter(p => !isCrownEligible(p)).slice(0, 5).map(_bubbleInfo);
+    const bubble = bubbleListAll[0] || null;          // legacy single-bubble (Eligibility headline)
+    // Form leaders — last `formWindow` events, μ-Δ snapshots. Used for the "Hot / Cooling"
+    // strip on the Season tab. Filters to currently active players (≥3 events) so a
+    // long-absence player who hasn't moved doesn't dominate either list.
+    const _formActive = U.filter(p => p.rating.events >= 3 && Array.isArray(p._formWindow) && p._formWindow.length > 1);
+    const _formInfo = p => { const fd = this._formDelta(p); return Object.assign(pinfo(p), { formDelta: +fd.toFixed(3), formHive: Math.round(fd * 400), hiveRating: this.hiveRating(p.rating), events: p.rating.events }); };
+    const formRisers = _formActive.slice().sort((a, b) => this._formDelta(b) - this._formDelta(a)).slice(0, 3).filter(p => this._formDelta(p) > 0).map(_formInfo);
+    const formFallers = _formActive.slice().sort((a, b) => this._formDelta(a) - this._formDelta(b)).slice(0, 3).filter(p => this._formDelta(p) < 0).map(_formInfo);
+    const formLeaders = { window: cfg.formWindow | 0, risers: formRisers, fallers: formFallers };
+    // v69.102 Phase B-2: the Pollen Trail — points-carry board (off by default; only populated when pointsCarryEnabled).
+    let pointsBoard = [], pollenTrail = null;
+    if (cfg.pointsCarryEnabled) {
+      pointsBoard = U.slice().sort((a, b) => (b._points || 0) - (a._points || 0)).slice(0, 25).map((p, i) => Object.assign(pinfo(p), {
+        rank: i + 1, points: Math.round(p._points || 0), hiveRating: this.hiveRating(p.rating), events: p.rating.events,
+      }));
+      pollenTrail = (pointsBoard[0] && pointsBoard[0].points > 0) ? Object.assign({}, pointsBoard[0]) : null;
+    }
     // finalize the per-event broadcast log (resolve player refs → name/skill-%ile; attach the Top Pot to the Main)
     eventLog.forEach(ev => {
       const top = ev._top || [];
@@ -5496,9 +5618,12 @@ const Season = {
       hiveCrown: Object.assign(pinfo(crown), { hiveRating: this.hiveRating(crown.rating), rd: Math.round(400 * this.rdOf(crown.rating)), vol: +(crown.rating.vol || 1).toFixed(2), events: crown.rating.events, majorsPlayed: (crown.majorsPlayed || 0), ratingRank: ratingRankM.get(crown.id), fullyEligible: isCrownEligible(crown) }),
       yellowJacket: Object.assign(pinfo(jacket), { seasonRatingRank: jacketSeasonRank, mainSeedRank: seeded.findIndex(p => p.id === jacket.id) + 1, wasNo1Seed: seeded[0].id === jacket.id, wonViaTopPot: 1, topPotOpponent: (jacket === fav ? dog : fav).name, wasFavorite: jacket === fav, hiveRating: this.hiveRating(jacket.rating) }),
       majorWinners: majorWinners.map(pinfo),
-      eligibility: { count: eligible.length, ratedCount: U.filter(p => p.rating.events >= 1).length, minEvents: cfg.minEventsForCrown, minMajors: minMaj, rdCap: Math.round(400 * rdCapZ), totalEvents: cfg.nRegulars + cfg.nMajors + 1, bubble: bubble },
+      eligibility: { count: eligible.length, ratedCount: U.filter(p => p.rating.events >= 1).length, minEvents: cfg.minEventsForCrown, minMajors: minMaj, rdCap: Math.round(400 * rdCapZ), totalEvents: cfg.nRegulars + cfg.nMajors + 1, bubble: bubble, bubbleList: bubbleListAll },
       finale: { mode: cfg.finaleMode, topPot: topPot, beta: +beta.toFixed(3), targetWinProb: +(+cfg.finaleTargetWinProb || 0.65).toFixed(2), modeledFavWinProb: isFinite(modeledP) ? +modeledP.toFixed(3) : null, mainFieldSize: mainField.length },
       mover: { riser: Object.assign(pinfo(riser), { delta: +(riser._muEnd - riser._muStart).toFixed(3), hiveRating: this.hiveRating(riser.rating) }), faller: Object.assign(pinfo(faller), { delta: +(faller._muEnd - faller._muStart).toFixed(3), hiveRating: this.hiveRating(faller.rating) }) },
+      formLeaders: formLeaders,
+      pointsBoard: pointsBoard,        // Phase B-2 — empty unless pointsCarryEnabled
+      pollenTrail: pollenTrail,        // Phase B-2 — null unless pointsCarryEnabled
       promotion: { nCards: nCards, tourCardIds: tourCardIds },
       skill: {
         rhoActive: +rhoActive.toFixed(3), rhoSeason: +rhoSeason.toFixed(3), rhoEligible: +rhoEligible.toFixed(3), rhoMain: +rhoMain.toFixed(3),
@@ -5558,10 +5683,28 @@ const Season = {
   _withEngineEnv(cfg, fn) {
     const _cap = (typeof CurrentHoneyCapMode === 'string') ? CurrentHoneyCapMode : 'spec';
     const _lb = (typeof CurrentLoserBogey !== 'undefined') ? CurrentLoserBogey : true;
+    // v69.103 AUDIT FIX — also save/restore brick-penalty mode + cap + flat showdown loss.
+    // Previously the Season-engine sim inherited whatever the global defaults happened to be
+    // (typically 'flat' / cap 4 / showdownLoss 1), which silently DISABLED the documented
+    // STACK BRICKS = +2 tier of the 4-rung loss ladder. Now we explicitly set the
+    // pot-gated 'production' brick mode (cap 2 = the documented LAY A BRICK +1 / STACK
+    // BRICKS +2 split) for the duration of the season run, and restore prior state after.
+    const _bm = (typeof CurrentBrickPenaltyMode === 'string') ? CurrentBrickPenaltyMode : 'flat';
+    const _bc = (typeof CurrentBrickLossCap === 'number') ? CurrentBrickLossCap : 4;
+    const _bl = (typeof CurrentHighCardShowdownLoss === 'number') ? CurrentHighCardShowdownLoss : 1;
     if (typeof setHoneyCapMode === 'function') setHoneyCapMode(cfg.honeyCapMode === 'spec' ? 'spec' : 'calibrated');
     if (typeof setLoserBogey === 'function') setLoserBogey(true);
+    if (typeof setBrickPenaltyMode === 'function') setBrickPenaltyMode('pot-gated');
+    if (typeof setBrickLossCap === 'function') setBrickLossCap(2);
+    if (typeof setHighCardShowdownLoss === 'function') setHighCardShowdownLoss(1);   // flat fallback used only when pot-gated formula's pot info is missing
     try { return fn(); }
-    finally { if (typeof setHoneyCapMode === 'function') setHoneyCapMode(_cap); if (typeof setLoserBogey === 'function') setLoserBogey(_lb); }
+    finally {
+      if (typeof setHoneyCapMode === 'function') setHoneyCapMode(_cap);
+      if (typeof setLoserBogey === 'function') setLoserBogey(_lb);
+      if (typeof setBrickPenaltyMode === 'function') setBrickPenaltyMode(_bm);
+      if (typeof setBrickLossCap === 'function') setBrickLossCap(_bc);
+      if (typeof setHighCardShowdownLoss === 'function') setHighCardShowdownLoss(_bl);
+    }
   },
   // Between seasons of a career: extra process noise (last year's form goes stale, OWGR-style) + volatility relaxes toward typical.
   _offSeason(U, cfg) { const g = (cfg.offSeasonGap != null) ? cfg.offSeasonGap : 12; U.forEach(p => { this.driftRating(p.rating, cfg, g); p.rating.vol = 0.5 * (p.rating.vol || 1) + 0.5; }); },
@@ -5798,6 +5941,18 @@ function renderSeasonRunCard(out) {
   function tabSeason() {
     const d = el('div', {});
     d.appendChild(heroHonors());
+    // v69.102 Phase B-2: the Pollen Trail — third honor, deliberately SUBORDINATE to the
+    // two headline honors above (the Yellow Jacket and the Royal Suitor). Only renders
+    // when pointsCarryEnabled produced a winner. Mirrors the Tour de France maillot vert.
+    const pt = last.pollenTrail;
+    if (pt) {
+      const ptStrip = el('div', { style: 'padding:8px 12px; margin-bottom:12px; border-radius:7px; background:rgba(180,220,140,0.07); border:1px solid rgba(180,220,140,0.22); display:flex; gap:10px; align-items:center; flex-wrap:wrap;' });
+      ptStrip.appendChild(el('span', { style: 'font-size:8.5px; text-transform:uppercase; letter-spacing:1.4px; color:#B4DC8C; font-weight:700;', text: '🌼 The Pollen Trail' }));
+      ptStrip.appendChild(el('span', { style: 'font-size:13px; font-weight:700; color:#B4DC8C;', text: pt.name }));
+      ptStrip.appendChild(el('span', { style: 'font-size:9.5px; opacity:0.65;', text: 'the form champion — ' + (pt.points || 0).toLocaleString() + ' season points (decaying)  ·  skill ' + pc(pt.skillPct) + 'ile  ·  Hive ' + (pt.hiveRating || '?') }));
+      ptStrip.appendChild(el('span', { style: 'flex:1; font-size:9px; opacity:0.45; text-align:right; font-style:italic;', text: 'a third honor — the maillot vert of the bumblebee · subordinate to the Jacket & the Suitor' }));
+      d.appendChild(ptStrip);
+    }
     d.appendChild(secHdr((multi ? 'Year ' + last.year + ' — ' : '') + 'the championships'));
     const mw = last.majorWinners || [];
     if (mw.length) {
@@ -5812,6 +5967,28 @@ function renderSeasonRunCard(out) {
       if (mv.riser) mr.appendChild(moverCell(mv.riser, true));
       if (mv.faller) mr.appendChild(moverCell(mv.faller, false));
       d.appendChild(mr);
+    }
+    // ---- Form leaders — "last month" (rolling formWindow events) ----
+    const fl = last.formLeaders || { window: 8, risers: [], fallers: [] };
+    if ((fl.risers && fl.risers.length) || (fl.fallers && fl.fallers.length)) {
+      d.appendChild(secHdr('form leaders — last ' + (fl.window || 8) + ' events (≈ one month of the tour)'));
+      const fr = el('div', { style: 'display:flex; gap:9px; flex-wrap:wrap; margin-bottom:10px;' });
+      const sideCol = (title, list, isHot) => {
+        const w = el('div', { style: 'flex:1 1 280px; padding:8px 10px; border-radius:6px; background:' + (isHot ? 'rgba(120,255,160,0.05)' : 'rgba(255,150,120,0.05)') + '; border:1px solid ' + (isHot ? 'rgba(120,255,160,0.18)' : 'rgba(255,150,120,0.18)') + ';' });
+        w.appendChild(el('div', { style: 'font-size:7.5px; opacity:0.55; text-transform:uppercase; letter-spacing:0.9px; margin-bottom:4px;', text: title }));
+        if (!list || !list.length) w.appendChild(el('div', { style: 'font-size:10px; opacity:0.45; font-style:italic;', text: '(none yet)' }));
+        else list.forEach((p, i) => {
+          const row = el('div', { style: 'display:flex; gap:8px; align-items:baseline; font-size:10.5px; padding:2px 0;' + (i ? 'border-top:1px solid rgba(255,255,255,0.04);' : '') });
+          row.appendChild(el('span', { style: 'opacity:0.45; font-size:9px; min-width:14px;', text: String(i + 1) + '.' }));
+          row.appendChild(el('span', { style: 'font-weight:700; color:' + (isHot ? '#9FE8B5' : '#E8A99F') + ';', text: p.name }));
+          row.appendChild(el('span', { style: 'opacity:0.6; font-size:9.5px;', text: (isHot ? '+' : '') + p.formHive + ' Hive  ·  Δμ ' + (isHot ? '+' : '') + (+p.formDelta).toFixed(2) + '  ·  ' + p.events + ' ev' }));
+          w.appendChild(row);
+        });
+        return w;
+      };
+      fr.appendChild(sideCol('🔥 Hot · biggest risers', fl.risers, true));
+      fr.appendChild(sideCol('🧊 Cooling · biggest fallers', fl.fallers, false));
+      d.appendChild(fr);
     }
     d.appendChild(ruleLine());
     d.appendChild(secHdr('season at a glance'));
@@ -5948,11 +6125,31 @@ function renderSeasonRunCard(out) {
       const need = b.needEvents > 0 ? (b.needEvents + ' more event' + (b.needEvents === 1 ? '' : 's')) : b.needMajors > 0 ? (b.needMajors + ' more Major' + (b.needMajors === 1 ? '' : 's')) : b.rdOver ? ('a tighter rating — RD ' + b.rd + ' must come down to ' + b.rdCap + ' (just keep playing)') : 'nothing — should be in';
       const bc = el('div', { style: 'font-size:11px; padding:11px 14px; border-radius:8px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.10);' });
       bc.appendChild(el('div', {}, el('span', { style: 'font-weight:800; font-size:13px;', text: b.name }), el('span', { style: 'opacity:0.6;', text: '   rated #' + b.ratingRank + ' (Hive ' + b.hiveRating + ') · skill ' + pc(b.skillPct) + 'ile' })));
-      bc.appendChild(el('div', { style: 'margin-top:6px; font-size:10.5px; opacity:0.8;', text: 'Events ' + b.events + (b.needEvents > 0 ? ' (needs ' + e.minEvents + ')' : ' ✓') + '   ·   Majors ' + b.majorsPlayed + (b.needMajors > 0 ? ' (needs ' + e.minMajors + ')' : ' ✓') + '   ·   RD ' + b.rd + (b.rdOver ? ' (needs ≤ ' + b.rdCap + ')' : ' ✓') }));
+      bc.appendChild(el('div', { style: 'margin-top:6px; font-size:10.5px; opacity:0.8;', text: 'Events ' + b.events + (b.needEvents > 0 ? ' (needs ' + e.minEvents + ')' : ' ✓') + '   ·   Majors ' + b.majorsPlayed + (b.needMajors > 0 ? ' (needs ' + (b.myMinMajors != null ? b.myMinMajors : e.minMajors) + ')' : ' ✓') + '   ·   RD ' + b.rd + (b.rdOver ? ' (needs ≤ ' + b.rdCap + ')' : ' ✓') }));
       bc.appendChild(el('div', { style: 'margin-top:7px; font-size:11px;' }, el('span', { style: 'opacity:0.6;', text: 'To get eligible: ' }), el('span', { style: 'color:' + GOLD + '; font-weight:700;', text: need })));
       d.appendChild(bc);
     }
-    d.appendChild(note('The fallback (highest μ − 1.5·RD among the played-enough) keeps the title a "good AND trusted" pick — never a player who spiked over a couple of lucky events and bailed. In a real season most contenders clear all three by mid-year; the bubble is where the season-long story lives.'));
+    // ---- BUBBLE WATCH — the persistent season-long board of just-missed players ----
+    const bList = (e.bubbleList || []).slice(1);   // index 0 is already shown as the headline above
+    if (bList.length) {
+      d.appendChild(el('div', { style: 'margin-top:11px;' }, secHdr('bubble watch — the rest of the just-missed board')));
+      const bw = el('div', { style: 'border-radius:7px; overflow:hidden; border:1px solid rgba(255,255,255,0.08);' });
+      bList.forEach((p, i) => {
+        const need = p.needEvents > 0 ? (p.needEvents + ' more event' + (p.needEvents === 1 ? '' : 's'))
+                  : p.needMajors > 0 ? (p.needMajors + ' more Major' + (p.needMajors === 1 ? '' : 's'))
+                  : p.rdOver ? ('tighten RD ' + p.rd + ' → ' + p.rdCap)
+                  : 'nothing — should be in';
+        const row = el('div', { style: 'display:flex; gap:10px; align-items:baseline; padding:7px 11px; font-size:10.5px; background:' + (i % 2 ? 'rgba(255,255,255,0.025)' : 'transparent') + ';' });
+        row.appendChild(el('span', { style: 'opacity:0.45; font-size:9.5px; min-width:18px;', text: '#' + p.ratingRank }));
+        row.appendChild(el('span', { style: 'font-weight:700; min-width:80px;', text: p.name }));
+        row.appendChild(el('span', { style: 'opacity:0.6; font-size:9.5px;', text: 'Hive ' + p.hiveRating + ' · skill ' + pc(p.skillPct) + 'ile · ' + p.events + ' ev / ' + p.majorsPlayed + (p.myMinMajors != null && p.myMinMajors !== e.minMajors ? '/' + p.myMinMajors + '★' : '') + ' Maj / RD ' + p.rd }));
+        row.appendChild(el('span', { style: 'flex:1;' }));
+        row.appendChild(el('span', { style: 'color:' + GOLD + '; font-size:10px; font-weight:700;', text: '→ ' + need }));
+        bw.appendChild(row);
+      });
+      d.appendChild(bw);
+    }
+    d.appendChild(note('The headline is the highest-rated just-missed player; Bubble Watch shows the next ' + Math.max(0, Math.min(4, bList.length)) + ' rating-rank players who haven\'t cleared all three criteria yet — the season\'s late-stage drama. The fallback (highest μ − 1.5·RD among the played-enough) keeps the title a "good AND trusted" pick — never a player who spiked over a couple of lucky events and bailed.'));
     return d;
   }
 
@@ -5971,7 +6168,7 @@ function renderSeasonRunCard(out) {
     g.appendChild(stat('True #1 = Suitor?', s.trueNo1IsCrown ? 'yes' : 'no', (s.top5SkillIsCrown ? 'a top-5-skill player IS' : 'no top-5-skill player IS') + ' the Suitor'));
     d.appendChild(g);
     d.appendChild(el('div', { style: 'font-size:10px; line-height:1.65; opacity:0.7; padding:9px 12px; border-radius:6px; background:rgba(255,255,255,0.03);', text:
-      'Honey-Stroke separates skill by ~1 stroke per round, so a single event barely sorts skill — ρ_single ≈ 0.05 at 18-hole rounds, ≈ 0.19 at 72h. The SEASON is the instrument: pooling ' + cal.totalEvents + ' events lifts the regulars\' ρ to ≈ ' + f2(s.rhoActive) + '. That\'s "skill-tilted but chaotic" — the Royal Suitor lands on roughly a ' + pc(s.crownSkillPct) + 'ile player, the Yellow Jacket on a ' + pc(s.jacketSkillPct) + 'ile one (the heads-up Top Pot is an upset machine, on purpose). "The literal #1 always wins" would need ρ ≈ 0.8 — unreachable at any sane round length, and not the goal: a world ranking that\'s skill-tilted but never a foregone conclusion is exactly what a real tour looks like.' }));
+      'The Hive Rating blends OUTCOME signal (event finishes — bounded at ρ_single ≈ 0.05 at 18h, ≈ 0.19 at 72h by Honey-Stroke\'s ~1-stroke/round separation) with DECISION-QUALITY signal (Phase C: observed-action EV-loss credit, the same metric PioSolver/GTOWizard use) at α=0.6. Pooled over ' + cal.totalEvents + ' events this season the regulars\' ρ landed at ' + f2(s.rhoActive) + '. The Royal Suitor here was a ' + pc(s.crownSkillPct) + 'ile player; the Yellow Jacket a ' + pc(s.jacketSkillPct) + 'ile one (the heads-up Top Pot stays single-match-chaotic by design — class confirmed via the Suitor, the Jacket can be stolen on the day). The literal-#1 crowning rate sits near OWGR\'s year-end-#1 rate (~10-15% in real golf) — a skill-dominant ranking that never crowns by foregone conclusion.' }));
     if (multi && out.careerLog) {
       d.appendChild(ruleLine());
       d.appendChild(secHdr('career arc — winners by year'));
@@ -7845,14 +8042,15 @@ function composite(p) { return p.majorWins * 10 + p.mainWins * 5 + p.regularWins
 // Buzz knowledge base
 const BuzzKnowledge = {
   faqs: [
-    { cat: 'tournament', q: 'What is Tour de Bourdon (the Nectour)?', a: 'The canonical season structure — a fixed calendar of events, one rolling skill rating (the Hive Rating), and a champion crowned at year\'s end (the Royal Suitor), all on Honey-Stroke underneath. Modeled on golf\'s major-championship season + cycling\'s grand tour. "Tour de Bourdon" = "Tour of the Bumblebee"; colloquially "the Nectour". The production default season: a 1024-player universe, 52 Regulars + 12 Majors + the Main, hybrid format (18-hole Regular rounds / 72-hole Major-&-Main stages), AI skill curve ×2.5 — ρ ≈ 0.23 over the contenders, Royal Suitor ≈ top-third player. Live engine: Spectator → the "Tour de Bourdon" card (run a season or a multi-season career, or the validation study); a completed run opens in the SEASON CENTER. Console: runBourdonStudy / runNectourStudy / runBourdonCareer.' },
+    { cat: 'tournament', q: 'What is Tour de Bourdon (the Nectour)?', a: 'The canonical season structure — a fixed calendar of events, one rolling skill rating (the Hive Rating), and a champion crowned at year\'s end (the Royal Suitor), all on Honey-Stroke underneath. Modeled on golf\'s major-championship season + cycling\'s grand tour. "Tour de Bourdon" = "Tour of the Bumblebee"; colloquially "the Nectour". The production default season: a 1024-player universe, 52 Regulars + 12 Majors + the Main, hybrid format (18-hole Regular rounds / 72-hole Major-&-Main stages), AI skill curve ×2.5, with the **Hive Rating folding in a measurement-driven decision-quality term (Phase C: EV-loss credit @ α=0.6)** in addition to outcome — ρ ≈ 0.49 over the contenders, Royal Suitor ≈ top-quartile-or-better player, literal #1 crowned ~12% of years (in line with golf\'s OWGR year-end #1 rate). Live engine: Spectator → the "Tour de Bourdon" card (run a season or a multi-season career, or the validation study); a completed run opens in the SEASON CENTER. Console: runBourdonStudy / runNectourStudy / runBourdonCareer.' },
     { cat: 'tournament', q: 'What is the Season Center?', a: 'The production presentation of a Tour de Bourdon run — a tabbed broadcast that appears after you "Run a season" (or a career) on the Spectator screen. 🏁 THE SEASON: the two honors as hero cards (the Yellow Jacket + Bumblebee plushie · the Royal Suitor), the championships strip (every Major\'s winner, the biggest riser & faller), season-at-a-glance stats. ⚔ THE TOP POT: the heads-up final as a fight-card — favorite vs underdog, Hive Ratings, the score line, the Jacket awarded. 📅 CALENDAR: every event in order — tier badge, holes & field, made-all-4, champion + runner-up with skill %iles, the Main highlighted. 📊 HIVE RATING: the full board — Hive Rating, ±RD, form, true skill, events, Majors, earnings, wins, the Suitor-eligibility tick. 🎟 ELIGIBILITY: the three Royal-Suitor criteria + the lower-confidence-bound fallback, and the "on the bubble — what I need" card for the player who just missed. 🎯 SKILL CHECK: ρ(rating, skill) the regulars / all-rated / eligible / one-Main, the Suitor & Jacket skill %iles, the honest "skill-tilted but chaotic" framing, plus the year-by-year career arc in multi-season mode.' },
     { cat: 'tournament', q: 'On the Nectour, what are the three event tiers?', a: 'REGULARS — the weekly grind, retail-heavy (≈half the field is open qualifiers + casual pros, half exempt-by-rating); a classic 4-round, 72-hole tournament, lowest aggregate wins, ~50% cuts after rounds 2 & 3. MAJORS ("the stages") — the prestigious flock; 4 staged "mountain stages" with ~50% cuts between, each stage a full tournament\'s worth of golf (currently 72 holes/stage — a 288-hole championship); lowest aggregate over the surviving stages wins, no heads-up final; field is mostly the exempt elite + ~15% amateurs funding their way through qualifying. Majors carry the most weight in the rating. THE MAIN EVENT — the season finale; 4 staged legs crown a standing, then the top two play THE TOP POT (a heads-up final showdown) whose winner takes the Yellow Jacket + the Bumblebee plushie.' },
     { cat: 'tournament', q: 'What is the Top Pot?', a: 'The Main Event\'s heads-up final. The Main\'s 4 staged legs narrow the field; the two best 4-leg totals advance to the Top Pot — a one-on-one showdown. By default it\'s a straight heads-up (lowest score wins, anyone\'s game — the underdog wins it often enough to matter); optionally the higher-rated finalist can be spotted a calibrated stroke head-start (the "favorite\'s edge"). The Top Pot winner is the Yellow Jacket champion and gets the Bumblebee plushie.' },
     { cat: 'tournament', q: 'Who is the Royal Suitor?', a: 'The season skill title — crowned at year\'s end on the top Hive Rating among players who meet all the eligibility criteria (enough rated events; rating deviation tight enough to be trusted; ≥ a fraction of the season\'s Majors played). If no one clears the full bar, it falls to the highest lower-confidence-bound rating (μ − 1.5·RD) — a good-and-trusted pick, never a fluky-few-events spike. The Royal Suitor is the maillot jaune of the bumblebee: almost always one of the genuine best — but, like golf\'s year-end #1, never a guaranteed coronation of the literally-#1 player. The Yellow Jacket (a single-week Top Pot result) and the Royal Suitor (a season-long rating) are usually different people — by design.' },
-    { cat: 'tournament', q: 'How does the Hive Rating work?', a: 'A Kalman / Glicko-2-flavored filter on latent skill. Each rated event gives you a field-relative performance score (a normal-scores transform of your finishing rank + a winsorized stroke-margin term + an OWGR-style strength-of-field bump — beating a strong field counts more). That\'s folded into your rating with precision ∝ tier × √(holes-per-stage / 72) × √(field size) × (stages played) — so longer / bigger / more-prestigious events move you more, and weak fields move you less. Between events, process noise widens the rating slightly (form fades, old results decay — a rolling world-ranking window). Streaky players keep a wider band; the rating uses a cut-blind performance order so a strong player who got cut on a near-coin-flip cut still measures well. Shown as an Elo-style number with a ± confidence band.' },
+    { cat: 'tournament', q: 'What is Phase C / the EV-loss skill credit?', a: 'The decision-quality signal added to the Hive Rating in v69.103 (and event-length-noise-calibrated in v69.104). For every hand a player plays, the engine computes the EV (expected value) of the action they took vs the EV of the game-theoretic-optimal action at that decision node — the gap is "EV-loss," measured in bb/100. Better decisions accumulate less EV-loss; worse decisions accumulate more. This is the same metric every modern poker training tool (PioSolver, GTOWizard, MonkerSolver) uses for skill measurement, and it\'s what golf\'s "strokes gained" and chess engine analysis are doing in their respective sports. We blend it with the outcome signal at α=0.6 (60% decision-quality / 40% outcome). For AI play, the bots\' decisions are deterministic given makeProfileForSkill, so EV-loss is computable analytically — no solver needed. For an eventual real-player tour, the Yellow Jacket competitive variant would use a per-hand solver (RFID-instrumented live tables already capture the necessary hand histories — same infrastructure WSOP/EPT/Triton/WPT use as of 2026). The Bumblebee casual variant doesn\'t use EV-loss credit — it stays pure-outcome, the friendlier mode. Effect on the production rating: ρ_active 0.22 → 0.49, trueNo1IsCrown 0% → ~12%, top5IsCrown ~5% → ~40%. The Yellow Jacket / Top Pot stays chaotic by design (single heads-up match, EV-loss has high single-match variance).' },
+    { cat: 'tournament', q: 'How does the Hive Rating work?', a: 'A Kalman / Glicko-2-flavored filter on latent skill, fed by TWO signals blended at α=0.6. (1) **Outcome signal** — a field-relative performance score per event (normal-scores transform of your finishing rank + a winsorized stroke-margin term + an OWGR-style strength-of-field bump — beating a strong field counts more). (2) **Decision-quality signal (Phase C, v69.103+)** — observed-action / EV-loss skill credit, measuring how close each decision is to the game-theoretic optimum per hand (rewards playing the math right, not just winning the hand). Folded into your rating with precision ∝ tier × √(holes-per-stage / 72) × √(field size) × (stages played) × √(18/holes) for the EV-loss noise calibration. Between events, process noise widens the rating slightly (form fades, old results decay — a rolling world-ranking window). Streaky players keep a wider band; the rating uses a cut-blind performance order so a strong player who got cut on a near-coin-flip cut still measures well. Shown as an Elo-style number with a ± confidence band.' },
     { cat: 'tournament', q: 'Can a retail / amateur player make it on the Nectour?', a: 'Yes — that\'s the point. Every Regular is roughly half open qualifiers, and a slice of every Major and the Main is open too, so a nobody can play their way up within a single season. Do well in the events you scrape into, your Hive Rating climbs, and at season\'s end the rating list issues Tour cards (exempt status) — top of the list ⇒ full card, the next band ⇒ a conditional card, below ⇒ back to the qualifiers. Across seasons the rating carries forward (with a small off-season decay), so careers compound — like a two-year world ranking.' },
-    { cat: 'tournament', q: 'Why doesn\'t the literal best player always win the Royal Suitor?', a: 'Because Honey-Stroke separates an elite from a recreational player by only a stroke or so per round, so a single event barely sorts skill on its own (ρ ≈ 0.05 over an 18-hole-round event, ≈ 0.19 over a 72-hole one — which is why Majors carry the rating). It\'s the SEASON and the CAREER — a rolling, precision-weighted average of dozens of events — that sort the field; the production calendar gets ρ to ≈ 0.23 over the contenders. By design: the Royal Suitor is a top-third (often top-quartile) player in a typical year; the literal #1 is rarely crowned (that would need ρ ≈ 0.8 — unreachable at any sane round length, and not the goal); the Yellow Jacket stays near a coin-flip in the Top Pot, though it\'s fed by the Main\'s standings so the winner tends to be high-rated even when not high-skill. The Tour rewards class over a season, but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card has a validation study that measures all of this — your config vs. a classic-18-everything baseline vs. a no-skill reference; the Season Center\'s "Skill Check" tab shows the same for a single run.)' },
+    { cat: 'tournament', q: 'Why doesn\'t the literal best player always win the Royal Suitor?', a: 'Because Honey-Stroke separates an elite from a recreational player by only a stroke or so per round on the outcome side, so a single event barely sorts skill on outcome alone (ρ_outcome ≈ 0.05 at 18h, ≈ 0.19 at 72h). The Hive Rating compensates by ALSO measuring decision quality (Phase C: observed-action EV-loss credit), and the SEASON pools dozens of events through that combined signal — so the production rating sorts the regulars at ρ ≈ 0.49. By design: the Royal Suitor is a top-quartile (often top-10%) player in a typical year; the literal #1 wins it ~12% of years (in line with golf\'s OWGR year-end-#1 rate, chess elite-event rates); a top-5-skill player wins ~40%. The Yellow Jacket stays close to a coin-flip in the Top Pot heads-up final (the chaotic week), though it\'s fed by the Main\'s standings so the winner tends to be a high-rated player even when not the highest-skill on the day. The Tour rewards class over a season; the Jacket can always be stolen at the Top Pot. (Validate live: Spectator → "Tour de Bourdon" → run a season → the Skill Check tab shows the actual ρ on that run.)' },
     { cat: 'tournament', q: 'What stops people gaming the Hive Rating?', a: 'Four guards: (1) a field-strength floor — a weak field is a less-trustworthy signal, so its results carry reduced weight (can\'t farm rating off soft fields); (2) Glicko-style volatility — wildly-swinging results give you a wider, more reactive band (can\'t bank one hot streak forever); (3) multi-criteria Crown eligibility — a deep run in a couple of events doesn\'t make you the Royal Suitor, you have to show up all season including the Majors; (4) a volume cap — built in, currently dormant, a guard for a future overlapping-event calendar.' },
     { cat: 'rules', q: 'What is the scoring system?', a: 'Honey-Stroke. Two layers: (1) the scorecard — your hand category sets a bounded golf score for the hole (Royal Flush −5 down to High Card +2). (2) the honey pot — every hole begins with a mandatory 2 honey; bets/raises propose a new agreed total; the hole winner takes that agreed total as honey. Net honey is divided by the round-length divisor (36 for 72-hole finals, 9 for 18-hole rounds, 4 for 9-hole bracket matches, 1 for single-hole) and subtracted from the golf scorecard. Lower wins.' },
     { cat: 'rules', q: 'What does the honey credit do?', a: 'It SUBTRACTS from your round score after normalization. Winning more honey pots than your opponent improves your golf number, but net honey is divided by the round divisor first so honey stays a light drizzle on top of the dominant golf scorecard.' },
@@ -8588,7 +8786,7 @@ Views.codex = function() {
 
   // ---- Tour de Bourdon (the season system) ----
   const tdb = section('Tour de Bourdon — The Season  ·  "the Nectour"',
-    p('Tour de Bourdon ("Tour of the Bumblebee" — colloquially the Nectour) is the season-long competitive circuit: a fixed calendar of events, every result feeding a single rolling skill rating, and a champion crowned at year\'s end. It borrows its shape from two great competitions — golf\'s major-championship season and cycling\'s grand tour — and runs entirely on Honey-Stroke scoring underneath. The production default season is a 1024-player universe playing 52 Regulars + 12 Majors + the Main (≈ weekly Regulars, ≈ monthly Majors, the Main once a year), with the hybrid format — 18-hole Regular rounds, 72-hole Major-&-Main stages — and the AI skill curve set to ×2.5 (a real recreational-vs-pro gap); at that scale the rating sorts the field\'s contenders at ρ ≈ 0.23 and the Royal Suitor lands on roughly a top-third player. (Live engine: the Spectator screen → the "Tour de Bourdon" card; a completed run opens in the SEASON CENTER — a tabbed broadcast: the two honors, the Top Pot fight-card, the event calendar, the Hive Rating board, who\'s eligible & "what they need", and the skill-check diagnostics. Console: runBourdonStudy(opts) / runNectourStudy(opts), runBourdonCareer(cfg, seed, nSeasons). All settings are tunable.)'),
+    p('Tour de Bourdon ("Tour of the Bumblebee" — colloquially the Nectour) is the season-long competitive circuit: a fixed calendar of events, every result feeding a single rolling skill rating, and a champion crowned at year\'s end. It borrows its shape from two great competitions — golf\'s major-championship season and cycling\'s grand tour — and runs entirely on Honey-Stroke scoring underneath. The production default season is a 1024-player universe playing 52 Regulars + 12 Majors + the Main (≈ weekly Regulars, ≈ monthly Majors, the Main once a year), with the hybrid format — 18-hole Regular rounds, 72-hole Major-&-Main stages — the AI skill curve set to ×2.5 (a real recreational-vs-pro gap), and the **Hive Rating folding in a decision-quality skill-credit term (Phase C: EV-loss credit @ α=0.6) on top of the outcome signal**. At that scale the rating sorts the field\'s contenders at ρ ≈ 0.49, the Royal Suitor lands on a top-quartile (often top-10%) player, and the literal #1 wins ~12% of years (in line with golf\'s OWGR year-end-#1 rate). (Live engine: the Spectator screen → the "Tour de Bourdon" card; a completed run opens in the SEASON CENTER — a tabbed broadcast: the two honors, the Top Pot fight-card, the event calendar, the Hive Rating board, who\'s eligible & "what they need", and the skill-check diagnostics. Console: runBourdonStudy(opts) / runNectourStudy(opts), runBourdonCareer(cfg, seed, nSeasons). All settings are tunable.)'),
     h3('The three tiers of events'),
     ul([
       el('span', null, el('b', null, 'Regular Tour events'), ' — the weekly grind. Retail-heavy fields: roughly half the field is open qualifiers (recreational players + any pros showing up for points or fun); the other half is exempt by rating. A Regular is a classic 4-round, 72-hole tournament (18-hole rounds), lowest aggregate wins, with cuts after rounds 2 and 3.'),
@@ -8616,7 +8814,7 @@ Views.codex = function() {
       'Volume cap (built in, currently dormant) — a guard for a future overlapping-event calendar so a player can\'t farm rating by registering for everything.',
     ]),
     h3('A note on skill vs. chaos'),
-    p('Tour de Bourdon is deliberately skill-tilted, not skill-determined. The underlying Honey-Stroke engine separates an elite player from a recreational one by only a stroke or so per round, so a single event — even a long one — barely sorts skill on its own (ρ ≈ 0.05 over an 18-hole-round event, ≈ 0.19 over a 72-hole one; a Major\'s 288 holes do far better than a Regular\'s 72, which is why Majors carry the rating). It is the SEASON, and the CAREER, that sort the field — a rolling, precision-weighted average of dozens of events; with the production calendar that lifts ρ to ≈ 0.23 over the regulars. The result, by design: the Royal Suitor is, in a typical year, a top-third (often top-quartile) player; the literal #1 is rarely crowned (that would need ρ ≈ 0.8 — unreachable at any sane round length, and not the goal); the Yellow Jacket stays close to a coin-flip in the Top Pot — though it is fed by the Main\'s standings, so the Jacket winner tends to be a high-rated player even when they\'re not a high-skill one. That is the brand — the Tour rewards class over a season, but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card includes the validation study that measures all of this — your configuration vs. the classic-18-everything baseline vs. a no-skill reference; the Season Center\'s "Skill Check" tab shows the same numbers for a single run.)')
+    p('Tour de Bourdon is deliberately skill-tilted, with the Jacket left chaotic. Two layers carry skill into the Hive Rating: the OUTCOME signal (event finishes), and the DECISION-QUALITY signal — Phase C, the observed-action EV-loss skill credit added in v69.103. The outcome signal alone is bounded by Honey-Stroke\'s ~1-stroke-per-round elite-vs-recreational separation (ρ_outcome ≈ 0.05 at 18h, ≈ 0.19 at 72h). The decision-quality signal — measuring each action\'s EV-distance from the game-theoretic optimum, exactly as PioSolver/GTOWizard/MonkerSolver measure poker skill — adds an independent, lower-variance channel. Blended at α=0.6 (60% decision-quality, 40% outcome) and pooled across the production calendar, ρ_active lands at ≈ 0.49 over the regulars. By design: the Royal Suitor is a top-quartile (often top-10%) player in a typical year; the literal #1 wins it ~12% of years (matching golf\'s OWGR year-end-#1 rate); a top-5-skill player wins ~40%; the Yellow Jacket stays close to a coin-flip in the Top Pot heads-up final (the chaotic week), though it is fed by the Main\'s standings so the Jacket winner is still typically a high-rated player. The Tour rewards class over a season; the Jacket can be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card includes the validation study that measures all of this — your configuration vs. the classic-18-everything baseline vs. a no-skill reference; the Season Center\'s "Skill Check" tab shows the same numbers for a single run.)')
   );
   view.appendChild(tdb);
 
@@ -9534,7 +9732,7 @@ Views.rules = function() {
     const _b = (label, rest) => el('span', null, el('b', null, label), rest);
     const sp = el('div', { class: 'card', style: 'margin-top:16px;' });
     sp.appendChild(el('h2', { text: 'Season Play — Tour de Bourdon  ·  "the Nectour"' }));
-    sp.appendChild(el('p', { class: 'ui-sans', style: 'font-size:12px; color: var(--text-secondary); margin-bottom:6px;', text: 'The canonical season structure: a fixed calendar of events, one rolling skill rating, a champion crowned at year\'s end. Modeled on golf\'s major-championship season + cycling\'s grand tour. The production default season — a 1024-player universe, 52 Regulars + 12 Majors + the Main, hybrid format (18-hole Regular rounds / 72-hole Major-&-Main stages), AI skill curve ×2.5 — sorts the contenders at ρ ≈ 0.23 and lands the Royal Suitor on roughly a top-third player. (Live: Spectator → "Tour de Bourdon"; a finished run opens in the SEASON CENTER — a tabbed broadcast (the two honors · the Top Pot fight-card · the event calendar · the Hive Rating board · who\'s eligible & "what they need" · the skill-check diagnostics). Console: runBourdonStudy / runNectourStudy / runBourdonCareer. All settings tunable.)' }));
+    sp.appendChild(el('p', { class: 'ui-sans', style: 'font-size:12px; color: var(--text-secondary); margin-bottom:6px;', text: 'The canonical season structure: a fixed calendar of events, one rolling skill rating, a champion crowned at year\'s end. Modeled on golf\'s major-championship season + cycling\'s grand tour. The production default season — a 1024-player universe, 52 Regulars + 12 Majors + the Main, hybrid format (18-hole Regular rounds / 72-hole Major-&-Main stages), AI skill curve ×2.5, and the Hive Rating folding in a decision-quality skill-credit term (Phase C: EV-loss credit @ α=0.6 alongside outcome) — sorts the contenders at ρ ≈ 0.49, lands the Royal Suitor on a top-quartile (often top-10%) player, and crowns the literal #1 about 12% of years (matching golf\'s OWGR rate). (Live: Spectator → "Tour de Bourdon"; a finished run opens in the SEASON CENTER — a tabbed broadcast (the two honors · the Top Pot fight-card · the event calendar · the Hive Rating board · who\'s eligible & "what they need" · the skill-check diagnostics). Console: runBourdonStudy / runNectourStudy / runBourdonCareer. All settings tunable.)' }));
     sp.appendChild(_h3('The calendar — three tiers of events'));
     sp.appendChild(_ul([
       _b('Regular Tour events ', '— the weekly grind, retail-heavy. Field ≈ half open qualifiers (recreational players + casual pros), half exempt-by-rating. Format: a classic 4-round, 72-hole tournament (18-hole rounds), lowest aggregate wins, with ~50% cuts after rounds 2 and 3.'),
@@ -9562,7 +9760,7 @@ Views.rules = function() {
       'Volume cap — built in, currently dormant; a guard for a future overlapping-event calendar.',
     ]));
     sp.appendChild(_h3('Skill vs. chaos — by design'));
-    sp.appendChild(_p('Honey-Stroke separates an elite from a recreational player by only a stroke or so per round, so a single event barely sorts skill on its own (ρ ≈ 0.05 over an 18-hole-round event, ≈ 0.19 over a 72-hole one — which is why Majors carry the rating). It is the SEASON and the CAREER that sort the field: a rolling, precision-weighted average of dozens of events; the production calendar gets ρ to ≈ 0.23 over the contenders. Result, intentionally: the Royal Suitor is a top-third (often top-quartile) player in a typical year; the literal #1 is rarely crowned (that would need ρ ≈ 0.8 — unreachable at any sane round length, and not the goal); the Yellow Jacket stays near a coin-flip in the Top Pot, though it\'s fed by the Main\'s standings so the winner tends to be high-rated even when not high-skill. The Tour rewards class over a season — but the Jacket can always be stolen on the day. (The Spectator screen\'s "Tour de Bourdon" card carries the validation study that measures all of this — your config vs. the classic-18-everything baseline vs. a no-skill reference; the Season Center\'s "Skill Check" tab shows the same for a single run.)'));
+    sp.appendChild(_p('The Hive Rating combines two skill signals at α=0.6 (60% decision-quality, 40% outcome). Outcome alone — what we measured before Phase C shipped in v69.103 — is bounded by Honey-Stroke\'s ~1-stroke-per-round elite-vs-recreational separation (ρ_outcome ≈ 0.05 at 18h, ≈ 0.19 at 72h). Phase C adds the observed-action / EV-loss skill credit: each action\'s EV-distance from the game-theoretic optimum, the same metric PioSolver/GTOWizard/MonkerSolver use to measure poker skill. Blended through the production calendar, ρ_active lands at ≈ 0.49 over the regulars. Result, by design: the Royal Suitor is a top-quartile (often top-10%) player in a typical year; the literal #1 wins ~12% of years (matching golf\'s OWGR year-end-#1 rate, chess elite-event rates); a top-5-skill player wins ~40%; the Yellow Jacket stays near a coin-flip in the Top Pot heads-up final (the chaotic week), though it\'s fed by the Main\'s standings so the winner is still typically a high-rated player. The Tour rewards class over a season — but the Jacket can be stolen on the day. (Spectator → "Tour de Bourdon" → the validation study compares this vs the classic-18-everything baseline vs. a no-skill reference; the Season Center\'s "Skill Check" tab shows the same numbers for a single run.)'));
     view.appendChild(sp);
   }
 
@@ -17207,7 +17405,7 @@ const SpectatorState = {
   feedLog: [],                             // complete broadcast log for the exported CSV/JSON (uncapped up to a memory ceiling) — v69.75
   logSeen: {},                             // tableId -> last h.log index harvested
   bracketStudy: { n: 100, holes: 18, running: false, phase: null, result: null, history: [] },   // v69.79/80/86 — offline skill-seeded-vs-random bracket A/B (Spectator UI); `holes` = holes/round for the sweep; history holds the last ~25 runs for pooling + CSV export
-  seasonStudy: { holes: 18, majorHoles: 72, nReg: 52, nMaj: 12, universe: 1024, regularField: 256, majorField: 320, mainField: 384, curve: 2.5, nSeasons: 1, theta: 0.30, spread: 'wide', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 6, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [], live: null },   // v69.99+ — Tour de Bourdon (the Nectour) season engine + production Season Center (Spectator UI). Defaults = the locked production config (ρ_active ≈ 0.23).
+  seasonStudy: { holes: 18, majorHoles: 72, nReg: 52, nMaj: 12, universe: 1024, regularField: 256, majorField: 320, mainField: 384, curve: 2.5, honeyCap: 'calibrated', tierMajors: false, pollenTrail: false, evLossPhase: 'p1', evLossAlpha: 0.6, nSeasons: 1, theta: 0.30, spread: 'wide', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 6, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [], live: null },   // v69.99+ — Tour de Bourdon (the Nectour) season engine + production Season Center (Spectator UI). Defaults = the locked production config (ρ_active ≈ 0.49 with Phase C @ α=0.6).
   scoreboard: { zoom: 1.0 },               // v69.81 — Live Scoreboard (golf-scorecard grid) view state
   scorecardOpen: false,                    // v69.46 — featured panel toggle (felt ↔ full scorecard) for liveTourney
   // Setup form state (persisted across view re-renders)
@@ -20990,7 +21188,7 @@ Views.spectator = function() {
 
   // v69.87 — Tour de Bourdon (colloq. 'the Nectour'): the season engine (Kalman-rated multi-event tour).
   if (SpectatorState.mode === 'liveTourney') {
-    if (!SpectatorState.seasonStudy) SpectatorState.seasonStudy = { holes: 18, majorHoles: 72, nReg: 52, nMaj: 12, universe: 1024, regularField: 256, majorField: 320, mainField: 384, curve: 2.5, nSeasons: 1, theta: 0.30, spread: 'wide', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 6, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [], live: null };
+    if (!SpectatorState.seasonStudy) SpectatorState.seasonStudy = { holes: 18, majorHoles: 72, nReg: 52, nMaj: 12, universe: 1024, regularField: 256, majorField: 320, mainField: 384, curve: 2.5, honeyCap: 'calibrated', tierMajors: false, pollenTrail: false, evLossPhase: 'p1', evLossAlpha: 0.6, nSeasons: 1, theta: 0.30, spread: 'wide', finaleM: 'none', omega: 0.006, tau0: 3, studyS: 6, careerYrs: 6, running: false, phase: null, studyJob: null, studyProgress: null, lastRun: null, lastStudy: null, history: [], live: null };
     const ss = SpectatorState.seasonStudy;
     if (!Array.isArray(ss.history)) ss.history = [];
     if (ss.careerYrs == null) ss.careerYrs = 1;
@@ -20998,12 +21196,17 @@ Views.spectator = function() {
     if (ss.omega == null) ss.omega = 0.006;
     if (ss.tau0 == null) ss.tau0 = 3;
     if (ss.curve == null) ss.curve = 2.5;
+    if (ss.honeyCap !== 'spec' && ss.honeyCap !== 'calibrated') ss.honeyCap = 'calibrated';
+    if (ss.tierMajors == null) ss.tierMajors = false;
+    if (ss.pollenTrail == null) ss.pollenTrail = false;
+    if (ss.evLossPhase !== 'off' && ss.evLossPhase !== 'p1' && ss.evLossPhase !== 'p2') ss.evLossPhase = 'off';
+    if (ss.evLossAlpha == null) ss.evLossAlpha = 0.6;
     if (ss.majorHoles == null) ss.majorHoles = 72;
     const SPREADS = [{ v: 'wide', l: 'Wide (0.20–0.95) — production default' }, { v: 'main', l: 'Main (0.30–0.95)' }, { v: 'regular', l: 'Regular (0.40–0.90)' }];
     const seasonCard = el('div', { class: 'card', style: 'padding:14px; margin-bottom:14px;' });
     seasonCard.appendChild(el('h2', { text: '🐝 Tour de Bourdon  ·  the season engine  +  the Season Center  ·  a.k.a. the Nectour', style: 'margin:0 0 4px 0; font-size:13px; letter-spacing:1px;' }));
     seasonCard.appendChild(el('div', { style: 'font-size:10.5px; opacity:0.65; line-height:1.5; margin-bottom:10px;', text:
-      'A full season (or career) as a measurement instrument for skill, presented through the SEASON CENTER — a tabbed broadcast (the two honors, the Top Pot fight-card, the event calendar, the Hive Rating board, who\'s eligible & "what they need", the skill-check diagnostics). REGULARS are retail-heavy 4-round tournaments (recreational players + casual pros); MAJORS are the prestigious flock — 4 staged "mountain stages" with cuts (Tour-de-France style, the stages that separate the men from the boys), each stage a full tournament\'s worth of golf, lowest total wins; the MAIN EVENT plays 4 such stages then narrows to the TOP POT — a heads-up final showdown whose winner takes the Yellow Jacket (the Kill-Bill jumper) + the Bumblebee plushie. A Kalman/Glicko filter folds every event\'s field-relative performance into a "Hive Rating" (precision ∝ tier × √holes × √field × rounds-played; cut-blind smoothing + Glicko volatility), with process noise between events (form fades, OWGR-style). At season\'s end the top-rated player meeting the multi-criteria eligibility is crowned THE ROYAL SUITOR — the season skill title, distinct from the chaotic Yellow Jacket. The defaults below are the locked PRODUCTION CONFIG (1024-player universe · 52 Regulars + 12 Majors + the Main · hybrid 18h Regular rounds / 72h Major-&-Main stages · AI curve ×2.5 · ω 0.006 · τ₀ 3 — ρ_active ≈ 0.23, Royal Suitor ≈ top-third skill). The STUDY runs your config + the classic-18-everything baseline + a no-skill reference, chunked (responsive, with progress + Stop), with capped fields (it measures the rating mechanism — WSOP-scale fields are for "Run a season").' }));
+      'A full season (or career) as a measurement instrument for skill, presented through the SEASON CENTER — a tabbed broadcast (the two honors, the Top Pot fight-card, the event calendar, the Hive Rating board, who\'s eligible & "what they need", the skill-check diagnostics). REGULARS are retail-heavy 4-round tournaments (recreational players + casual pros); MAJORS are the prestigious flock — 4 staged "mountain stages" with cuts (Tour-de-France style, the stages that separate the men from the boys), each stage a full tournament\'s worth of golf, lowest total wins; the MAIN EVENT plays 4 such stages then narrows to the TOP POT — a heads-up final showdown whose winner takes the Yellow Jacket (the Kill-Bill jumper) + the Bumblebee plushie. A Kalman/Glicko filter folds every event\'s field-relative performance into a "Hive Rating" (precision ∝ tier × √holes × √field × rounds-played; cut-blind smoothing + Glicko volatility), with process noise between events (form fades, OWGR-style). At season\'s end the top-rated player meeting the multi-criteria eligibility is crowned THE ROYAL SUITOR — the season skill title, distinct from the chaotic Yellow Jacket. The defaults below are the locked PRODUCTION CONFIG (1024-player universe · 52 Regulars + 12 Majors + the Main · hybrid 18h Regular rounds / 72h Major-&-Main stages · AI curve ×2.5 · ω 0.006 · τ₀ 3 · Phase C EV-loss credit ON @ α=0.6 — ρ_active ≈ 0.49, Royal Suitor ≈ top-quartile skill, literal #1 crowned ~12% of years). The STUDY runs your config + the classic-18-everything baseline + a no-skill reference, chunked (responsive, with progress + Stop), with capped fields (it measures the rating mechanism — WSOP-scale fields are for "Run a season").' }));
     if ((+ss.curve || 2.5) < 2) seasonCard.appendChild(el('div', { style: 'font-size:10px; padding:7px 10px; border-radius:5px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.30); color:#F0C75E; margin-bottom:10px;', text: '⚠ AI skill curve is set to ×' + (+ss.curve || 2.5).toFixed(1) + ' below — at ×1 the bots barely differ in actual play quality (a "wide" skill SPREAD doesn\'t help on its own), so the rating has almost nothing to sort (ρ ≈ 0). The production default is ×2.5: the spread sets the authored-skill RANGE, the curve sets how badly the low end actually plays. Bump it back up unless you\'re deliberately exploring.' }));
     const mkNum = (label, key, min, max, step, w) => {
       const box = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
@@ -21037,6 +21240,12 @@ Views.spectator = function() {
     SPREADS.forEach(o => { const opt = el('option', { value: o.v, text: o.l }); if (ss.spread === o.v) opt.selected = true; spreadSel.appendChild(opt); });
     spreadSel.onchange = () => { ss.spread = spreadSel.value; };
     spreadBox.appendChild(spreadSel); cfgRow2.appendChild(spreadBox);
+    const honeyBox = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
+    honeyBox.appendChild(el('span', { style: 'font-size:9px; opacity:0.6;', text: 'Honey cap' }));
+    const honeySel = el('select', { class: 'form-control', style: 'font-size:11.5px;' });
+    [{ v: 'calibrated', l: 'Calibrated (stepped ÷9/÷36 — default)' }, { v: 'spec', l: 'Spec (÷N — proportional)' }].forEach(o => { const opt = el('option', { value: o.v, text: o.l }); if (ss.honeyCap === o.v) opt.selected = true; honeySel.appendChild(opt); });
+    honeySel.onchange = () => { ss.honeyCap = honeySel.value; };
+    honeyBox.appendChild(honeySel); cfgRow2.appendChild(honeyBox);
     const finBox = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
     finBox.appendChild(el('span', { style: 'font-size:9px; opacity:0.6;', text: 'Main finale' }));
     const finSel = el('select', { class: 'form-control', style: 'font-size:11.5px;' });
@@ -21045,12 +21254,32 @@ Views.spectator = function() {
     finBox.appendChild(finSel); cfgRow2.appendChild(finBox);
     if (ss.finaleM === 'calibrated') cfgRow2.appendChild(mkNum('θ*  (#1-seed win-prob target)', 'theta', 0.05, 0.9, 0.05, 80));
     seasonCard.appendChild(cfgRow2);
+    // v69.102 — experimental flags row (Phase B-1, Phase B-2, Phase C)
+    const cfgRow3 = el('div', { style: 'display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:9px; padding:7px 9px; border-radius:6px; background:rgba(180,140,255,0.05); border:1px dashed rgba(180,140,255,0.25);' });
+    cfgRow3.appendChild(el('span', { style: 'font-size:9px; opacity:0.55; text-transform:uppercase; letter-spacing:0.9px; align-self:center;', text: '🧪 experimental:' }));
+    const mkChk = (label, key) => { const box = el('label', { style: 'display:flex; gap:5px; align-items:center; font-size:10.5px; cursor:pointer;' }); const cb = el('input', { type: 'checkbox' }); if (ss[key]) cb.checked = true; cb.onchange = () => { ss[key] = !!cb.checked; }; box.appendChild(cb); box.appendChild(el('span', { text: label })); return box; };
+    cfgRow3.appendChild(mkChk('Tier-scaled Majors floor (B-1: anti-coasting)', 'tierMajors'));
+    cfgRow3.appendChild(mkChk('The Pollen Trail (B-2: points-carry)', 'pollenTrail'));
+    const evBox = el('div', { style: 'display:flex; flex-direction:column; gap:2px;' });
+    evBox.appendChild(el('span', { style: 'font-size:9px; opacity:0.6;', text: 'EV-loss credit (Phase C)' }));
+    const evSel = el('select', { class: 'form-control', style: 'font-size:11.5px;' });
+    [{ v: 'off', l: 'Off (production)' }, { v: 'p1', l: 'Phase 1 — clean AI grading (noise 0.5)' }, { v: 'p2', l: 'Phase 2 — solver-fit (noise 1.2)' }].forEach(o => { const opt = el('option', { value: o.v, text: o.l }); if (ss.evLossPhase === o.v) opt.selected = true; evSel.appendChild(opt); });
+    evSel.onchange = () => { ss.evLossPhase = evSel.value; };
+    evBox.appendChild(evSel); cfgRow3.appendChild(evBox);
+    cfgRow3.appendChild(mkNum('α  (EV-loss blend weight)', 'evLossAlpha', 0, 1, 0.05, 64));
+    seasonCard.appendChild(cfgRow3);
     const buildCfg = () => ({
       holesPerRound: ss.holes | 0, nRegulars: ss.nReg | 0, nMajors: ss.nMaj | 0, universeSize: ss.universe | 0,
       regularField: ss.regularField | 0, majorField: ss.majorField | 0, mainField: ss.mainField | 0,
       finaleMode: ss.finaleM || 'none', finaleTargetWinProb: +ss.theta || 0.65, skillSpread: ss.spread, omega: +ss.omega || 0.006, tau0: +ss.tau0 || 3, majorHoles: ss.majorHoles | 0, mainHoles: ss.majorHoles | 0,
       skillCurve: +ss.curve || 2.5,
-      honeyCapMode: (SpectatorState.setup && SpectatorState.setup.honeyCapMode === 'spec') ? 'spec' : 'calibrated',
+      honeyCapMode: (ss.honeyCap === 'spec') ? 'spec' : 'calibrated',
+      // v69.102 — Phase B + C flags
+      crownTierMajors: !!ss.tierMajors,
+      pointsCarryEnabled: !!ss.pollenTrail,
+      useEVLossCredit: (ss.evLossPhase === 'p1' || ss.evLossPhase === 'p2'),
+      evLossAlpha: +ss.evLossAlpha || 0.6,
+      evLossNoise: (ss.evLossPhase === 'p2') ? 1.2 : 0.5,    // Phase 1 = clean AI grading; Phase 2 = solver-fit residual
     });
     if (ss.running && ss.studyJob) {
       // chunked study in progress — live progress + a Stop button (the tab stays responsive)
@@ -26232,8 +26461,20 @@ function renderConfigPanel(panel, mode) {
   mode = mode || 'simple';
   clear(panel);
   panel.appendChild(el('h2', { text: 'Configuration' }));
-  panel.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; letter-spacing: 0.3px;',
+  panel.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 11px; color: var(--text-secondary); margin-bottom: 8px; letter-spacing: 0.3px;',
     text: mode === 'simple' ? 'Simple · runs append to your Tour.' : 'Advanced · every slider exposed. Profile changes need a pool rebuild.' }));
+  // v69.100 — cross-link to the canonical season engine. The Simulator is the R&D test-bench
+  // (Monte-Carlo over the underlying Honey-Stroke engine + the legacy tour model — measures
+  // skill-Spearman, elite dominance, repeat-major clustering, champion totals). The canonical
+  // SEASON experience — the Hive Rating (Kalman/Glicko), the Royal Suitor crown, the Top Pot
+  // heads-up final, the four-staged Majors with cuts, multi-criteria eligibility — lives on
+  // the Spectator screen as Tour de Bourdon. They share the Honey-Stroke engine; everything
+  // above it (rating filter, season ladder, ceremony) is layered separately.
+  panel.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 11px; padding: 7px 9px; margin-bottom: 12px; border-radius: 5px; background: rgba(212,160,23,0.06); border: 1px solid rgba(212,160,23,0.20); line-height: 1.5;' },
+    el('span', { style: 'opacity:0.7;', text: '🐝 Looking for the production season experience — the Hive Rating, the Royal Suitor crown, the Top Pot heads-up final, the Season Center broadcast? → ' }),
+    el('a', { href: '#spectator', style: 'color: var(--gold); font-weight: 600; text-decoration: none;', text: 'Tour de Bourdon (Spectator) →' }),
+    el('div', { style: 'opacity:0.55; font-size:10px; margin-top:2px;', text: 'The Simulator is the R&D test-bench: Monte-Carlo over the Honey-Stroke engine + the legacy tour model (skill-Spearman, elite-dominance, repeat-major clustering, champion totals). Both share the same scoring engine; the rating/season ladder lives in Tour de Bourdon.' })
+  ));
 
   // Slider registry: lets one slider re-clamp dependents when its value
   // changes (v34 — prevents fields exceeding pool, satellites exceeding
@@ -27464,6 +27705,30 @@ function renderLabResults(root) {
       kpiBox('Majors held', totalMajors),
       kpiBox('Pool size', TourState.pool ? TourState.pool.length.toLocaleString() : '-'),
       kpiBox('Legendary moments', BuzzKnowledge.moments.length)
+    ));
+    // v69.100 — surface the two honors using existing Simulator data so the brand vocab
+    // is consistent across the app. NOTE: these are the Simulator's analogs, not the
+    // canonical Tour de Bourdon constructs — the Jacket here = the Main Event's champion
+    // under whichever tournamentFormat is set ('aggregate' 72-hole or bracket-to-finals);
+    // the Royal Suitor here = the season-points leader, NOT a Kalman/Glicko Hive Rating
+    // crown with multi-criteria eligibility. For the canonical experience: Spectator →
+    // Tour de Bourdon. Cross-linked from the config panel.
+    const lastSeason = TourState.seasons[TourState.seasons.length - 1];
+    const yjEv = lastSeason && lastSeason.events.find(e => e.type === 'main');
+    const yjPlayer = yjEv && TourState.pool && TourState.pool.find(p => p.id === yjEv.champId);
+    const yjName = yjPlayer ? yjPlayer.name : '—';
+    const suitor = (TourState.pool || []).slice().sort((a, b) => (b.currentSeasonPoints || 0) - (a.currentSeasonPoints || 0))[0];
+    const suitorHasPoints = suitor && (suitor.currentSeasonPoints || 0) > 0;
+    const suitorName = suitorHasPoints ? suitor.name : '—';
+    const suitorPts = suitorHasPoints ? Math.round(suitor.currentSeasonPoints) : null;
+    summaryCard.appendChild(el('div', { class: 'kpi-strip', style: 'margin-top: 10px;' },
+      kpiBox('🧥 The Yellow Jacket  ·  Y' + (lastSeason ? lastSeason.year : '?'), yjName, yjEv ? ('Main · ' + (+yjEv.champScore || 0).toFixed(1)) : null),
+      kpiBox('👑 The Royal Suitor  ·  Simulator', suitorName, suitorPts != null ? (suitorPts.toLocaleString() + ' pts') : null)
+    ));
+    summaryCard.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 10.5px; color: var(--text-secondary); margin-top: 7px; line-height: 1.55;' },
+      el('span', null, 'Simulator analogs: the Jacket = the most recent season\'s Main Event champion (under the current ' + ((LabState.config && LabState.config.tournamentFormat) || 'aggregate') + ' format); the Royal Suitor = the season-points leader of the pool. The canonical versions — the Kalman/Glicko Hive Rating, the multi-criteria Suitor eligibility, the heads-up Top Pot final for the Jacket, the full Season Center broadcast — live in '),
+      el('a', { href: '#spectator', style: 'color: var(--gold); font-weight: 600; text-decoration: none;', text: 'Tour de Bourdon →' }),
+      el('span', null, '.')
     ));
   }
   root.appendChild(summaryCard);
