@@ -2591,7 +2591,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.113-solo-ux-p0";
+const APP_VERSION = "2026.05.13-v69.114-mp-cash-scorecards";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -9795,9 +9795,13 @@ Views.multiplayer = function() {
   // hole-envelope E=3 (the simulator's ship default), Yellow Jacket variant.
   const setCard = el('div', { class: 'card', style: 'border-top: 3px solid var(--gold); margin-bottom: 16px;' });
   setCard.appendChild(el('h2', { text: '⚙️ Match settings' }));
-  setCard.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; font-style: italic;' },
+  // v69.114 — same progressive-disclosure pattern Solo got in v69.113.
+  const mpHow = el('details', { class: 'yj-howitworks', style: 'margin-bottom: 10px;' });
+  mpHow.appendChild(el('summary', { text: 'What these settings mean' }));
+  mpHow.appendChild(el('div', { class: 'yj-howitworks-body', text:
     'Applies to whichever game you start below. Per-hole cap = the hole-envelope E (E × honeyDivisorFor(round length); E=3 ≈ 27 honey/hole on an 18-hole match) or a legacy fixed cap. The variant only changes the decisive-showdown loser score — folds and ties are identical either way.'
-  ));
+  }));
+  setCard.appendChild(mpHow);
   const setRow = el('div', { style: 'display: flex; gap: 12px; align-items: center; flex-wrap: wrap;' });
   setRow.appendChild(el('label', { class: 'ui-sans', style: 'font-size: 12px;', text: 'Holes:' }));
   const mpHolesSel = el('select', { id: 'mpHoles' });
@@ -10119,7 +10123,7 @@ function mpRecomputeTotals(g) {
 // down to 28px/cell and wraps to two stacked halves at < 880px, a OUT/IN/TOT
 // subtotal column, and a running-totals strip beneath. No JS layout — pure
 // CSS grid + media query — see .yj-scorecard in the head <style>.
-function renderSoloScorecard(g) {
+function renderMatchScorecard(g) {
   if (!g) return el('div');
   const total = +g.totalHoles || 18;
   const div = honeyDivisorFor(total) || 1;
@@ -10296,6 +10300,248 @@ function renderSoloScorecard(g) {
   return card;
 }
 
+// v69.114 — "The Session Card": Augusta-luxe per-hand log for cash play. The
+// match scorecard above is for FIXED-HOLE matches (Solo/Hotseat/Sharelink);
+// this is its continuous-play cash analog. Reads the user's seat's handLog
+// (pushed by dealCashHand on every hand played). Layout: same .yj-scorecard
+// CSS shell, but ALL N hands in a single multi-row grid that wraps at 18
+// hands per row (golf-scorecard convention — one row = one notional "round").
+// Strip ↔ Grid toggle: Strip = single horizontal row (overflow-x: auto, the
+// "live ticker" feel); Grid = multi-row wrap (the "reading view"). The grid
+// view is the default for ≥10 hands; strip is the default for <10. The user
+// can override either way.
+function renderCashSessionCard(t, youSeatIdx) {
+  if (!t || youSeatIdx == null) return el('div');
+  const seat = t.seats[youSeatIdx];
+  if (!seat) return el('div');
+  const log = seat.handLog || [];
+  if (!log.length) {
+    // First-render empty state. The card still appears so users discover it.
+    const empty = el('div', { class: 'yj-scorecard', style: 'text-align:center; padding:14px 18px;' });
+    empty.appendChild(el('div', { class: 'yj-scorecard-title', text: 'The Session Card' }));
+    empty.appendChild(el('div', { class: 'yj-scorecard-sub', text: 'No hands played yet — your per-hand record appears here.' }));
+    return empty;
+  }
+  // Persistent view-mode preference per table (lives on the table struct).
+  if (t.sessionCardView == null) t.sessionCardView = (log.length >= 10) ? 'grid' : 'strip';
+
+  const HAND_ABBR_LONG = {
+    'High Card': 'HC', 'One Pair': '1P', 'Two Pair': '2P', 'Three of a Kind': '3K',
+    'Straight': 'ST', 'Flush': 'FL', 'Full House': 'FH', 'Four of a Kind': '4K',
+    'Straight Flush': 'SF', 'Royal Flush': 'RF',
+  };
+  const strokeClass = (s) => {
+    if (s == null) return 'is-future';
+    if (s <= -2) return 's-eagle';
+    if (s === -1) return 's-birdie';
+    if (s === 0) return 's-par';
+    if (s === 1) return 's-bogey';
+    return 's-double';
+  };
+  const fmtStroke = (s) => {
+    if (s == null) return '·';
+    if (s === 0) return '0';
+    return (s > 0 ? '+' : '') + s;
+  };
+  const fmtChip = (c) => {
+    if (!c) return '';
+    return (c > 0 ? '+' : '') + c;
+  };
+  const handBadge = (entry) => {
+    if (entry.outcome === 'fold') return 'FOLD';
+    if (entry.handClass && HAND_ABBR_LONG[entry.handClass]) return HAND_ABBR_LONG[entry.handClass];
+    if (entry.outcome === 'won-uncontested') return 'UNC';
+    return '';
+  };
+
+  // Header card
+  const variantLabel = t.variant === 'pure' ? 'NLHE — no scorecard'
+                     : t.variant === 'yj'   ? 'YJ-Stroke · Bogey Loss'
+                                            : 'BB-Stroke · Honored Loss';
+  const card = el('div', { class: 'yj-scorecard', role: 'region', 'aria-label': 'Cash session scorecard' });
+  card.appendChild(el('div', { class: 'yj-scorecard-title', text: 'The Session Card — Hand by Hand' }));
+  card.appendChild(el('div', { class: 'yj-scorecard-sub', text: variantLabel + '  ·  ' + log.length + ' hand' + (log.length === 1 ? '' : 's') + ' played at ' + t.smallBlind + '/' + t.bigBlind + ' Table #' + t.id }));
+
+  // View-mode toggle (Strip / Grid). Compact pill-pair, gold ring on active.
+  const toggleWrap = el('div', { style: 'display:flex; justify-content:center; gap:6px; margin:0 0 12px; font-size:11px;', role: 'tablist', 'aria-label': 'Session card layout' });
+  const mkToggle = (id, label) => {
+    const isActive = (t.sessionCardView === id);
+    const b = el('button', {
+      class: 'yj-tier-chip' + (isActive ? ' active' : ''),
+      role: 'tab',
+      'aria-selected': isActive ? 'true' : 'false',
+      tabindex: isActive ? '0' : '-1',
+      style: 'min-width: 64px; padding: 4px 12px 3px;',
+      type: 'button',
+    });
+    b.appendChild(el('span', { class: 'chip-head', text: label, style: 'font-size:11px;' }));
+    b.onclick = () => { t.sessionCardView = id; refreshCashView(); };
+    return b;
+  };
+  toggleWrap.appendChild(mkToggle('grid', '🧮 Grid'));
+  toggleWrap.appendChild(mkToggle('strip', '➡ Strip'));
+  card.appendChild(toggleWrap);
+
+  // Build cells once; reused by both views.
+  const buildCell = (entry) => {
+    const cell = el('div', { class: 'yj-cell' });
+    if (entry == null) {
+      cell.classList.add('is-future');
+      cell.appendChild(el('span', { class: 'yj-stroke', text: '·' }));
+      return cell;
+    }
+    if (t.variant === 'pure') {
+      // NLHE: no golf scoring — color by chip outcome instead.
+      const chip = +entry.chip || 0;
+      cell.classList.add(chip > 0 ? 's-birdie' : chip < 0 ? 's-bogey' : 's-par');
+      cell.appendChild(el('span', { class: 'yj-stroke', text: fmtChip(chip) || '0', style: 'font-size:13px;' }));
+      const hb = handBadge(entry);
+      if (hb) cell.appendChild(el('span', { class: 'yj-hand', text: hb }));
+    } else {
+      const golf = +entry.golf || 0;
+      cell.classList.add(strokeClass(golf));
+      cell.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(golf) }));
+      const hb = handBadge(entry);
+      if (hb) cell.appendChild(el('span', { class: 'yj-hand', text: hb }));
+      if (entry.chip) cell.appendChild(el('span', { class: 'yj-honey' + (entry.chip < 0 ? ' neg' : ''), text: fmtChip(entry.chip) }));
+    }
+    cell.setAttribute('title', 'Hand #' + entry.hand + (entry.handClass ? '  ·  ' + entry.handClass : '') + '  ·  chip ' + (entry.chip >= 0 ? '+' : '') + entry.chip + (t.variant === 'pure' ? '' : '  ·  golf ' + fmtStroke(+entry.golf || 0)));
+    return cell;
+  };
+
+  // --- GRID VIEW (default for ≥10 hands) -----------------------------------
+  // Multi-row wrap. Each row = up to ROW_LEN hands. A row header on the left
+  // states the hand-range (1-18, 19-36, ...) and a row subtotal on the right.
+  const ROW_LEN = 18;
+  const gridWrap = el('div', { class: 'yj-card-gridwrap' });
+  if (t.sessionCardView === 'grid') {
+    const rows = Math.ceil(log.length / ROW_LEN);
+    const totals = { golf: 0, chip: 0 };
+    for (let r = 0; r < rows; r++) {
+      const from = r * ROW_LEN + 1;
+      const to = Math.min((r + 1) * ROW_LEN, log.length);
+      const inRow = to - from + 1;
+      // Pad to ROW_LEN visually so all rows align (placeholder cells for the
+      // last row when it isn't full — they render as future-state cells).
+      const padCount = ROW_LEN - inRow;
+      const cols = 'minmax(78px, 96px) repeat(' + ROW_LEN + ', minmax(22px, 1fr)) minmax(46px, 54px)';
+      const grid = el('div', { class: 'yj-card-grid', style: 'grid-template-columns: ' + cols + '; margin-bottom: ' + (r < rows - 1 ? '2px' : '0') + ';' });
+      // Header row (per cluster — repeated so the cells stay self-describing).
+      if (r === 0) {
+        grid.appendChild(el('div', { class: 'yj-cell is-rowhead is-header', text: 'Hand' }));
+        for (let k = 0; k < ROW_LEN; k++) grid.appendChild(el('div', { class: 'yj-cell is-header', text: String(from + k) }));
+        grid.appendChild(el('div', { class: 'yj-cell is-header is-grandtotal', text: 'SUM' }));
+        // Data row
+        grid.appendChild(el('div', { class: 'yj-cell is-rowhead is-player', text: '#' + from + '–' + to }));
+      } else {
+        grid.appendChild(el('div', { class: 'yj-cell is-rowhead is-player', text: '#' + from + '–' + to }));
+      }
+      let rowGolf = 0, rowChip = 0;
+      for (let k = 0; k < ROW_LEN; k++) {
+        const entry = (k < inRow) ? log[from - 1 + k] : null;
+        if (entry) { rowGolf += (+entry.golf || 0); rowChip += (+entry.chip || 0); totals.golf += (+entry.golf || 0); totals.chip += (+entry.chip || 0); }
+        grid.appendChild(buildCell(entry));
+      }
+      // Per-row subtotal
+      const sub = el('div', { class: 'yj-cell is-grandtotal' });
+      if (t.variant === 'pure') {
+        sub.appendChild(el('span', { class: 'yj-stroke', text: fmtChip(rowChip) || '0', style: 'font-size:13px;' }));
+      } else {
+        sub.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(rowGolf) }));
+        if (rowChip) sub.appendChild(el('span', { class: 'yj-honey' + (rowChip < 0 ? ' neg' : ''), text: fmtChip(rowChip) }));
+      }
+      grid.appendChild(sub);
+      // The header pseudo-row for the first cluster was an extra grid line —
+      // since each cluster repeats hand numbers, subsequent rows don't need
+      // a new header. Cheap visual rhythm at the cost of ~18 cells per cluster
+      // for the headers, which is fine.
+      gridWrap.appendChild(grid);
+      if (r === 0 && rows > 1) {
+        // Insert a thin spacer + a re-numbered header for the next cluster.
+        // We rebuild a fresh header grid for cluster r+1 below by recursion of
+        // the same loop — so just push the data rows continuously.
+      }
+    }
+    // Cumulative totals strip
+    const stripWrap = el('div', { class: 'yj-card-totals' });
+    if (t.variant === 'pure') {
+      const col = el('div');
+      col.appendChild(el('span', { class: 'col-label', text: 'Chip P/L (this session)' }));
+      col.appendChild(el('span', { class: 'col-num', text: fmtChip(totals.chip) || '0' }));
+      col.appendChild(el('span', { class: 'col-detail', text: log.length + ' hand' + (log.length === 1 ? '' : 's') + '  ·  ' + t.smallBlind + '/' + t.bigBlind + ' NLHE' }));
+      stripWrap.appendChild(col);
+      stripWrap.style.gridTemplateColumns = '1fr';
+    } else {
+      const colG = el('div');
+      colG.appendChild(el('span', { class: 'col-label', text: 'Golf scorecard' }));
+      colG.appendChild(el('span', { class: 'col-num', text: fmtStroke(Math.round(totals.golf * 10) / 10) }));
+      colG.appendChild(el('span', { class: 'col-detail', text: log.length + ' hand' + (log.length === 1 ? '' : 's') + '  ·  lower is better' }));
+      stripWrap.appendChild(colG);
+      const colC = el('div');
+      colC.appendChild(el('span', { class: 'col-label', text: 'Chip P/L' }));
+      colC.appendChild(el('span', { class: 'col-num', text: fmtChip(totals.chip) || '0' }));
+      colC.appendChild(el('span', { class: 'col-detail', text: t.smallBlind + '/' + t.bigBlind + '  ·  ' + (t.variant === 'yj' ? 'YJ-Stroke' : 'BB-Stroke') }));
+      stripWrap.appendChild(colC);
+    }
+    card.appendChild(gridWrap);
+    card.appendChild(stripWrap);
+  } else {
+    // --- STRIP VIEW (single horizontal row, scrollable) ---------------------
+    const cols = 'minmax(96px, 110px) repeat(' + log.length + ', minmax(24px, 1fr)) minmax(46px, 54px)';
+    const grid = el('div', { class: 'yj-card-grid', style: 'grid-template-columns: ' + cols + ';' });
+    // Header
+    grid.appendChild(el('div', { class: 'yj-cell is-rowhead is-header', text: 'Hand' }));
+    log.forEach((entry) => grid.appendChild(el('div', { class: 'yj-cell is-header', text: String(entry.hand) })));
+    grid.appendChild(el('div', { class: 'yj-cell is-header is-grandtotal', text: 'TOT' }));
+    // Data row
+    grid.appendChild(el('div', { class: 'yj-cell is-rowhead is-player', text: (seat.name || 'You') }));
+    let totGolf = 0, totChip = 0;
+    log.forEach((entry) => { totGolf += (+entry.golf || 0); totChip += (+entry.chip || 0); grid.appendChild(buildCell(entry)); });
+    const tot = el('div', { class: 'yj-cell is-grandtotal' });
+    if (t.variant === 'pure') {
+      tot.appendChild(el('span', { class: 'yj-stroke', text: fmtChip(totChip) || '0', style: 'font-size:13px;' }));
+    } else {
+      tot.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(totGolf) }));
+      if (totChip) tot.appendChild(el('span', { class: 'yj-honey' + (totChip < 0 ? ' neg' : ''), text: fmtChip(totChip) }));
+    }
+    grid.appendChild(tot);
+    gridWrap.appendChild(grid);
+    card.appendChild(gridWrap);
+  }
+
+  // Legend (shared with the match scorecard)
+  const legend = el('div', { class: 'yj-card-legend' });
+  if (t.variant === 'pure') {
+    [
+      { cls: 's-birdie', text: 'Chips Won' },
+      { cls: 's-par',    text: 'No P/L' },
+      { cls: 's-bogey',  text: 'Chips Lost' },
+    ].forEach(L => {
+      const span = el('span');
+      span.appendChild(el('span', { class: 'swatch ' + L.cls }));
+      span.appendChild(el('span', { text: L.text }));
+      legend.appendChild(span);
+    });
+  } else {
+    [
+      { cls: 's-eagle',  text: 'Eagle ≤−2' },
+      { cls: 's-birdie', text: 'Birdie −1' },
+      { cls: 's-par',    text: 'Par 0' },
+      { cls: 's-bogey',  text: 'Bogey +1' },
+      { cls: 's-double', text: 'Double +2' },
+    ].forEach(L => {
+      const span = el('span');
+      span.appendChild(el('span', { class: 'swatch ' + L.cls }));
+      span.appendChild(el('span', { text: L.text }));
+      legend.appendChild(span);
+    });
+  }
+  legend.appendChild(el('span', { style: 'opacity:0.78; font-style:italic;', text: 'Hands: 1P · 2P · 3K · ST · FL · FH · 4K · SF · RF · HC  ·  FOLD = folded  ·  UNC = uncontested win' }));
+  card.appendChild(legend);
+
+  return card;
+}
+
 function renderActiveMP() {
   // Two possible mount points now (the views are split into Single Player and
   // Multiplayer pages). Pick the mount that matches the active game's mode so
@@ -10335,14 +10581,16 @@ function renderActiveMP() {
       el('h2', { text: winner ? winner.name + ' wins!' : 'Tie' }),
       el('p', { class: 'ui-sans' }, g.p1.name + ' ' + formatScore(g.p1.total) + ' · ' + g.p2.name + ' ' + formatScore(g.p2.total))
     );
-    // v69.113 (P0-4) — Rematch + New Match CTAs on the end-of-match panel. Was
-    // dead-end before; you had to scroll back up and re-click Start. Rematch
-    // reuses the same opponent + skill + holes + cap; New Match clears state
-    // and returns to the setup card. Solo-only (other modes have their own
-    // resume/exit flows). The original config lives on the game object —
-    // g.aiSkill/g.aiTier/g.totalHoles/g.holeCapSpec are stamped at startSolo.
+    // v69.113 (P0-4) / v69.114 — Rematch + New Match CTAs on the end-of-match
+    // panel. Was dead-end before; you had to scroll back up and re-click Start.
+    // v69.113 added solo-only; v69.114 extends to all three modes:
+    //   - solo: re-runs startSolo with same opponent + skill + holes + cap.
+    //   - hotseat: reconstructs a fresh game with the same names + settings.
+    //   - sharelink: Copy Result + New Match (no in-place rematch — opponent
+    //     would need a fresh share-link anyway, so we don't pretend otherwise).
+    // The original config is stamped onto g at construction time.
+    const ctaRow = el('div', { style: 'display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:14px;' });
     if (g.mode === 'solo') {
-      const ctaRow = el('div', { style: 'display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:14px;' });
       const rematchBtn = el('button', { class: 'btn gold', text: '↻ Rematch vs ' + g.p2.name });
       rematchBtn.onclick = () => {
         const skill = +g.aiSkill || 0.40;
@@ -10354,15 +10602,44 @@ function renderActiveMP() {
         renderActiveMP();
         startSolo(name, skill, tier, holes, cap);
       };
-      const newBtn = el('button', { class: 'btn outline', text: 'New Match' });
-      newBtn.onclick = () => { TourState.activeGame = null; renderActiveMP(); };
       ctaRow.appendChild(rematchBtn);
-      ctaRow.appendChild(newBtn);
-      endCard.appendChild(ctaRow);
+    } else if (g.mode === 'hotseat') {
+      const rematchBtn = el('button', { class: 'btn gold', text: '↻ Rematch · ' + g.p1.name + ' vs ' + g.p2.name });
+      rematchBtn.onclick = () => {
+        const p1n = (g.p1 && g.p1.name) || 'Player 1';
+        const p2n = (g.p2 && g.p2.name) || 'Player 2';
+        const holes = +g.totalHoles || 18;
+        const cap = g.holeCapSpec || 'E3';
+        const variant = (g.gameVariant === 'bumblebee') ? 'bumblebee' : 'yellowjacket';
+        TourState.activeGame = newConfiguredLocalGame(p1n, p2n, 'hotseat', holes, cap, variant);
+        renderActiveMP();
+        toast('Rematch started · ' + holes + ' holes · ' + (variant === 'bumblebee' ? 'Bumblebee' : 'Yellow Jacket'));
+      };
+      ctaRow.appendChild(rematchBtn);
+    } else if (g.mode === 'sharelink') {
+      // Sharelink rematch requires negotiating a new game state with the
+      // opponent (new shuffle, new dealer), so we don't pretend an in-place
+      // rematch makes sense. Offer Copy Result for paste-into-chat, plus the
+      // shared New Match below to return to the setup card for a fresh link.
+      const copyBtn = el('button', { class: 'btn outline', text: '📋 Copy result' });
+      copyBtn.onclick = () => {
+        const txt = g.p1.name + ' ' + formatScore(g.p1.total) + ' · ' + g.p2.name + ' ' + formatScore(g.p2.total) +
+                    ' (' + (g.totalHoles | 0) + ' holes · ' + ((g.gameVariant === 'bumblebee') ? 'Bumblebee' : 'Yellow Jacket') + ')';
+        try {
+          if (navigator && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt);
+          else { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
+          toast('Result copied to clipboard');
+        } catch (_) { toast('Copy failed — select the result line and copy manually'); }
+      };
+      ctaRow.appendChild(copyBtn);
     }
+    const newBtn = el('button', { class: 'btn outline', text: 'New Match' });
+    newBtn.onclick = () => { TourState.activeGame = null; renderActiveMP(); };
+    ctaRow.appendChild(newBtn);
+    endCard.appendChild(ctaRow);
     wrap.appendChild(endCard);
     // v69.112 — the scorecard is the climax of the end-of-match summary.
-    try { wrap.appendChild(renderSoloScorecard(g)); } catch (e) { /* never block the end screen on a render bug */ }
+    try { wrap.appendChild(renderMatchScorecard(g)); } catch (e) { /* never block the end screen on a render bug */ }
     root.appendChild(wrap);
     return;
   }
@@ -10371,7 +10648,7 @@ function renderActiveMP() {
   // v69.112 — show the scorecard under the live table for any in-progress
   // match (solo / hotseat / sharelink). It's a calm reading view of the run
   // so far; unresolved holes show a single hyphen.
-  try { wrap.appendChild(renderSoloScorecard(g)); } catch (e) { /* don't block the table on a render bug */ }
+  try { wrap.appendChild(renderMatchScorecard(g)); } catch (e) { /* don't block the table on a render bug */ }
 
   if (g.mode === 'sharelink') {
     const linkCard = el('div', { class: 'card', style: 'margin-top: 14px;' });
@@ -11609,7 +11886,7 @@ function resolveMPHole(g) {
   g.p2.honeyTotal += p2Honey;
   mpRecomputeTotals(g);
   // v69.112 — extra annotations for the scorecard. Older sharelinks (schema v2)
-  // that lack these fields still render; renderSoloScorecard falls back to
+  // that lack these fields still render; renderMatchScorecard falls back to
   // 'showdown' / null when the new keys are missing.
   g.scores.push({ p1Golf, p2Golf, p1Honey, p2Honey, outcome, winner: winnerSide, winCat, loseCat, pot: potAtResolve, holeNum: g.holeNum });
   c.result = { desc };
@@ -15218,14 +15495,32 @@ function renderCashTableView(tableId) {
   const wrap = el('div', { style: 'margin-top: 18px;' });
 
   // === Multi-table tab strip =================================================
+  // v69.114 — ARIA tab pattern. The strip is a tablist; each button is role=tab
+  // with aria-selected reflecting the focused table. Keyboard users can now
+  // navigate between concurrent tables with Arrow keys (added below).
   if (CashLobby.activeTableIds.length > 1) {
-    const strip = el('div', { class: 'cash-tab-strip' });
+    const strip = el('div', { class: 'cash-tab-strip', role: 'tablist', 'aria-label': 'Active cash tables' });
     CashLobby.activeTableIds.forEach(id => {
       const tt = CashLobby.tables.find(x => x.id === id); if (!tt) return;
+      const isActive = (id === CashLobby.focusedTableId);
       const tab = el('button', {
-        class: 'cash-tab' + (id === CashLobby.focusedTableId ? ' active' : ''),
+        class: 'cash-tab' + (isActive ? ' active' : ''),
+        role: 'tab',
+        'aria-selected': isActive ? 'true' : 'false',
+        tabindex: isActive ? '0' : '-1',
+        'data-table-id': String(id),
         onclick: () => { CashLobby.focusedTableId = id; refreshCashView(); },
       });
+      tab.onkeydown = (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+        e.preventDefault();
+        const ids = CashLobby.activeTableIds;
+        const i = ids.indexOf(CashLobby.focusedTableId);
+        const n = ids.length;
+        const j = e.key === 'ArrowLeft' ? (i - 1 + n) % n : e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'Home' ? 0 : n - 1;
+        CashLobby.focusedTableId = ids[j];
+        refreshCashView();
+      };
       tab.appendChild(el('span', { text: tt.smallBlind + '/' + tt.bigBlind }));
       tab.appendChild(el('span', { class: 'cash-tab-variant', text: tt.variant === 'pure' ? 'NLHE' : tt.variant === 'yj' ? 'YJ-Stroke' : 'BB-Stroke' }));
       // Notification dot when this tab needs your action.
@@ -15627,6 +15922,17 @@ function renderCashTableView(tableId) {
   }
 
   wrap.appendChild(card);
+
+  // v69.114 — The Session Card: per-hand log scorecard for cash play, rendered
+  // BELOW the felt table card. ALL hands played at this seat for this session
+  // are shown in a multi-row grid (wraps at 18 hands/row, golf-convention) or
+  // a single-row strip (overflow-x: auto). For NLHE the golf-coloring is
+  // repurposed to chip-P/L coloring so the same component works across all
+  // three cash variants.
+  if (youSeatIdx >= 0) {
+    try { wrap.appendChild(renderCashSessionCard(t, youSeatIdx)); }
+    catch (e) { /* never block the table on a session-card render bug */ }
+  }
   return wrap;
 }
 
@@ -16732,6 +17038,18 @@ function dealCashHand(t) {
   for (let i = 0; i < t.seats.length; i++) if (t.seats[i] && !t.seats[i].sittingOut && t.seats[i].stack >= t.bigBlind) seated.push(i);
   if (seated.length < 2) { toast('Need 2+ active seats with stack >= BB'); return; }
 
+  // v69.114 — snapshot each seated player's pre-hand stack so per-hand chip
+  // P/L can be computed at resolution. Per-seat handLog (the Cash Session
+  // Card data source) is lazy-initialized on each seat. Stores ALL hands
+  // played at this seat for this session — no cap; the renderer wraps to
+  // multi-row grid when the count grows. Cleared on stand-up via the seat
+  // teardown in standUpFromTable.
+  const stackPre = {};
+  for (const i of seated) {
+    stackPre[i] = t.seats[i].stack;
+    if (!t.seats[i].handLog) t.seats[i].handLog = [];
+  }
+
   // Rotate button.
   t.button = (t.button + 1) % t.maxSeats;
   while (!seated.includes(t.button)) t.button = (t.button + 1) % t.maxSeats;
@@ -16858,6 +17176,9 @@ function dealCashHand(t) {
   // player posts the Yellow Jacket loser score (respected loss for straight+,
   // pot-gated brick for a high card, +1 bogey otherwise — cashYJLoserGolfScore) or
   // their own hand class under Bumblebee (Honored Loss). Multi-way: one winnerIdx, rest lose.
+  // v69.114 — also capture per-seat golfDelta + handClass for the Session Card.
+  const perSeatGolf = {};
+  const perSeatHandClass = {};
   if (t.variant !== 'pure' && isShowdown) {
     for (const i of activeMask) {
       const seat = t.seats[i];
@@ -16868,6 +17189,8 @@ function dealCashHand(t) {
       else if (t.variant === 'yj') golfDelta = cashYJLoserGolfScore(ev.className, pot, t.smallBlind, t.bigBlind);
       else golfDelta = ownGolf;                          // Honored Loss
       seat.strokeLedger += golfDelta;
+      perSeatGolf[i] = golfDelta;
+      perSeatHandClass[i] = ev.className;
     }
   }
   // All seats that played a hand get hands++.
@@ -16882,6 +17205,33 @@ function dealCashHand(t) {
   t.currentHand = { board, pot, log, bets: new Array(t.maxSeats).fill(0), folded, actingSeat: null };
   t.stats.totalPot += pot;
   t.stats.avgPot = t.stats.totalPot / Math.max(1, t.handCount);
+
+  // v69.114 — per-hand handLog push (Cash Session Card data). One entry per
+  // SEATED player. Captures: hand number (global t.handCount, now incremented),
+  // golf delta posted this hand, chip P/L (seat.stack − pre-hand snapshot),
+  // hand class (or null if folded / pre-showdown), outcome bucket, raked pot.
+  // The renderer reads the user's seat (playerId === 0) but all seats are
+  // logged symmetrically in case future analytics want opponent profiles.
+  for (const i of seated) {
+    const seat = t.seats[i];
+    if (!seat.handLog) seat.handLog = [];
+    const didFold = !!folded[i];
+    const outcome = didFold ? 'fold'
+                  : (winnerIdx === i && !isShowdown) ? 'won-uncontested'
+                  : (winnerIdx === i) ? 'showdown-won'
+                  : isShowdown ? 'showdown-lost'
+                  : 'showdown-tied';   // rare under heads-up but possible at the table
+    const chipDelta = (stackPre[i] != null) ? (seat.stack - stackPre[i]) : 0;
+    seat.handLog.push({
+      hand: t.handCount,
+      golf: (perSeatGolf[i] != null) ? perSeatGolf[i] : 0,
+      chip: Math.round(chipDelta),
+      handClass: (perSeatHandClass[i] != null) ? perSeatHandClass[i] : null,
+      outcome: outcome,
+      pot: Math.round(rakedPot),
+      isShowdown: !!isShowdown,
+    });
+  }
 
   // Record to history store.
   ensureHistoryStore();
@@ -17951,8 +18301,11 @@ function renderCashView(gameMode) {
     el('div', { class: 'sub', text: labelSub })
   ));
   // If seated, header carries a "Back to lobby" or "Browse other tables" toggle.
+  // v69.114 — aria-expanded reflects the lobby's collapse state for screen
+  // readers. The button is a disclosure control, not a checkbox/pressed toggle.
   if (hasSeated) {
-    const browseBtn = el('button', { class: 'btn ghost', text: CashLobby.lobbyHidden === false ? 'Hide lobby ▲' : 'Browse other tables ▼' });
+    const expanded = (CashLobby.lobbyHidden === false);
+    const browseBtn = el('button', { class: 'btn ghost', 'aria-expanded': expanded ? 'true' : 'false', text: expanded ? 'Hide lobby ▲' : 'Browse other tables ▼' });
     browseBtn.onclick = () => {
       CashLobby.lobbyHidden = !CashLobby.lobbyHidden;
       renderCashView(gameMode);
