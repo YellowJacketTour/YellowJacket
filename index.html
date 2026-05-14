@@ -1513,6 +1513,86 @@
   .btn.gold:hover { background: var(--gold-soft); }
   .btn.outline { background: transparent; color: var(--green); border: 1px solid var(--green); }
   .btn.outline:hover { background: var(--green); color: var(--white); }
+
+  /* v69.113 — Solo Match skill-tier chips. Two-line button: tier name + skill
+     number on top, single-word personality tag underneath. Active state gets a
+     gold ring + slightly-darker honey wash, so the selected tier is obvious
+     at a glance (the prior `.btn.outline.active` had no matching CSS). */
+  .yj-tier-chip {
+    display: inline-flex; flex-direction: column; align-items: center;
+    gap: 2px; padding: 7px 13px 6px;
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    transition: transform 0.12s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+    min-width: 88px;
+  }
+  .yj-tier-chip:hover {
+    background: rgba(232, 185, 35, 0.06);
+    border-color: rgba(232, 185, 35, 0.62);
+  }
+  .yj-tier-chip:active { transform: scale(0.97); }
+  .yj-tier-chip .chip-head {
+    font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+    line-height: 1.1;
+  }
+  .yj-tier-chip .chip-tag {
+    font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-secondary); font-weight: 600;
+    opacity: 0.78;
+  }
+  .yj-tier-chip.active {
+    background: linear-gradient(180deg, rgba(232,185,35,0.18), rgba(232,185,35,0.08));
+    border-color: var(--gold);
+    box-shadow: 0 0 0 1px rgba(232,185,35,0.45), 0 2px 10px rgba(232,185,35,0.18);
+  }
+  .yj-tier-chip.active .chip-head { color: #6B4F0F; }
+  .yj-tier-chip.active .chip-tag { color: var(--text-accent-gold); opacity: 1; }
+  [data-theme="sunday"] .yj-tier-chip { color: var(--text-primary); }
+  [data-theme="sunday"] .yj-tier-chip:hover { background: rgba(224,198,140,0.10); }
+  [data-theme="sunday"] .yj-tier-chip.active .chip-head { color: var(--text-accent-honey); }
+  [data-theme="sunday"] .yj-tier-chip.active .chip-tag { color: var(--text-accent-honey); opacity: 0.9; }
+
+  /* v69.113 — collapsed "How the AI works" details/summary. Honey-tinted
+     summary line with a subtle chevron; expands to the full paragraph below. */
+  .yj-howitworks {
+    margin-bottom: 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: rgba(232,185,35,0.04);
+  }
+  .yj-howitworks > summary {
+    cursor: pointer;
+    padding: 8px 12px;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--text-accent-gold);
+    font-weight: 600;
+    list-style: none;
+    display: flex; align-items: center; gap: 8px;
+    user-select: none;
+  }
+  .yj-howitworks > summary::-webkit-details-marker { display: none; }
+  .yj-howitworks > summary::before {
+    content: '›'; display: inline-block;
+    transition: transform 0.18s ease;
+    font-size: 16px; line-height: 1;
+    color: var(--gold);
+  }
+  .yj-howitworks[open] > summary::before { transform: rotate(90deg); }
+  .yj-howitworks > .yj-howitworks-body {
+    padding: 4px 14px 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    border-top: 1px solid var(--border);
+    margin-top: 0;
+  }
+  [data-theme="sunday"] .yj-howitworks { background: rgba(224,198,140,0.04); }
+  [data-theme="sunday"] .yj-howitworks > summary { color: var(--text-accent-honey); }
   .btn.ghost { background: transparent; color: var(--fairway); padding: 6px 12px; font-size: 12px; }
   .btn.ghost:hover { background: rgba(0,0,0,0.04); color: var(--charcoal); }
   .btn.small { font-size: 11px; padding: 5px 12px; }
@@ -2511,7 +2591,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.112-solo-scorecard";
+const APP_VERSION = "2026.05.13-v69.113-solo-ux-p0";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -9628,28 +9708,41 @@ Views.solo = function() {
   // === SOLO vs AI ===
   const soloCard = el('div', { class: 'card', style: 'border-top: 3px solid var(--gold);' });
   soloCard.appendChild(el('h2', { text: '🐝 Solo vs AI' }));
-  soloCard.appendChild(el('div', { class: 'ui-sans', style: 'font-size: 13px; color: var(--fairway); margin-bottom: 14px;' },
+  // v69.113 (P0-3) — the long honey-EV-kernel paragraph used to dominate this
+  // card; collapsed into a "How the AI works" disclosure so the heads-up info
+  // density on first visit stays low. Expanded paragraph is the same text.
+  const how = el('details', { class: 'yj-howitworks' });
+  how.appendChild(el('summary', { text: 'How the AI works' }));
+  how.appendChild(el('div', { class: 'yj-howitworks-body', text:
     'Heads-up match against a Yellow Jacket AI of your chosen skill. The AI plays from a real pool profile (not a script), using the same board-aware honey-EV decision kernel as the simulator: the mandatory opener (doubled on the back 9), agreed-total wagering under the hole-envelope + pot-elastic-K cap, and the round-end honey cap converting net honey to strokes. The Per-hole cap control sets the envelope E (default E=3 — the same default the simulator ships) or a legacy fixed cap. The match inherits the Simulator’s scoring variant (Yellow Jacket / Bumblebee).'
-  ));
+  }));
+  soloCard.appendChild(how);
 
   // Tier preset buttons. Selected skill stored on the card via dataset for the
   // Start handler to read. Default selection = Casual (the "first match" feel).
+  // v69.113 (P0-1, P0-2) — chips now use .yj-tier-chip with a real .active state
+  // (gold ring + honey wash) and a single-word personality TAG on a second line
+  // (Forgiving / Balanced / Sharp / Ruthless) so all four tiers' character is
+  // legible at a glance, not just the selected one.
   const TIERS = [
-    { key: 'beginner', name: 'Beginner', skill: 0.15, blurb: 'New to honey. Folds wide, calls down too often.' },
-    { key: 'casual',   name: 'Casual',   skill: 0.40, blurb: 'Plays most hands. Some pot-odds awareness.' },
-    { key: 'pro',      name: 'Pro',      skill: 0.65, blurb: 'Disciplined. Reads the board and the bet.' },
-    { key: 'elite',    name: 'Elite',    skill: 0.85, blurb: 'Polarized aggression. Punishes every mistake.' },
+    { key: 'beginner', name: 'Beginner', skill: 0.15, tag: 'Forgiving', blurb: 'New to honey. Folds wide, calls down too often.' },
+    { key: 'casual',   name: 'Casual',   skill: 0.40, tag: 'Balanced',  blurb: 'Plays most hands. Some pot-odds awareness.' },
+    { key: 'pro',      name: 'Pro',      skill: 0.65, tag: 'Sharp',     blurb: 'Disciplined. Reads the board and the bet.' },
+    { key: 'elite',    name: 'Elite',    skill: 0.85, tag: 'Ruthless',  blurb: 'Polarized aggression. Punishes every mistake.' },
   ];
   soloCard.dataset.skill = '0.40';
   soloCard.dataset.tier = 'casual';
-  const tierRow = el('div', { style: 'display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;' });
+  const tierRow = el('div', { style: 'display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;' });
   const tierBlurb = el('div', { class: 'ui-sans', style: 'font-size: 11px; color: var(--text-secondary); font-style: italic; margin-bottom: 12px; min-height: 16px;', text: TIERS[1].blurb });
   TIERS.forEach(t => {
-    const btn = el('button', { class: 'btn outline small', text: t.name + ' · ' + t.skill.toFixed(2), title: t.blurb });
+    const btn = el('button', { class: 'yj-tier-chip', title: t.blurb, type: 'button', 'aria-pressed': t.key === 'casual' ? 'true' : 'false' });
+    btn.appendChild(el('span', { class: 'chip-head', text: t.name + ' · ' + t.skill.toFixed(2) }));
+    btn.appendChild(el('span', { class: 'chip-tag',  text: t.tag }));
     if (t.key === 'casual') btn.classList.add('active');
     btn.onclick = () => {
-      Array.from(tierRow.children).forEach(c => c.classList.remove('active'));
+      Array.from(tierRow.children).forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
       btn.classList.add('active');
+      btn.setAttribute('aria-pressed', 'true');
       soloCard.dataset.skill = String(t.skill);
       soloCard.dataset.tier = t.key;
       tierBlurb.textContent = t.blurb;
@@ -10238,10 +10331,36 @@ function renderActiveMP() {
 
   if (g.ended) {
     const winner = g.p1.total < g.p2.total ? g.p1 : g.p2.total < g.p1.total ? g.p2 : null;
-    wrap.appendChild(el('div', { class: 'card', style: 'margin-top: 14px; text-align: center;' },
+    const endCard = el('div', { class: 'card', style: 'margin-top: 14px; text-align: center;' },
       el('h2', { text: winner ? winner.name + ' wins!' : 'Tie' }),
       el('p', { class: 'ui-sans' }, g.p1.name + ' ' + formatScore(g.p1.total) + ' · ' + g.p2.name + ' ' + formatScore(g.p2.total))
-    ));
+    );
+    // v69.113 (P0-4) — Rematch + New Match CTAs on the end-of-match panel. Was
+    // dead-end before; you had to scroll back up and re-click Start. Rematch
+    // reuses the same opponent + skill + holes + cap; New Match clears state
+    // and returns to the setup card. Solo-only (other modes have their own
+    // resume/exit flows). The original config lives on the game object —
+    // g.aiSkill/g.aiTier/g.totalHoles/g.holeCapSpec are stamped at startSolo.
+    if (g.mode === 'solo') {
+      const ctaRow = el('div', { style: 'display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:14px;' });
+      const rematchBtn = el('button', { class: 'btn gold', text: '↻ Rematch vs ' + g.p2.name });
+      rematchBtn.onclick = () => {
+        const skill = +g.aiSkill || 0.40;
+        const tier = g.aiTier || 'casual';
+        const holes = +g.totalHoles || 18;
+        const cap = g.holeCapSpec || 'E3';
+        const name = (g.p1 && g.p1.name) || 'You';
+        TourState.activeGame = null;
+        renderActiveMP();
+        startSolo(name, skill, tier, holes, cap);
+      };
+      const newBtn = el('button', { class: 'btn outline', text: 'New Match' });
+      newBtn.onclick = () => { TourState.activeGame = null; renderActiveMP(); };
+      ctaRow.appendChild(rematchBtn);
+      ctaRow.appendChild(newBtn);
+      endCard.appendChild(ctaRow);
+    }
+    wrap.appendChild(endCard);
     // v69.112 — the scorecard is the climax of the end-of-match summary.
     try { wrap.appendChild(renderSoloScorecard(g)); } catch (e) { /* never block the end screen on a render bug */ }
     root.appendChild(wrap);
