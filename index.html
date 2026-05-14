@@ -1790,32 +1790,27 @@
     text-align: center; font-size: 11px; letter-spacing: 0.08em;
     color: var(--text-secondary); margin: -8px 0 12px; font-style: italic;
   }
-  .yj-card-halves {
-    display: grid; grid-template-columns: 1fr; gap: 16px;
-  }
-  @media (min-width: 880px) {
-    .yj-card-halves { grid-template-columns: 1fr 1fr; gap: 14px; }
-  }
-  .yj-card-half {
-    display: grid; gap: 2px;
-    /* one column for the player-name + three sub-rows of cells; the cell area
-       uses a nested grid so each row's columns line up perfectly. */
+  /* Wrapper around the single contiguous grid — allows horizontal scroll on
+     narrow widths so a phone in portrait still gets the full 18-hole card. */
+  .yj-card-gridwrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    /* hint that the card is scrollable (very faint, only visible if content
+       overflows; subtle "more to the right" cue) */
+    background:
+      linear-gradient(to right, rgba(245,235,211,1), rgba(245,235,211,0)) left center / 14px 100% no-repeat,
+      linear-gradient(to left,  rgba(245,235,211,1), rgba(245,235,211,0)) right center / 14px 100% no-repeat,
+      linear-gradient(to right, rgba(0,0,0,0.08), rgba(0,0,0,0)) left center / 8px 100% no-repeat,
+      linear-gradient(to left,  rgba(0,0,0,0.08), rgba(0,0,0,0)) right center / 8px 100% no-repeat;
+    background-attachment: local, local, scroll, scroll;
   }
   .yj-card-grid {
     display: grid;
-    grid-template-columns: minmax(72px, 96px) repeat(9, minmax(28px, 1fr)) minmax(38px, 44px);
-    /* Last column = the half's subtotal (OUT or IN). The grand TOTAL lives in
-       a tiny standalone column outside this grid (rendered separately). */
     align-items: stretch;
-  }
-  .yj-card-grid.is-total {
-    /* the right-most TOTAL column gets a heavier double-rule on the left */
-    grid-template-columns: minmax(72px, 96px) minmax(40px, 48px);
-    border-left: 1px solid rgba(232,185,35,0.55);
-    box-shadow: inset 2px 0 0 rgba(232,185,35,0.18);
-  }
-  .yj-card-row {
-    display: contents;     /* let cells participate in the parent grid */
+    /* grid-template-columns is set inline by the renderer — it depends on the
+       match's total holes (9-hole, 18-hole, sudden-death). The default below
+       is just a safe fallback in case the inline style fails to apply. */
+    grid-template-columns: minmax(72px, 110px) repeat(18, minmax(22px, 1fr)) repeat(3, minmax(36px, 50px));
   }
   .yj-cell {
     border-right: 1px solid rgba(232,185,35,0.22);
@@ -10090,76 +10085,85 @@ function renderSoloScorecard(g) {
   const variantLabel = (g.loserBogey === false) ? 'Bumblebee · Honored Loss' : 'Yellow Jacket · Bogey Loss';
   card.appendChild(el('div', { class: 'yj-scorecard-sub', text: variantLabel + '  ·  honey ÷' + div + ' at round-end' }));
 
-  // Decide whether to render one 18-hole strip or two 9-hole halves. For total
-  // holes that aren't a multiple of 9 (rare — sudden-death extensions), the
-  // back-9 half just stretches its column count.
-  const halves = [];
-  if (total <= 9) {
-    halves.push({ from: 1, to: total, label: total === 9 ? 'OUT' : 'TOTAL' });
-  } else {
-    halves.push({ from: 1, to: 9,    label: 'OUT' });
-    halves.push({ from: 10, to: total, label: 'IN' });
+  // v69.112-b — SINGLE CONTIGUOUS STRIP. One grid, one name column per player,
+  // OUT / IN / TOT subtotal columns INLINE (right after hole 9, after the last
+  // hole, and at the very end) — the way a real golf scorecard reads. The grid
+  // template-columns string is built per match so 9-hole / 18-hole / sudden-
+  // death (>18) all render correctly without splitting the player name across
+  // two halves. At narrow widths the parent wrapper allows horizontal scroll;
+  // cells shrink to a minimum of 22px before scroll engages.
+  const split = total > 9;   // does this match need OUT/IN columns?
+  // Build the grid-template-columns string.
+  let gridCols = 'minmax(72px, 110px)';   // name column (sticky-ish; serif name fits ~14ch)
+  for (let h = 1; h <= total; h++) {
+    gridCols += ' minmax(22px, 1fr)';
+    if (split && h === 9) gridCols += ' minmax(36px, 46px)';   // OUT
   }
+  if (split) gridCols += ' minmax(36px, 46px)';                // IN
+  gridCols += ' minmax(42px, 52px)';                           // TOT
 
-  const halvesWrap = el('div', { class: 'yj-card-halves' });
+  const gridWrap = el('div', { class: 'yj-card-gridwrap' });
+  const grid = el('div', { class: 'yj-card-grid yj-card-wide', style: 'grid-template-columns: ' + gridCols + ';' });
 
-  // Per-player running subtotals for the final TOTAL row.
+  // --- header row: HOLE | 1 .. 9 | OUT | 10 .. 18 | IN | TOT ---
+  grid.appendChild(el('div', { class: 'yj-cell is-rowhead is-header', text: 'Hole' }));
+  for (let h = 1; h <= total; h++) {
+    grid.appendChild(el('div', { class: 'yj-cell is-header', text: String(h) }));
+    if (split && h === 9) grid.appendChild(el('div', { class: 'yj-cell is-header is-subtotal', text: 'OUT' }));
+  }
+  if (split) grid.appendChild(el('div', { class: 'yj-cell is-header is-subtotal', text: 'IN' }));
+  grid.appendChild(el('div', { class: 'yj-cell is-header is-grandtotal', text: 'TOT' }));
+
+  // --- per-player rows: name | cell × 18 with subtotals interleaved | TOT ---
   const totals = { p1: { golf: 0, honey: 0 }, p2: { golf: 0, honey: 0 } };
-
-  halves.forEach((half) => {
-    const nCols = half.to - half.from + 1;
-    const halfWrap = el('div', { class: 'yj-card-half' });
-
-    const grid = el('div', { class: 'yj-card-grid', style: 'grid-template-columns: minmax(72px, 96px) repeat(' + nCols + ', minmax(28px, 1fr)) minmax(38px, 46px);' });
-
-    // --- header row: HOLE 1 2 3 ... OUT (or IN) ---
-    grid.appendChild(el('div', { class: 'yj-cell is-rowhead is-header', text: 'Hole' }));
-    for (let h = half.from; h <= half.to; h++) {
-      grid.appendChild(el('div', { class: 'yj-cell is-header', text: String(h) }));
-    }
-    grid.appendChild(el('div', { class: 'yj-cell is-header is-subtotal', text: half.label }));
-
-    // --- one row per player ---
-    [{ side: 'p1', name: g.p1.name }, { side: 'p2', name: g.p2.name }].forEach((P) => {
-      // Row head (player name)
-      const nameCell = el('div', { class: 'yj-cell is-rowhead is-player', text: P.name });
-      grid.appendChild(nameCell);
-      let golfSum = 0, honeySum = 0;
-      for (let h = half.from; h <= half.to; h++) {
-        const sc = byHole[h - 1];
-        const cell = el('div', { class: 'yj-cell' });
-        if (sc) {
-          const golf  = +sc[P.side + 'Golf']  || 0;
-          const honey = +sc[P.side + 'Honey'] || 0;
-          cell.classList.add(strokeClass(golf));
-          golfSum  += golf;
-          honeySum += honey;
-          totals[P.side].golf  += golf;
-          totals[P.side].honey += honey;
-          cell.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(golf) }));
-          // Hand category badge — winning category, loser's category for the
-          // losing side on a decisive showdown, 'FOLD' for whoever folded.
-          const hb = handBadge(sc, P.side === 'p1');
-          if (hb) cell.appendChild(el('span', { class: 'yj-hand', text: hb }));
-          if (honey) cell.appendChild(el('span', { class: 'yj-honey' + (honey < 0 ? ' neg' : ''), text: fmtHoney(honey) }));
-        } else {
-          cell.classList.add('is-future');
-          cell.appendChild(el('span', { class: 'yj-stroke', text: '·' }));
-        }
-        grid.appendChild(cell);
+  [{ side: 'p1', name: g.p1.name }, { side: 'p2', name: g.p2.name }].forEach((P) => {
+    grid.appendChild(el('div', { class: 'yj-cell is-rowhead is-player', text: P.name }));
+    let outGolf = 0, outHoney = 0, inGolf = 0, inHoney = 0;
+    for (let h = 1; h <= total; h++) {
+      const sc = byHole[h - 1];
+      const cell = el('div', { class: 'yj-cell' });
+      if (sc) {
+        const golf  = +sc[P.side + 'Golf']  || 0;
+        const honey = +sc[P.side + 'Honey'] || 0;
+        cell.classList.add(strokeClass(golf));
+        if (h <= 9) { outGolf += golf; outHoney += honey; }
+        else        { inGolf  += golf; inHoney  += honey; }
+        totals[P.side].golf  += golf;
+        totals[P.side].honey += honey;
+        cell.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(golf) }));
+        const hb = handBadge(sc, P.side === 'p1');
+        if (hb) cell.appendChild(el('span', { class: 'yj-hand', text: hb }));
+        if (honey) cell.appendChild(el('span', { class: 'yj-honey' + (honey < 0 ? ' neg' : ''), text: fmtHoney(honey) }));
+      } else {
+        cell.classList.add('is-future');
+        cell.appendChild(el('span', { class: 'yj-stroke', text: '·' }));
       }
-      // Subtotal cell for this half
+      grid.appendChild(cell);
+      // OUT subtotal after hole 9 (only if split)
+      if (split && h === 9) {
+        const sub = el('div', { class: 'yj-cell is-subtotal' });
+        sub.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(outGolf) }));
+        if (outHoney) sub.appendChild(el('span', { class: 'yj-honey' + (outHoney < 0 ? ' neg' : ''), text: fmtHoney(outHoney) }));
+        grid.appendChild(sub);
+      }
+    }
+    // IN subtotal (only if split)
+    if (split) {
       const sub = el('div', { class: 'yj-cell is-subtotal' });
-      sub.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(golfSum) }));
-      if (honeySum) sub.appendChild(el('span', { class: 'yj-honey' + (honeySum < 0 ? ' neg' : ''), text: fmtHoney(honeySum) }));
+      sub.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(inGolf) }));
+      if (inHoney) sub.appendChild(el('span', { class: 'yj-honey' + (inHoney < 0 ? ' neg' : ''), text: fmtHoney(inHoney) }));
       grid.appendChild(sub);
-    });
-
-    halfWrap.appendChild(grid);
-    halvesWrap.appendChild(halfWrap);
+    }
+    // Grand-total cell
+    const tot = el('div', { class: 'yj-cell is-grandtotal' });
+    tot.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(outGolf + inGolf) }));
+    const totHoney = outHoney + inHoney;
+    if (totHoney) tot.appendChild(el('span', { class: 'yj-honey' + (totHoney < 0 ? ' neg' : ''), text: fmtHoney(totHoney) }));
+    grid.appendChild(tot);
   });
 
-  card.appendChild(halvesWrap);
+  gridWrap.appendChild(grid);
+  card.appendChild(gridWrap);
 
   // --- Running totals strip ---
   const stripWrap = el('div', { class: 'yj-card-totals' });
