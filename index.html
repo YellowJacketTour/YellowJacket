@@ -1750,6 +1750,216 @@
     font-size: 13px; max-width: 600px; margin: 10px auto; text-align: center;
   }
 
+  /* ----- v69.112 — Solo Match Scorecard ("the Card") -----------------------
+     Augusta-luxe paper feel: cream stock, hair-thin gold rules, serif numerals,
+     stroke-color cells (eagle/birdie/par/bogey/double). The whole card auto-
+     scales: cells share remaining inline space (min 28px each), and the front-9
+     and back-9 halves wrap onto two stacked rows at narrow widths so a phone
+     never gets a horizontal scrollbar. TOTAL column has an extra emphasized
+     gold double-rule (old-money "engraved" look). Print-friendly by accident.
+  */
+  .yj-scorecard {
+    background: linear-gradient(180deg, #FBF4E6 0%, #F5EBD3 100%);
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    box-shadow: 0 6px 18px rgba(61,42,31,0.18), inset 0 0 0 1px rgba(232,185,35,0.18);
+    padding: 18px 20px 16px;
+    margin-top: 18px;
+    color: var(--charcoal);
+    font-family: Georgia, 'Cormorant Garamond', 'Crimson Pro', serif;
+    position: relative;
+    overflow: hidden;
+  }
+  .yj-scorecard::before {
+    /* faint subliminal "watermark" — a Y like the Yellow Jacket wordmark */
+    content: '🐝'; position: absolute; top: 10px; right: 14px;
+    font-size: 28px; opacity: 0.08; pointer-events: none; letter-spacing: 0;
+  }
+  .yj-scorecard-title {
+    text-align: center; font-size: 15px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: #8A6F2B;
+    font-weight: 600; padding-bottom: 8px; margin-bottom: 14px;
+    border-bottom: 1px solid rgba(232,185,35,0.32);
+    position: relative;
+  }
+  .yj-scorecard-title::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: -3px;
+    height: 1px; background: rgba(232,185,35,0.18);
+  }
+  .yj-scorecard-sub {
+    text-align: center; font-size: 11px; letter-spacing: 0.08em;
+    color: var(--text-secondary); margin: -8px 0 12px; font-style: italic;
+  }
+  .yj-card-halves {
+    display: grid; grid-template-columns: 1fr; gap: 16px;
+  }
+  @media (min-width: 880px) {
+    .yj-card-halves { grid-template-columns: 1fr 1fr; gap: 14px; }
+  }
+  .yj-card-half {
+    display: grid; gap: 2px;
+    /* one column for the player-name + three sub-rows of cells; the cell area
+       uses a nested grid so each row's columns line up perfectly. */
+  }
+  .yj-card-grid {
+    display: grid;
+    grid-template-columns: minmax(72px, 96px) repeat(9, minmax(28px, 1fr)) minmax(38px, 44px);
+    /* Last column = the half's subtotal (OUT or IN). The grand TOTAL lives in
+       a tiny standalone column outside this grid (rendered separately). */
+    align-items: stretch;
+  }
+  .yj-card-grid.is-total {
+    /* the right-most TOTAL column gets a heavier double-rule on the left */
+    grid-template-columns: minmax(72px, 96px) minmax(40px, 48px);
+    border-left: 1px solid rgba(232,185,35,0.55);
+    box-shadow: inset 2px 0 0 rgba(232,185,35,0.18);
+  }
+  .yj-card-row {
+    display: contents;     /* let cells participate in the parent grid */
+  }
+  .yj-cell {
+    border-right: 1px solid rgba(232,185,35,0.22);
+    border-bottom: 1px solid rgba(232,185,35,0.18);
+    padding: 4px 2px;
+    min-height: 30px;
+    text-align: center;
+    font-size: 13px; line-height: 1.1;
+    background: transparent;
+    position: relative;
+  }
+  .yj-cell.is-rowhead {
+    text-align: left;
+    padding-left: 8px; padding-right: 4px;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    border-right: 2px solid rgba(232,185,35,0.42);
+    font-weight: 600;
+    display: flex; align-items: center;
+    background: rgba(245,235,211,0.55);
+  }
+  .yj-cell.is-rowhead.is-player {
+    text-transform: none; font-variant: small-caps; letter-spacing: 0.04em;
+    font-size: 12px; font-weight: 700; color: #3D2A1F;
+  }
+  .yj-cell.is-header {
+    font-size: 10.5px; letter-spacing: 0.10em; text-transform: uppercase;
+    color: #8A6F2B; font-weight: 700;
+    background: rgba(232,185,35,0.08);
+    border-bottom: 1px solid rgba(232,185,35,0.42);
+    padding-top: 6px; padding-bottom: 6px;
+  }
+  .yj-cell.is-subtotal {
+    background: rgba(232,185,35,0.10);
+    border-left: 1px solid rgba(232,185,35,0.42);
+    font-weight: 700; font-size: 14px;
+    color: #3D2A1F;
+  }
+  .yj-cell.is-grandtotal {
+    background: rgba(232,185,35,0.16);
+    border-left: 1px solid rgba(232,185,35,0.55);
+    font-weight: 700; font-size: 15px;
+    color: #3D2A1F;
+    box-shadow: inset 2px 0 0 rgba(232,185,35,0.32);
+  }
+  /* stroke colour tokens — soft tints, never crayon-bright */
+  .yj-cell.s-eagle    { background: linear-gradient(180deg, rgba(232,185,35,0.30), rgba(232,185,35,0.12)); }
+  .yj-cell.s-birdie   { background: linear-gradient(180deg, rgba(232,185,35,0.18), rgba(232,185,35,0.05)); }
+  .yj-cell.s-par      { background: transparent; }
+  .yj-cell.s-bogey    { background: linear-gradient(180deg, rgba(176,80,80,0.10), rgba(176,80,80,0.04)); }
+  .yj-cell.s-double   { background: linear-gradient(180deg, rgba(176,80,80,0.22), rgba(176,80,80,0.10)); }
+  /* the stroke value, prominent, serif numeral */
+  .yj-stroke {
+    display: block; font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 17px; font-weight: 700; line-height: 1; color: #3D2A1F;
+    letter-spacing: -0.01em;
+  }
+  .yj-cell.s-birdie .yj-stroke,
+  .yj-cell.s-eagle  .yj-stroke { color: #6B4F0F; }
+  .yj-cell.s-bogey  .yj-stroke,
+  .yj-cell.s-double .yj-stroke { color: #8A2828; }
+  /* secondary glyphs inside a hole-cell: hand-category abbreviation + honey delta */
+  .yj-hand {
+    display: block; font-size: 9px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-secondary);
+    margin-top: 1px; opacity: 0.85;
+  }
+  .yj-honey {
+    display: block; font-size: 9px; line-height: 1.1;
+    color: #8A6F2B; font-family: -apple-system, 'SF Mono', Consolas, monospace;
+    margin-top: 1px; font-weight: 600;
+  }
+  .yj-honey.neg { color: #A04030; }
+  .yj-cell.is-empty .yj-stroke { color: rgba(61,42,31,0.18); font-weight: 400; }
+  /* unresolved future hole — a single hyphen */
+  .yj-cell.is-future { background: transparent; }
+  .yj-cell.is-future .yj-stroke { color: rgba(61,42,31,0.20); font-weight: 300; }
+  /* legend */
+  .yj-card-legend {
+    margin-top: 12px; padding-top: 10px;
+    border-top: 1px dashed rgba(232,185,35,0.32);
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+    justify-content: center;
+    font-size: 10px; color: var(--text-secondary);
+    letter-spacing: 0.04em;
+  }
+  .yj-card-legend .swatch {
+    display: inline-block; width: 12px; height: 12px;
+    border: 1px solid rgba(232,185,35,0.42); margin-right: 4px;
+    vertical-align: -2px;
+  }
+  .yj-card-legend .swatch.s-eagle  { background: rgba(232,185,35,0.30); }
+  .yj-card-legend .swatch.s-birdie { background: rgba(232,185,35,0.18); }
+  .yj-card-legend .swatch.s-par    { background: rgba(255,255,255,0.40); }
+  .yj-card-legend .swatch.s-bogey  { background: rgba(176,80,80,0.10); }
+  .yj-card-legend .swatch.s-double { background: rgba(176,80,80,0.22); }
+  /* the running-totals strip at the bottom */
+  .yj-card-totals {
+    margin-top: 14px; padding: 10px 14px;
+    background: rgba(232,185,35,0.10);
+    border: 1px solid rgba(232,185,35,0.32);
+    border-radius: 3px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    text-align: center;
+  }
+  .yj-card-totals .col-label {
+    display: block; font-size: 9.5px; letter-spacing: 0.16em;
+    text-transform: uppercase; color: #8A6F2B; font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .yj-card-totals .col-num {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 22px; font-weight: 700; color: #3D2A1F;
+    letter-spacing: -0.01em;
+  }
+  .yj-card-totals .col-detail {
+    display: block; font-size: 10px; color: var(--text-secondary);
+    margin-top: 2px; font-style: italic;
+  }
+  /* dark theme overrides — preserve readability on the Sunday/dark palette */
+  [data-theme="sunday"] .yj-scorecard {
+    background: linear-gradient(180deg, rgba(245,235,211,0.05) 0%, rgba(245,235,211,0.02) 100%);
+    border-color: rgba(224,198,140,0.32);
+    color: var(--text-primary);
+  }
+  [data-theme="sunday"] .yj-scorecard-title { color: var(--text-accent-honey); }
+  [data-theme="sunday"] .yj-cell.is-rowhead { background: rgba(224,198,140,0.05); color: var(--text-secondary); }
+  [data-theme="sunday"] .yj-cell.is-rowhead.is-player { color: var(--text-primary); }
+  [data-theme="sunday"] .yj-cell.is-header { background: rgba(224,198,140,0.08); color: var(--text-accent-honey); }
+  [data-theme="sunday"] .yj-cell.is-subtotal,
+  [data-theme="sunday"] .yj-cell.is-grandtotal { background: rgba(224,198,140,0.10); color: var(--text-primary); }
+  [data-theme="sunday"] .yj-stroke { color: var(--text-primary); }
+  [data-theme="sunday"] .yj-cell.s-birdie .yj-stroke,
+  [data-theme="sunday"] .yj-cell.s-eagle  .yj-stroke { color: #F0D89C; }
+  [data-theme="sunday"] .yj-cell.s-bogey  .yj-stroke,
+  [data-theme="sunday"] .yj-cell.s-double .yj-stroke { color: #F3A889; }
+  [data-theme="sunday"] .yj-honey { color: var(--text-accent-honey); }
+  [data-theme="sunday"] .yj-honey.neg { color: #F3A889; }
+  [data-theme="sunday"] .yj-card-totals { background: rgba(224,198,140,0.08); border-color: rgba(224,198,140,0.32); }
+  [data-theme="sunday"] .yj-card-totals .col-label { color: var(--text-accent-honey); }
+  [data-theme="sunday"] .yj-card-totals .col-num { color: var(--text-primary); }
+
   .chart-box { background: var(--white); border: var(--line); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow-soft); margin-bottom: 16px; }
 
   #cmd-palette {
@@ -2306,7 +2516,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.111-spectator-chunked";
+const APP_VERSION = "2026.05.13-v69.112-solo-scorecard";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -9813,6 +10023,182 @@ function mpRecomputeTotals(g) {
   g.p2.total = g.p2.golfTotal - g.p2.honeyTotal / div;
 }
 
+// v69.112 — "The Card": an Augusta-luxe per-hole scorecard rendered under the
+// game table for any active solo/hotseat/sharelink match. Reads `g.scores[]`
+// (one entry per resolved hole, with the v69.112 extra annotations: outcome,
+// winner, winCat/loseCat, pot, holeNum) and re-derives an empty cell for any
+// hole not yet played. Layout: a top-line title, a wide grid that auto-shrinks
+// down to 28px/cell and wraps to two stacked halves at < 880px, a OUT/IN/TOT
+// subtotal column, and a running-totals strip beneath. No JS layout — pure
+// CSS grid + media query — see .yj-scorecard in the head <style>.
+function renderSoloScorecard(g) {
+  if (!g) return el('div');
+  const total = +g.totalHoles || 18;
+  const div = honeyDivisorFor(total) || 1;
+  // Compact 2-letter hand abbreviations — enough to read at 28px-wide cells.
+  // 'High Card' deliberately printed as 'HC' (not 'HI') to distinguish from
+  // 'Straight' (Sx) and similar; FOLD gets its own glyph.
+  const HAND_ABBR = ['HC','1P','2P','3K','ST','FL','FH','4K','SF','RF'];
+  const strokeClass = (s) => {
+    if (s == null) return 'is-future';
+    if (s <= -2) return 's-eagle';
+    if (s === -1) return 's-birdie';
+    if (s === 0) return 's-par';
+    if (s === 1) return 's-bogey';
+    return 's-double';   // +2 or worse
+  };
+  const fmtStroke = (s) => {
+    if (s == null) return '·';
+    if (s === 0) return '0';
+    return (s > 0 ? '+' : '') + s;
+  };
+  const fmtHoney = (h) => {
+    if (!h) return '';
+    return (h > 0 ? '+' : '') + h;
+  };
+  // Hand badge for one hole — winner's category by default, 'F' on fold.
+  const handBadge = (score, isPlayerP1) => {
+    if (!score) return '';
+    if (score.outcome === 'fold') {
+      const folded = score.winner ? (score.winner === 'p1' ? 'p2' : 'p1') : null;
+      // The folder's row shows 'FOLD'; the bettor's row stays blank (their hand
+      // never showed). If we don't know who folded, just blank both.
+      if (!folded) return '';
+      return (folded === 'p1') === isPlayerP1 ? 'FOLD' : '';
+    }
+    if (score.outcome === 'tie') {
+      const c = score.winCat;
+      return (c != null && c >= 0 && c < HAND_ABBR.length) ? HAND_ABBR[c] : '';
+    }
+    // showdown: each row shows its OWN hand category. Winner gets winCat,
+    // loser gets loseCat. If we don't know who won, fall back to winCat for both.
+    const isWinner = (score.winner === 'p1') === isPlayerP1;
+    const c = isWinner ? score.winCat : (score.loseCat != null ? score.loseCat : score.winCat);
+    return (c != null && c >= 0 && c < HAND_ABBR.length) ? HAND_ABBR[c] : '';
+  };
+  // Build a normalized array of scores indexed by hole number (1-based ⇒ index 0 = hole 1).
+  // Scores may have been pushed BEFORE the holeNum annotation existed (sharelink
+  // restores), so we fall back to index+1 for the hole number when missing.
+  const byHole = new Array(total).fill(null);
+  (g.scores || []).forEach((sc, i) => {
+    const h = (sc && Number.isFinite(+sc.holeNum)) ? +sc.holeNum : (i + 1);
+    if (h >= 1 && h <= total) byHole[h - 1] = sc;
+  });
+
+  const card = el('div', { class: 'yj-scorecard', role: 'region', 'aria-label': 'Solo match scorecard' });
+  card.appendChild(el('div', { class: 'yj-scorecard-title', text: 'The Card — Hole by Hole' }));
+  const variantLabel = (g.loserBogey === false) ? 'Bumblebee · Honored Loss' : 'Yellow Jacket · Bogey Loss';
+  card.appendChild(el('div', { class: 'yj-scorecard-sub', text: variantLabel + '  ·  honey ÷' + div + ' at round-end' }));
+
+  // Decide whether to render one 18-hole strip or two 9-hole halves. For total
+  // holes that aren't a multiple of 9 (rare — sudden-death extensions), the
+  // back-9 half just stretches its column count.
+  const halves = [];
+  if (total <= 9) {
+    halves.push({ from: 1, to: total, label: total === 9 ? 'OUT' : 'TOTAL' });
+  } else {
+    halves.push({ from: 1, to: 9,    label: 'OUT' });
+    halves.push({ from: 10, to: total, label: 'IN' });
+  }
+
+  const halvesWrap = el('div', { class: 'yj-card-halves' });
+
+  // Per-player running subtotals for the final TOTAL row.
+  const totals = { p1: { golf: 0, honey: 0 }, p2: { golf: 0, honey: 0 } };
+
+  halves.forEach((half) => {
+    const nCols = half.to - half.from + 1;
+    const halfWrap = el('div', { class: 'yj-card-half' });
+
+    const grid = el('div', { class: 'yj-card-grid', style: 'grid-template-columns: minmax(72px, 96px) repeat(' + nCols + ', minmax(28px, 1fr)) minmax(38px, 46px);' });
+
+    // --- header row: HOLE 1 2 3 ... OUT (or IN) ---
+    grid.appendChild(el('div', { class: 'yj-cell is-rowhead is-header', text: 'Hole' }));
+    for (let h = half.from; h <= half.to; h++) {
+      grid.appendChild(el('div', { class: 'yj-cell is-header', text: String(h) }));
+    }
+    grid.appendChild(el('div', { class: 'yj-cell is-header is-subtotal', text: half.label }));
+
+    // --- one row per player ---
+    [{ side: 'p1', name: g.p1.name }, { side: 'p2', name: g.p2.name }].forEach((P) => {
+      // Row head (player name)
+      const nameCell = el('div', { class: 'yj-cell is-rowhead is-player', text: P.name });
+      grid.appendChild(nameCell);
+      let golfSum = 0, honeySum = 0;
+      for (let h = half.from; h <= half.to; h++) {
+        const sc = byHole[h - 1];
+        const cell = el('div', { class: 'yj-cell' });
+        if (sc) {
+          const golf  = +sc[P.side + 'Golf']  || 0;
+          const honey = +sc[P.side + 'Honey'] || 0;
+          cell.classList.add(strokeClass(golf));
+          golfSum  += golf;
+          honeySum += honey;
+          totals[P.side].golf  += golf;
+          totals[P.side].honey += honey;
+          cell.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(golf) }));
+          // Hand category badge — winning category, loser's category for the
+          // losing side on a decisive showdown, 'FOLD' for whoever folded.
+          const hb = handBadge(sc, P.side === 'p1');
+          if (hb) cell.appendChild(el('span', { class: 'yj-hand', text: hb }));
+          if (honey) cell.appendChild(el('span', { class: 'yj-honey' + (honey < 0 ? ' neg' : ''), text: fmtHoney(honey) }));
+        } else {
+          cell.classList.add('is-future');
+          cell.appendChild(el('span', { class: 'yj-stroke', text: '·' }));
+        }
+        grid.appendChild(cell);
+      }
+      // Subtotal cell for this half
+      const sub = el('div', { class: 'yj-cell is-subtotal' });
+      sub.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(golfSum) }));
+      if (honeySum) sub.appendChild(el('span', { class: 'yj-honey' + (honeySum < 0 ? ' neg' : ''), text: fmtHoney(honeySum) }));
+      grid.appendChild(sub);
+    });
+
+    halfWrap.appendChild(grid);
+    halvesWrap.appendChild(halfWrap);
+  });
+
+  card.appendChild(halvesWrap);
+
+  // --- Running totals strip ---
+  const stripWrap = el('div', { class: 'yj-card-totals' });
+  [{ side: 'p1', name: g.p1.name }, { side: 'p2', name: g.p2.name }].forEach((P) => {
+    const col = el('div');
+    const golfT  = totals[P.side].golf;
+    const honeyT = totals[P.side].honey;
+    const displayed = golfT - (honeyT / div);
+    col.appendChild(el('span', { class: 'col-label', text: P.name }));
+    col.appendChild(el('span', { class: 'col-num', text: formatScore(+displayed.toFixed(2)) }));
+    col.appendChild(el('span', { class: 'col-detail', text: fmtStroke(golfT) + ' golf  ·  ' + (honeyT >= 0 ? '+' : '') + honeyT + ' honey  ÷' + div }));
+    stripWrap.appendChild(col);
+  });
+  card.appendChild(stripWrap);
+
+  // --- Legend ---
+  const legend = el('div', { class: 'yj-card-legend' });
+  [
+    { cls: 's-eagle',  text: 'Eagle ≤−2' },
+    { cls: 's-birdie', text: 'Birdie −1' },
+    { cls: 's-par',    text: 'Par 0' },
+    { cls: 's-bogey',  text: 'Bogey +1' },
+    { cls: 's-double', text: 'Double +2' },
+  ].forEach(L => {
+    const span = el('span');
+    span.appendChild(el('span', { class: 'swatch ' + L.cls }));
+    span.appendChild(el('span', { text: L.text }));
+    legend.appendChild(span);
+  });
+  // Hand-abbreviation key — compact, on the same row.
+  const handsKey = el('span', { style: 'opacity:0.78; font-style:italic; letter-spacing:0.04em;' },
+    'Hands: HC · 1P · 2P · 3K · ST · FL · FH · 4K · SF · RF  ·  FOLD = folded the hole'
+  );
+  legend.appendChild(handsKey);
+  card.appendChild(legend);
+
+  return card;
+}
+
 function renderActiveMP() {
   // Two possible mount points now (the views are split into Single Player and
   // Multiplayer pages). Pick the mount that matches the active game's mode so
@@ -9852,11 +10238,17 @@ function renderActiveMP() {
       el('h2', { text: winner ? winner.name + ' wins!' : 'Tie' }),
       el('p', { class: 'ui-sans' }, g.p1.name + ' ' + formatScore(g.p1.total) + ' · ' + g.p2.name + ' ' + formatScore(g.p2.total))
     ));
+    // v69.112 — the scorecard is the climax of the end-of-match summary.
+    try { wrap.appendChild(renderSoloScorecard(g)); } catch (e) { /* never block the end screen on a render bug */ }
     root.appendChild(wrap);
     return;
   }
 
   wrap.appendChild(renderGameTable(g));
+  // v69.112 — show the scorecard under the live table for any in-progress
+  // match (solo / hotseat / sharelink). It's a calm reading view of the run
+  // so far; unresolved holes show a single hyphen.
+  try { wrap.appendChild(renderSoloScorecard(g)); } catch (e) { /* don't block the table on a render bug */ }
 
   if (g.mode === 'sharelink') {
     const linkCard = el('div', { class: 'card', style: 'margin-top: 14px;' });
@@ -10995,6 +11387,9 @@ function resolveMPHole(g) {
   // when the hole was created. carryPot tracking remains on g.carryPot purely
   // so we can roll a NEW carry forward if THIS hole ties.
   let p1Golf = 0, p2Golf = 0, p1Honey = 0, p2Honey = 0, desc = '';
+  // v69.112 — extra per-hole annotations the scorecard renders. Captured here
+  // (where we have the local vars) and stored on the score entry below.
+  let outcome = 'showdown', winnerSide = null, winCat = null, loseCat = null, potAtResolve = c.agreedTotal;
   if (c.folded) {
     // v46 fold rule (matches simulator playHole): flat +1 base, no escalation.
     // The v43 escalation rarely fired empirically and added complexity
@@ -11008,6 +11403,7 @@ function resolveMPHole(g) {
     const bettorName = bettorSide === 'p1' ? g.p1.name : g.p2.name;
     desc = folderName + ' folded. ' + bettorName + ' takes the ' + previouslyAgreed + '-honey pot (the previously agreed total). ' + folderName + ' +1 bogey, ' + bettorName + ' 0 par.';
     g.carryPot = 0;
+    outcome = 'fold'; winnerSide = bettorSide; potAtResolve = previouslyAgreed;
   } else {
     while (c.community.length < 5) c.community.push(c.deck.pop());
     const p1H = evaluate7(c.p1Cards, c.community);
@@ -11019,6 +11415,7 @@ function resolveMPHole(g) {
       p1Golf = 0; p2Golf = 0;
       g.carryPot = c.agreedTotal;
       desc = 'Tie at ' + CATEGORY_NAMES[p1H >>> 24] + '. Both score 0 par. The ' + c.agreedTotal + '-honey pot rolls forward to the next hole.';
+      outcome = 'tie'; winCat = (p1H >>> 24); loseCat = (p1H >>> 24); potAtResolve = c.agreedTotal;
     } else {
       // Decisive showdown. Two scoring modes — see playHole comments and the
       // cfg.loserBogey flag for full rationale:
@@ -11075,6 +11472,8 @@ function resolveMPHole(g) {
            + loseName + ' ' + loserDescGolf
            + ' (' + loseName + ' had ' + CATEGORY_NAMES[loserHand >>> 24] + ').';
       g.carryPot = 0;
+      outcome = 'showdown'; winnerSide = p1Wins ? 'p1' : 'p2';
+      winCat = (winnerHand >>> 24); loseCat = (loserHand >>> 24); potAtResolve = pot;
     }
   }
   // Accumulate raw per-hole golf and honey separately. The match's displayed
@@ -11086,7 +11485,10 @@ function resolveMPHole(g) {
   g.p2.golfTotal  += p2Golf;
   g.p2.honeyTotal += p2Honey;
   mpRecomputeTotals(g);
-  g.scores.push({ p1Golf, p2Golf, p1Honey, p2Honey });
+  // v69.112 — extra annotations for the scorecard. Older sharelinks (schema v2)
+  // that lack these fields still render; renderSoloScorecard falls back to
+  // 'showdown' / null when the new keys are missing.
+  g.scores.push({ p1Golf, p2Golf, p1Honey, p2Honey, outcome, winner: winnerSide, winCat, loseCat, pot: potAtResolve, holeNum: g.holeNum });
   c.result = { desc };
   if (g.mode === 'hotseat') g.turnFor = 'p1';
 }
