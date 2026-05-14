@@ -2306,7 +2306,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.110-ux-p2-final";
+const APP_VERSION = "2026.05.13-v69.111-spectator-chunked";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -5809,6 +5809,107 @@ const Season = {
   _offSeason(U, cfg) { const g = (cfg.offSeasonGap != null) ? cfg.offSeasonGap : 12; U.forEach(p => { this.driftRating(p.rating, cfg, g); p.rating.vol = 0.5 * (p.rating.vol || 1) + 0.5; }); },
 
   // ---- public: run a multi-season CAREER (persistent universe) ------------
+  // ---- v69.111: CHUNKED runCareer (the responsiveness fix) ---------------
+  // The synchronous runCareer monolithically blocks the main thread for the
+  // duration of all nSeasons. At production config (~843K hands/season) that's
+  // 5-30s per season — past the browser's "Page Unresponsive" threshold for
+  // 6-season careers, the cause of the user-reported tab freezes / crashes.
+  //
+  // startCareer returns a job object {totalSteps, estimatedHands, runNextSeason(),
+  // result(), abort()} that drives ONE SEASON at a time. The Spectator card
+  // pumps it through setTimeout yields so the tab stays responsive between
+  // seasons. Same throughput as the sync version — just doesn't lock the tab.
+  //
+  // Determinism: withCashRng monkey-patches Math.random within each call. The
+  // LCG seed state `s` is a global, so it persists between successive
+  // withCashRng invocations — meaning a multi-call chunked run is bit-identical
+  // to the single-call sync run AS LONG AS no other code consumes cashRng in
+  // between. The Spectator driver doesn't, so determinism is preserved.
+  //
+  // Engine env (honey-cap / loser-bogey / brick-penalty) is managed manually
+  // (set in startCareer, restored in result()/abort()) — same pattern as
+  // makeStudyJob. Throws restore env on the way out.
+  startCareer(cfg, seedStr, nSeasons) {
+    cfg = this._norm(cfg); nSeasons = Math.max(1, Math.round(+nSeasons || 1));
+    seedStr = String(seedStr || ('hive-' + Date.now()));
+    const handsPerSeason = 1.55 * (cfg.nRegulars * cfg.regularField * cfg.holesPerRound + cfg.nMajors * cfg.majorField * cfg.majorHoles + cfg.mainField * cfg.mainHoles);
+    const handBudget = nSeasons * handsPerSeason;
+    // v69.111 — chunked version raises the cap (no main-thread blockage risk).
+    // 60M is enough for 70 seasons at production config; the existing 9M cap
+    // was sized for the sync version's freeze risk, which doesn't apply here.
+    if (handBudget > 6e7) {
+      const msg = '"Run a career" too large even chunked: ≈ ' + (handBudget / 1e6).toFixed(0) + 'M engine hands (cap ≈60M for the chunked driver). Reduce: career seasons (' + nSeasons + '), # Regulars (' + cfg.nRegulars + ') / # Majors (' + cfg.nMajors + '), field sizes (' + cfg.regularField + '/' + cfg.majorField + '/' + cfg.mainField + '), Major-holes (' + cfg.majorHoles + '), or Regular-holes.';
+      try { console.warn('[Season.startCareer]', msg); } catch (_) {}
+      throw new Error(msg);
+    }
+    // Env: save and set (restored on result/abort)
+    const _cap = (typeof CurrentHoneyCapMode === 'string') ? CurrentHoneyCapMode : 'spec';
+    const _lb = (typeof CurrentLoserBogey !== 'undefined') ? CurrentLoserBogey : true;
+    const _bm = (typeof CurrentBrickPenaltyMode === 'string') ? CurrentBrickPenaltyMode : 'flat';
+    const _bc = (typeof CurrentBrickLossCap === 'number') ? CurrentBrickLossCap : 4;
+    const _bl = (typeof CurrentHighCardShowdownLoss === 'number') ? CurrentHighCardShowdownLoss : 1;
+    if (typeof setHoneyCapMode === 'function') setHoneyCapMode(cfg.honeyCapMode === 'spec' ? 'spec' : 'calibrated');
+    if (typeof setLoserBogey === 'function') setLoserBogey(true);
+    if (typeof setBrickPenaltyMode === 'function') setBrickPenaltyMode('pot-gated');
+    if (typeof setBrickLossCap === 'function') setBrickLossCap(2);
+    if (typeof setHighCardShowdownLoss === 'function') setHighCardShowdownLoss(1);
+    const restoreEnv = () => {
+      if (typeof setHoneyCapMode === 'function') setHoneyCapMode(_cap);
+      if (typeof setLoserBogey === 'function') setLoserBogey(_lb);
+      if (typeof setBrickPenaltyMode === 'function') setBrickPenaltyMode(_bm);
+      if (typeof setBrickLossCap === 'function') setBrickLossCap(_bc);
+      if (typeof setHighCardShowdownLoss === 'function') setHighCardShowdownLoss(_bl);
+    };
+    setCashRngSeed(seedStr);
+    let U = null;
+    withCashRng(() => { U = this.makeUniverse(cfg); });
+    const seasons = [];
+    let yearI = 0;
+    let aborted = false;
+    const self = this;
+    return {
+      totalSteps: nSeasons,
+      estimatedHands: Math.round(handBudget),
+      config: cfg, seedStr: seedStr, nSeasons: nSeasons,
+      runNextSeason() {
+        if (aborted) return { done: true, aborted: true, step: yearI, total: nSeasons };
+        if (yearI >= nSeasons) return { done: true, step: yearI, total: nSeasons };
+        try {
+          withCashRng(() => {
+            if (yearI > 0) self._offSeason(U, cfg);
+            seasons.push(self._runSeasonInner(cfg, U, yearI + 1));
+          });
+        } catch (e) {
+          restoreEnv();
+          throw e;
+        }
+        yearI++;
+        return { done: yearI >= nSeasons, step: yearI, total: nSeasons };
+      },
+      abort() { aborted = true; restoreEnv(); },
+      result() {
+        try {
+          // Build finalTop using a final withCashRng wrap to match the original (negligible RNG use)
+          withCashRng(() => {
+            const NpopC = U.length, bySkillC = U.slice().sort((a, b) => b.skill - a.skill), skR = new Map();
+            bySkillC.forEach((p, i) => skR.set(p.id, i + 1));
+            const finalTop = U.slice().sort((a, b) => (b.rating.mu - a.rating.mu) || (a.id - b.id)).slice(0, 25)
+              .map((p, i) => ({ rank: i + 1, id: p.id, name: p.name, skill: +p.skill.toFixed(3), skillRank: skR.get(p.id), skillPct: +(NpopC > 1 ? 1 - (skR.get(p.id) - 1) / (NpopC - 1) : 1).toFixed(3), hiveRating: self.hiveRating(p.rating), rd: Math.round(400 * self.rdOf(p.rating)), vol: +(p.rating.vol || 1).toFixed(2), events: p.rating.events, majorsPlayed: (p.majorsPlayed || 0), careerEarnings: +p.earnings.toFixed(2), bestFinish: p.bestFinish, jacketWins: p.jacketWins, majorWins: p.majorWins, regularWins: p.regularWins }));
+            seasons._finalTop = finalTop;
+          });
+        } finally { restoreEnv(); }
+        const last = seasons[seasons.length - 1];
+        return {
+          config: { holesPerRound: cfg.holesPerRound, majorHoles: cfg.majorHoles, mainHoles: cfg.mainHoles, nRegulars: cfg.nRegulars, nMajors: cfg.nMajors, universeSize: cfg.universeSize, regularField: cfg.regularField, majorField: cfg.majorField, mainField: cfg.mainField, minEventsForCrown: cfg.minEventsForCrown, omega: cfg.omega, finaleMode: cfg.finaleMode, finaleTargetWinProb: cfg.finaleTargetWinProb, skillSpread: cfg.skillSpread, skillCurve: cfg.skillCurve, honeyCapMode: cfg.honeyCapMode, seed: seedStr, nSeasons: nSeasons },
+          seasons: seasons,
+          finalTop: seasons._finalTop || (last ? last.ratingTop : []),
+          lastSeason: last,
+          careerLog: seasons.map(s => ({ year: s.year, crown: s.hiveCrown.name + ' (skill ' + Math.round(s.hiveCrown.skillPct * 100) + '%ile)', jacket: s.yellowJacket.name + ' (skill ' + Math.round(s.yellowJacket.skillPct * 100) + '%ile, season #' + s.yellowJacket.seasonRatingRank + ')', riser: s.mover.riser.name + ' (+' + s.mover.riser.delta.toFixed(2) + ')', rhoSeason: s.skill.rhoSeason, rhoMain: s.skill.rhoMain })),
+        };
+      },
+    };
+  },
+
   runCareer(cfg, seedStr, nSeasons) {
     cfg = this._norm(cfg); nSeasons = Math.max(1, Math.round(+nSeasons || 1));
     seedStr = String(seedStr || ('hive-' + Date.now()));
@@ -6554,7 +6655,22 @@ function renderSeasonRunCard(out) {
   // serializes the current `out` object (which carries `_tab`, `_subBoard`,
   // `_cal`, `_cer*`) to localStorage under yj_season_center_v1. Catches every
   // tab click, sub-board switch, ceremony play, calendar step.
-  const _persistSeasonCenter = () => { try { getStorage().setItem('yj_season_center_v1', JSON.stringify(out)); } catch (_) {} };
+  //
+  // v69.111 — DEBOUNCED to 150ms. The prior every-render-stringify was burning
+  // 30-300KB of JSON.stringify on every tab click / sub-board switch / calendar
+  // step — that's main-thread work that compounds with the engine and was one
+  // of the three vectors fingered for the spectator-crash report. Coalescing
+  // is safe because the data is "last-write-wins UI state", not auditable
+  // event stream — losing a 150ms-old _tab toggle on a sudden tab close costs
+  // exactly one click of restoration on the next session.
+  let _persistSeasonCenterT = null;
+  const _persistSeasonCenter = () => {
+    if (_persistSeasonCenterT) clearTimeout(_persistSeasonCenterT);
+    _persistSeasonCenterT = setTimeout(() => {
+      _persistSeasonCenterT = null;
+      try { getStorage().setItem('yj_season_center_v1', JSON.stringify(out)); } catch (_) {}
+    }, 150);
+  };
   function render() {
     clear(tabBar);
     TABS.forEach(t => {
@@ -21741,8 +21857,12 @@ Views.spectator = function() {
       evLossNoise: (ss.evLossPhase === 'p2') ? 1.2 : 0.5,    // Phase 1 = clean AI grading; Phase 2 = solver-fit residual
     });
     if (ss.running && ss.studyJob) {
-      // chunked study in progress — live progress + a Stop button (the tab stays responsive)
-      const prog = el('div', { 'data-season-progress': '1', style: 'padding:10px 12px; border-radius:5px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.28); font-size:12px; color:#F0C75E; flex:1 1 320px;', text: '⏳ Season study — ' + (ss.studyProgress ? (ss.studyProgress.done + '/' + ss.studyProgress.total + ' · ' + ss.studyProgress.label) : 'starting…') + '  ·  ≈ ' + ((ss.studyJob.estimatedHands || 0) / 1e6).toFixed(0) + 'M hands' });
+      // chunked study/career in progress — live progress + a Stop button (the tab stays responsive)
+      // v69.111 — banner label keys off the job's _label tag, so the chunked
+      // Run-a-season driver can show "Career simulation" while the existing
+      // study driver still shows "Season study".
+      const _jobLabel = (ss.studyJob && ss.studyJob._label) || 'Season study';
+      const prog = el('div', { 'data-season-progress': '1', style: 'padding:10px 12px; border-radius:5px; background:rgba(212,160,23,0.10); border:1px solid rgba(212,160,23,0.28); font-size:12px; color:#F0C75E; flex:1 1 320px;', text: '⏳ ' + _jobLabel + ' — ' + (ss.studyProgress ? (ss.studyProgress.done + '/' + ss.studyProgress.total + ' · ' + ss.studyProgress.label) : 'starting…') + '  ·  ≈ ' + ((ss.studyJob.estimatedHands || 0) / 1e6).toFixed(0) + 'M hands' });
       const stopBtn = el('button', { class: 'btn ghost', style: 'font-size:11px;', text: '⏹ Stop' });
       stopBtn.onclick = () => { try { if (ss.studyJob) ss.studyJob.abort(); } catch (_) {} };
       seasonCard.appendChild(el('div', { style: 'display:flex; gap:8px; align-items:center; flex-wrap:wrap;' }, prog, stopBtn));
@@ -21764,16 +21884,53 @@ Views.spectator = function() {
       const btnRow = el('div', { style: 'display:flex; gap:8px; flex-wrap:wrap; align-items:center;' });
       const runBtn = el('button', { class: 'btn gold', style: 'font-size:11px;', text: (ss.nSeasons > 1 ? ('▶ Run ' + (ss.nSeasons | 0) + '-season career') : '▶ Run a season') });
       runBtn.onclick = () => {
-        ss.running = true; ss.studyJob = null; ss.phase = (ss.nSeasons > 1 ? 'Simulating a ' + (ss.nSeasons | 0) + '-season career…' : 'Simulating a season…'); ss.lastRun = null;
+        // v69.111 — CHUNKED Run-a-season/career. Was monolithic sync runCareer
+        // which blocked the main thread 5-20s per season; for 6-season careers
+        // at production fields that's well past the browser's "Page Unresponsive"
+        // threshold and was the dominant vector of the spectator-crash report.
+        //
+        // The new path drives Season.startCareer() one season per tick with a
+        // 0ms yield between, mirroring the existing study driver. The tab stays
+        // responsive between seasons, the ⏹ Stop button works, and progress
+        // updates live (we mutate the banner's textContent directly via
+        // data-season-progress, no full re-render, for cheap intra-run updates).
+        //
+        // Determinism preserved: the LCG seed state `s` is global so the
+        // chunked driver is bit-identical to the prior sync call (same seeds,
+        // same universe, same per-season RNG draws).
+        let job = null;
+        try { job = Season.startCareer(buildCfg(), 'hive-' + Date.now(), ss.nSeasons | 0); }
+        catch (e) { ss.running = false; ss.studyJob = null; ss.phase = 'Error: ' + (e && e.message ? e.message : e); ss.lastRun = null; Views.spectator(); alert(e && e.message ? e.message : e); return; }
+        // Tag the job so the shared progress banner shows the right label.
+        job._label = (ss.nSeasons > 1 ? 'Career simulation (' + (ss.nSeasons | 0) + ' seasons)' : 'Season simulation');
+        ss.running = true; ss.lastRun = null; ss.studyJob = job; ss.studyProgress = { done: 0, total: job.totalSteps, label: 'starting…' }; ss.phase = null; ss.lastStudy = null;
         Views.spectator();
-        setTimeout(() => {
-          try { ss.lastRun = Season.runCareer(buildCfg(), 'hive-' + Date.now(), ss.nSeasons | 0); }
-          catch (e) { ss.running = false; ss.phase = 'Error: ' + (e && e.message ? e.message : e); Views.spectator(); return; }
-          ss.running = false; ss.phase = null;
-          // v69.108 — persist the Season Center result to localStorage on success
-          try { getStorage().setItem('yj_season_center_v1', JSON.stringify(ss.lastRun)); } catch (_) {}
-          Views.spectator();
-        }, 60);
+        const tick = () => {
+          if (!ss.studyJob || ss.studyJob !== job) { return; }   // a new study/run superseded this one
+          let r;
+          try { r = job.runNextSeason(); }
+          catch (e) { try { job.abort(); } catch (_) {} ss.studyJob = null; ss.running = false; ss.phase = 'Error: ' + (e && e.message ? e.message : e); Views.spectator(); return; }
+          ss.studyProgress = { done: r.step, total: r.total, label: 'season ' + r.step + ' / ' + r.total };
+          // Cheap intra-run update: just rewrite the banner's textContent. No
+          // full Views.spectator() rerender between seasons — that would burn
+          // the whole DOM tree every few seconds and defeat the chunking win.
+          try { const pe = $('[data-season-progress]'); if (pe) pe.textContent = '⏳ ' + job._label + ' — ' + ss.studyProgress.done + '/' + ss.studyProgress.total + ' · ' + ss.studyProgress.label + '  ·  ≈ ' + ((job.estimatedHands || 0) / 1e6).toFixed(0) + 'M hands'; } catch (_) {}
+          if (r.done || r.aborted) {
+            const wasAborted = !!r.aborted;
+            try {
+              if (!wasAborted) {
+                ss.lastRun = job.result();
+                try { getStorage().setItem('yj_season_center_v1', JSON.stringify(ss.lastRun)); } catch (_) {}
+              } else {
+                try { job.abort(); } catch (_) {}   // ensure env restored
+              }
+            } catch (e) { ss.phase = 'Error finalizing: ' + (e && e.message ? e.message : e); }
+            ss.studyJob = null; ss.running = false; ss.studyProgress = null;
+            Views.spectator(); return;
+          }
+          setTimeout(tick, 0);
+        };
+        setTimeout(tick, 30);
       };
       btnRow.appendChild(runBtn);
       // v69.110 (P2-1) — SAMPLE-SEASON PREVIEW. When the user has no completed run
