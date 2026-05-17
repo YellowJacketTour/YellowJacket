@@ -2783,7 +2783,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.119-cash-top-arc-locked-felt";
+const APP_VERSION = "2026.05.13-v69.119a-cash-render-fix";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -15611,12 +15611,19 @@ function updateCashCardInPlace(t, cardNode) {
       let chipsEl = feltParent ? feltParent.querySelector('.bet-chips[data-bet-for="' + i + '"]') : null;
       const hasBet = handState && handState.bets && handState.bets[i];
       if (hasBet && feltParent) {
-        const displayIdx = parseInt(seatEl.getAttribute('data-display-idx') || '0', 10);
-        const angle = (displayIdx / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
-        const x = 50 + Math.cos(angle) * 54;
-        const y = 50 + Math.sin(angle) * 50;
+        // v69.119 — top-arc opponent positioning (mirrors renderCashTableView).
+        // data-display-idx now holds the OPPONENT slot index (0..N-1) so we
+        // reconstruct the angle from the same arcStart/arcSpan formula.
+        const slotIdx = parseInt(seatEl.getAttribute('data-display-idx') || '0', 10);
+        const oppCount = Math.max(1, (t.maxSeats - 1));
+        const arcStart_ = Math.PI * (-150 / 180);
+        const arcEnd_   = Math.PI * (-30 / 180);
+        const t01_      = (oppCount <= 1) ? 0.5 : (slotIdx / (oppCount - 1));
+        const angle = arcStart_ + t01_ * (arcEnd_ - arcStart_);
+        const x = 50 + Math.cos(angle) * 48;   // SEAT_RADIUS_X
+        const y = 50 + Math.sin(angle) * 36;   // SEAT_RADIUS_Y
         const chipX = (x + 50) / 2;
-        const chipY = (y + 58) / 2;
+        const chipY = (y + 50) / 2;            // POT_CENTER_Y now 50 (was 58)
         const newChipsEl = renderBetChipStack(handState.bets[i]);
         newChipsEl.style.left = chipX + '%';
         newChipsEl.style.top = chipY + '%';
@@ -15651,13 +15658,17 @@ function updateCashCardInPlace(t, cardNode) {
         handState.phase !== 'complete' && handState.phase !== 'idle' && handState.phase != null &&
         !isFolded && handState.hole && handState.hole[i]);
       if (shouldShowOppCards && !oppCardsEl && feltParent2) {
-        // Compute position from the seat's own ellipse coordinates (v69.33 radii)
-        const displayIdx2 = parseInt(seatEl.getAttribute('data-display-idx') || '0', 10);
-        const angle2 = (displayIdx2 / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
-        const x2 = 50 + Math.cos(angle2) * 54;
-        const y2 = 50 + Math.sin(angle2) * 50;
+        // v69.119 — top-arc opponent positioning (same as bet-chip math above).
+        const slotIdx2 = parseInt(seatEl.getAttribute('data-display-idx') || '0', 10);
+        const oppCount2 = Math.max(1, (t.maxSeats - 1));
+        const arcStart2 = Math.PI * (-150 / 180);
+        const arcEnd2   = Math.PI * (-30 / 180);
+        const t01_2     = (oppCount2 <= 1) ? 0.5 : (slotIdx2 / (oppCount2 - 1));
+        const angle2 = arcStart2 + t01_2 * (arcEnd2 - arcStart2);
+        const x2 = 50 + Math.cos(angle2) * 48;
+        const y2 = 50 + Math.sin(angle2) * 36;
         const oppX = x2 + 0.28 * (50 - x2);
-        const oppY = y2 + 0.28 * (58 - y2);
+        const oppY = y2 + 0.28 * (50 - y2);    // POT_CENTER_Y now 50
         const newOpp = el('div', {
           class: 'opp-cards',
           'data-opp-cards-for': String(i),
@@ -15986,7 +15997,7 @@ function renderCashTableView(tableId) {
         ? 'Seat ' + (i + 1) + ': ' + s.name + ', stack ' + Math.round(s.stack) + (handState && handState.actingSeat === i ? ', acting' : '') + (handState && handState.folded && handState.folded[i] ? ', folded' : '')
         : 'Open seat ' + (i + 1) + ' (click to sit)',
       'data-seat-idx': String(i),
-      'data-display-idx': String(displayIdx),
+      'data-display-idx': String(slotIdx),
     });
     if (s) {
       // v69.28 — slim seat plate: avatar (circle with initials) + name + stack.
@@ -16130,9 +16141,9 @@ function renderCashTableView(tableId) {
     // shown on the seat plate. The chip stack is sized + colored by bet
     // amount per renderBetChipStack().
     if (s && handState && handState.bets && handState.bets[i]) {
-      // Pot center is at (50%, 58%); seat center at (x, y) computed above.
+      // v69.119 — pot center is now (50%, 50%) (was 58%); seat center at (x, y).
       const chipX = (x + 50) / 2;
-      const chipY = (y + 58) / 2;
+      const chipY = (y + 50) / 2;
       const chipsEl = renderBetChipStack(handState.bets[i]);
       chipsEl.style.left = chipX + '%';
       chipsEl.style.top = chipY + '%';
@@ -16148,7 +16159,7 @@ function renderCashTableView(tableId) {
         !(handState.folded && handState.folded[i]) &&
         handState.hole && handState.hole[i]) {
       const oppX = x + 0.28 * (50 - x);
-      const oppY = y + 0.28 * (58 - y);
+      const oppY = y + 0.28 * (50 - y);   // v69.119 — POT_CENTER_Y is 50% now
       const oppCards = el('div', {
         class: 'opp-cards',
         'data-opp-cards-for': String(i),
