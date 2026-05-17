@@ -2957,7 +2957,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.17-v69.128-yjsacred-audit-finishing";
+const APP_VERSION = "2026.05.17-v69.129-yjsacred-cash-tightened";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -32005,30 +32005,38 @@ function updateMusicUI() {
      • Long-term statistical edge exploitation by skilled players — that's
        not a fairness defect, it's the game.
 
-   LIMITATIONS OF THE CLIENT-CODE FINGERPRINT (v69.128 honesty edit)
-     clientCodeHash() SHA-256s only the largest inline <script> in the
-     document — the main app payload. A sophisticated attacker can in
-     principle craft a patched bundle whose largest inline block hashes
-     identically (e.g. injecting behavior via a smaller <script>, via a
-     monkey-patch loaded into a different bundle, or via DOM-injected
-     handlers) so the same fingerprint covers a different behavior set.
-     This is inherent to the single-file model: there is no build-time
-     attestation here, and the runtime can't distinguish "the script I
-     loaded" from "the script someone replaced before I ran." Defense-in-
-     depth for this case lives in the partner server (binary attestation,
-     per-session client integrity checks against the published fingerprint
-     allowlist, behavioral analytics).
+   LIMITATIONS OF CLIENT CODE FINGERPRINTING (v69.129)
+     clientCodeHash() computes a SHA-256 over only the largest inline
+     <script> element in the document. A sophisticated attacker can modify
+     behavior through smaller scripts, DOM-injected handlers, prototype
+     pollution, or by replacing the script after the hash is computed but
+     before critical functions run. Because this is a single-file
+     application with no build-time attestation or subresource integrity
+     on the main payload, the fingerprint provides only weak integrity
+     protection. It is useful for detecting naive tampering but should not
+     be treated as strong evidence that the client executed exactly the
+     published code. Defense-in-depth for this lives in the partner server
+     (binary attestation, per-session integrity checks against the
+     published fingerprint allowlist, behavioral analytics).
 
-   LIMITATIONS OF REPLAY ASSURANCE
-     Pre-v69.125 transcripts (built before per-hole deal capture) carry
-     only running totals. replayMatch returns lowAssurance:true on these:
-     a forger who keeps the running totals self-consistent can pass the
-     verifier. The Sacred Ledger view surfaces this with an amber "low
-     assurance" chip; the partner should reject low-assurance transcripts
-     for any high-value decision. Cash-hand replay (replayCashHand) does
-     structural sanity on the captured action log but does NOT reconstruct
-     full pot / chip math from actions — the engine is trusted for those.
-     The partner server should re-run the betting state machine.
+   LIMITATIONS OF REPLAY ASSURANCE (v69.129)
+     Transcripts created before v69.125 lack per-hole deal capture. For
+     these, replayMatch can only compare running totals; a forger who
+     keeps aggregates self-consistent can pass verification. Such
+     transcripts are marked lowAssurance:true, and the Sacred Ledger view
+     surfaces this with an amber "low assurance" chip; the partner should
+     reject low-assurance transcripts for any high-value decision.
+       Cash-hand transcripts (replayCashHand) perform tightened structural
+     sanity on the action log — known kinds, monotonic timestamps,
+     monotonic street progression (preflop→flop→turn→river), positive and
+     strictly-increasing bet/raise/all-in amounts per street, folded seats
+     cannot act again, and a Σ-per-seat-per-street pot lower bound — but
+     do NOT fully reconstruct pot sizes, chip movements, or enforce
+     complete poker betting rules across streets. The engine is still
+     trusted for final settlement math. Cash transcripts return
+     lowAssurance:false only after passing these structural checks; they
+     are still weaker than full server-side re-execution of the betting
+     state machine, which the partner server should perform.
 
    This module is strictly client-side and versioned (transcriptSchema:"v1.0").
    The partner's server reads what this emits and layers their anti-cheat
@@ -32688,27 +32696,40 @@ const YJSacred = (() => {
         return { ok: false, mismatch: 'eval-error: ' + (e && e.message ? e.message : e) };
       }
     }
-    // v69.128 — structural action-log sanity. We don't reconstruct the full
-    // pot / chip math here (the partner server should re-run the betting
-    // state machine for that); we DO check that the action log is internally
-    // consistent so the most obvious forgeries are caught:
-    //   (a) every action carries the four required fields (kind, ts, and
-    //       either seatIdx or playerId, with a known kind)
-    //   (b) timestamps are non-decreasing
-    //   (c) bet/raise amounts strictly increase per street relative to the
-    //       prior bet/raise on that street (no "raise" that's smaller than
-    //       the current bet)
-    //   (d) the claimed pot, if present, is >= the highest "amount" any
-    //       single action committed (a hand can't end with a pot smaller
-    //       than any one player's stake)
-    // Returns { ok, mismatch } in the same shape as the rest of the replay
-    // surface. The flag lowAssurance:false means "we DID structural checks";
-    // a full chip-math verifier on the server raises this to high assurance.
+    // v69.129 — tightened structural action-log sanity. The v128 version
+    // had five real bypasses (Grok 2026-05-17 siege): missing `street`
+    // collapsed per-street tracking, `allin` skipped the increasing-amount
+    // rule, the pot bound was just max-single-action (not Σ commitments),
+    // street ordering was unenforced, and a folded seat could keep acting.
+    // This version closes all five while explicitly NOT trying to be a
+    // full betting state machine (which remains the partner server's job).
+    //
+    // Checks:
+    //   (a) every action is an object with a known kind
+    //   (b) any betting action (bet/raise/allin) requires:
+    //         - street ∈ {preflop, flop, turn, river}
+    //         - amount > 0
+    //         - amount strictly exceeds the prior commitment on that street
+    //   (c) streets progress monotonically forward (no flop→preflop, no
+    //       turn→flop)
+    //   (d) timestamps are non-decreasing (1ms slack)
+    //   (e) a seat that fold-ed does not act again
+    //   (f) claimed pot, if present, is >= Σ per-seat-per-street max
+    //       commitment across bet/raise/call/allin (the engine-agnostic
+    //       lower bound: every chip in the pot was put there by someone)
+    //
+    // lowAssurance:false means structural checks passed; server-side
+    // pot/chip-math re-execution is still the source of truth.
     const actions = Array.isArray(transcript.actions) ? transcript.actions : [];
     const KNOWN_KINDS = { fold: 1, check: 1, call: 1, bet: 1, raise: 1, post: 1, allin: 1, 'all-in': 1 };
+    const BETTING_KINDS = { bet: 1, raise: 1, allin: 1, 'all-in': 1 };
+    const COMMITTING_KINDS = { bet: 1, raise: 1, call: 1, allin: 1, 'all-in': 1 };
+    const STREET_ORDER = { preflop: 0, flop: 1, turn: 2, river: 3 };
     let lastTs = -Infinity;
-    let maxAmount = 0;
-    const lastBetByStreet = Object.create(null);
+    let highestStreetSeen = -1;
+    const lastCommitByStreet = Object.create(null);   // street -> max amount committed by ANY seat so far
+    const seatStreetMax = Object.create(null);        // "seatKey|street" -> max commit by this seat on this street
+    const foldedSeats = Object.create(null);
     for (let i = 0; i < actions.length; i++) {
       const a = actions[i];
       if (!a || typeof a !== 'object') {
@@ -32718,25 +32739,61 @@ const YJSacred = (() => {
         return { ok: false, mismatch: 'action[' + i + '] unknown kind: ' + a.kind, lowAssurance: false };
       }
       if (typeof a.ts === 'number') {
-        if (a.ts < lastTs - 1) {   // 1ms slack for clock jitter
+        if (a.ts < lastTs - 1) {
           return { ok: false, mismatch: 'action[' + i + '] timestamp decreased', lowAssurance: false };
         }
         lastTs = a.ts;
       }
-      if ((a.kind === 'bet' || a.kind === 'raise') && typeof a.amount === 'number' && Number.isFinite(a.amount)) {
-        const street = a.street || '_';
-        const prior = lastBetByStreet[street] || 0;
-        if (a.amount <= prior) {
-          return { ok: false, mismatch: 'action[' + i + '] ' + a.kind + ' amount ' + a.amount + ' did not exceed prior street bet ' + prior, lowAssurance: false };
-        }
-        lastBetByStreet[street] = a.amount;
-        if (a.amount > maxAmount) maxAmount = a.amount;
+      const seatKey = (a.seatIdx != null) ? ('s' + a.seatIdx) : (a.playerId != null ? 'p' + a.playerId : null);
+      if (seatKey && foldedSeats[seatKey] && a.kind !== 'post') {
+        return { ok: false, mismatch: 'action[' + i + '] seat ' + seatKey + ' acted after folding', lowAssurance: false };
       }
+      // Street validation: `post` (blinds) typically has no street; everything
+      // else with a street field must be one of the four canonical streets.
+      if (a.street != null) {
+        if (!Object.prototype.hasOwnProperty.call(STREET_ORDER, a.street)) {
+          return { ok: false, mismatch: 'action[' + i + '] unknown street: ' + a.street, lowAssurance: false };
+        }
+        const sIdx = STREET_ORDER[a.street];
+        if (sIdx < highestStreetSeen) {
+          return { ok: false, mismatch: 'action[' + i + '] street ' + a.street + ' precedes a later street already seen', lowAssurance: false };
+        }
+        if (sIdx > highestStreetSeen) highestStreetSeen = sIdx;
+      }
+      // Betting actions: require street, positive amount, strictly-increasing
+      // amount vs the prior commitment on this street (any seat).
+      if (BETTING_KINDS[a.kind]) {
+        if (a.street == null) {
+          return { ok: false, mismatch: 'action[' + i + '] ' + a.kind + ' missing required street', lowAssurance: false };
+        }
+        if (typeof a.amount !== 'number' || !Number.isFinite(a.amount) || a.amount <= 0) {
+          return { ok: false, mismatch: 'action[' + i + '] ' + a.kind + ' amount must be a positive finite number', lowAssurance: false };
+        }
+        const prior = lastCommitByStreet[a.street] || 0;
+        if (a.amount <= prior) {
+          return { ok: false, mismatch: 'action[' + i + '] ' + a.kind + ' amount ' + a.amount + ' did not exceed prior street commitment ' + prior, lowAssurance: false };
+        }
+        lastCommitByStreet[a.street] = a.amount;
+      }
+      // Pot-bound bookkeeping: track each seat's max commitment per street.
+      if (COMMITTING_KINDS[a.kind] && seatKey && a.street != null && typeof a.amount === 'number' && Number.isFinite(a.amount) && a.amount > 0) {
+        const key = seatKey + '|' + a.street;
+        if ((seatStreetMax[key] || 0) < a.amount) seatStreetMax[key] = a.amount;
+      }
+      if (a.kind === 'fold' && seatKey) foldedSeats[seatKey] = true;
     }
-    if (typeof transcript.pot === 'number' && Number.isFinite(transcript.pot) && transcript.pot < maxAmount) {
-      return { ok: false, mismatch: 'claimed pot ' + transcript.pot + ' is less than max single-action amount ' + maxAmount, lowAssurance: false };
+    // Pot lower bound: sum of every seat's max commitment per street. Every
+    // chip in the pot was contributed by exactly one seat on exactly one
+    // street; the max-commitment-per-street is a lower bound (a seat may
+    // have committed more if they raised multiple times on one street, but
+    // the FINAL commitment for that street IS the max). pot must be at
+    // least this sum.
+    let potLowerBound = 0;
+    for (const k in seatStreetMax) potLowerBound += seatStreetMax[k];
+    if (typeof transcript.pot === 'number' && Number.isFinite(transcript.pot) && transcript.pot < potLowerBound) {
+      return { ok: false, mismatch: 'claimed pot ' + transcript.pot + ' is less than Σ per-seat-per-street commitment lower bound ' + potLowerBound, lowAssurance: false };
     }
-    return { ok: true, mismatch: null, lowAssurance: false, actionsChecked: actions.length };
+    return { ok: true, mismatch: null, lowAssurance: false, actionsChecked: actions.length, potLowerBound };
   }
 
   // verifyTranscript — dispatch on the mode field and return a uniform
