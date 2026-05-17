@@ -600,7 +600,10 @@
   /* v69.28 — pot moved DOWN to y=58% (below community cards at y=42%).
      This is the proper poker UI hierarchy: community cards above, pot below. */
   .pot-display {
-    position: absolute; left: 50%; top: 58%; transform: translate(-50%, -50%);
+    /* v69.119b — moved from top:58% (was tied to old SEAT_RADIUS_Y=50 ellipse)
+       to top:55% so the pot sits visually below the board cards (at top:42%)
+       with a clean gap, and well within the locked 420px felt. */
+    position: absolute; left: 50%; top: 55%; transform: translate(-50%, -50%);
     color: #F5F1E8; font-family: -apple-system, sans-serif;
     text-align: center; pointer-events: none;
     z-index: 5;
@@ -2543,8 +2546,17 @@
     transition: opacity 800ms ease-out;
   }
   .yj-3d-canvas.ready { opacity: 1; }
-  .felt-table > * { position: relative; z-index: 1; }
-  .felt-table > .yj-3d-canvas { z-index: 0; }
+  /* v69.119b — was `.felt-table > * { position: relative; z-index: 1; }` which
+     hammered every felt child to position:relative, overriding `.seat { position
+     absolute }` and making the seat-positioning math (top:X%; left:Y%) flow
+     in document order instead of absolute. The intent here is purely about
+     stacking on top of the 3D canvas — give children z-index without
+     clobbering their `position`. The 2D children that need to stay above the
+     3D canvas are: .seat, .bet-chips, .opp-cards, .pot-display, .board-row,
+     .hero-hole-cards, .felt-table-ring. All those have explicit z-index in
+     their own rules — they don't need this fallback. The 3D canvas itself
+     gets z-index: 0. */
+  .felt-table > .yj-3d-canvas { position: absolute; inset: 0; z-index: 0; }
   /* Phase I: celebration bloom — applied for ~2s on showdown wins.
      Boosts brightness/saturation + adds a gold drop-shadow halo around the
      canvas. Achieves an "Unreal Bloom"-style glow with zero shader cost. */
@@ -2783,7 +2795,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.119a-cash-render-fix";
+const APP_VERSION = "2026.05.13-v69.119b-felt-children-pos";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
