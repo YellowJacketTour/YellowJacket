@@ -2728,6 +2728,8 @@
 </style>
 <!-- Three.js (Phase B atmospheric layer · loaded async; gracefully degrades if blocked) -->
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js" crossorigin="anonymous" onload="window._yj3dReady = true;" onerror="window._yj3dReady = false; console.warn('YJ: Three.js CDN load failed — 3D atmospheric layer disabled.');"></script>
+<!-- Tone.js (v69.123 Golden Fairway music engine · loaded async; if CDN is blocked the music toggle gracefully disables and the app continues to work offline). -->
+<script src="https://unpkg.com/tone@14.8.49/build/Tone.js" crossorigin="anonymous" onload="window._yjToneReady = true;" onerror="window._yjToneReady = false; console.warn('YJ: Tone.js CDN load failed — Golden Fairway music disabled.');"></script>
 </head>
 <body>
 
@@ -2872,7 +2874,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.122-golden-fairway-music";
+const APP_VERSION = "2026.05.13-v69.123-tone-golden-fairway";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -31262,287 +31264,176 @@ function showActionIndicator(seatEl, action) {
 }
 
 /* ======================================================================
-   GOLDEN FAIRWAY v2 — v69.122 state-of-the-art generative background audio.
-   Pure Web Audio API · no external assets · client-side only.
-   Athletic · prestigious · reserved · quietly exciting — designed for the
-   golf-meets-poker energy of YJ. Three concurrent layers:
-     1. RICH PAD     — saw + square low oscillators through a slow LFO-modulated
-                       lowpass — the prestigious bed.
-     2. ATHLETIC PULSE — quiet ~88Hz sine pulse every 2 beats — the forward
-                       motion / drive of a long Sunday round.
-     3. MELODY VOICE — PHRASE-based generation (3–5 note phrases of chord-tones
-                       + occasional passing notes), advancing through a proper
-                       I–vi–IV–V chord progression with bar-aligned harmony
-                       changes and 8-bar modulations.
-   AudioContext is created on first user click (browser autoplay policy);
-   .resume() handles tabs that suspended us. Toggle + volume persist via
-   TourState.preferences.{musicEnabled, musicVolume}. The class is still
-   named NectarMusic so all the wiring (toggleMusic, init() restore, persisted
-   state) is unchanged across the v122 upgrade.
+   GOLDEN FAIRWAY — v69.123 production-grade generative music engine.
+   Powered by Tone.js (loaded async via CDN; falls back gracefully when the
+   library can't load — see _yjToneReady check below).
+   Athletic leisure · prestigious · reserved · quietly exciting.
+
+   Architecture:
+     • TRANSPORT at 82 BPM. Bar-aligned (1 bar = 4 beats).
+     • REVERB BUS (decay 2.8s · wet 0.22) — gives space and "expensive room".
+     • PAD VOICE (sine PolySynth, slow attack/release) — chord bed, soft.
+     • LEAD VOICE (saw PolySynth, sharp attack, long release) — melodic phrases.
+     • PULSE VOICE (sine MonoSynth, dedicated, distinct from lead) — ~half-beat
+       sub-pulse on every quarter note, the quiet athletic drive. The spec
+       hammered the lead synth for both melody AND pulse, which made the
+       lead muddy — we split them.
+     • Chord progression: Emaj7 → C#m7 → Amaj7 → B7. Real seventh chords
+       (the "expensive" sound) advancing one chord per bar.
+     • Phrases: 3–5 chord-tone notes per bar, with an occasional 5th-above
+       color tone and per-note random velocity in 0.5–0.9.
+
+   Spec-bug fixes shipped in this revision:
+     1. ASYNC INIT RACE — the original spec had start() call init() without
+        await; on the first click the loops were created BEFORE Tone.start()
+        and the synths existed, so nothing played. Now start() returns the
+        init promise and the loops are scheduled in the .then() chain.
+     2. PULSE-ON-LEAD CLASH — see above (now dedicated pulse synth).
+     3. NO CDN FALLBACK — if window._yjToneReady is false (offline/blocked
+        Tone.js), the toggle disables itself with a one-time toast instead
+        of silently no-op-ping or throwing.
+
+   Wiring (toggleMusic, init() restore, persisted prefs) is preserved across
+   the v122→v123 upgrade — the singleton variable is still `nectarMusic`.
    ====================================================================== */
-class NectarMusic {
+class GoldenFairway {
   constructor() {
-    this.audioContext = null;
-    this.masterGain = null;
     this.isPlaying = false;
-    this.volume = 0.62;
+    this.volume = 0.65;
+    this.initialized = false;
+    this.initPromise = null;
 
-    this.oscillators = [];
-    this.schedulerTimer = null;
-    this.nextNoteTime = 0;
+    // Tone instruments / loops — created in init().
+    this.lead = null;
+    this.pad = null;
+    this.pulse = null;
+    this.reverb = null;
+    this.loop = null;
+    this.pulseLoop = null;
+    this.currentChord = 0;
 
-    this.bpm = 82;
-    this.beatDuration = 60 / this.bpm;
-    this.currentBeat = 0;
-    this.currentBar = 0;
-
-    // Harmony — I–vi–IV–V (the prestigious progression, the one the cinema
-    // uses for "we won" moments — opens with the tonic, drops to a melancholy
-    // vi, lifts to the subdominant IV, then resolves on the dominant V back
-    // toward the tonic at the next bar boundary).
-    this.chordProgression = [0, 5, 3, 4];
-    this.currentChordIndex = 0;
-    this.rootNote = 52;   // E2-ish — gives the pad real weight
-
-    // Layer gain bus handles (filled in init).
-    this.padGain = null;
-    this.pulseGain = null;
-    this.melodyGain = null;
+    // Emaj7 → C#m7 → Amaj7 → B7. Real 7th chords.
+    this.chords = [
+      ['E3', 'G#3', 'B3', 'D#4'],   // Emaj7  — I
+      ['C#3', 'E3', 'G#3', 'B3'],   // C#m7   — vi
+      ['A2',  'C#3', 'E3', 'G#3'],  // Amaj7  — IV
+      ['B2',  'D#3', 'F#3', 'A#3'], // B7     — V
+    ];
   }
 
-  init() {
-    if (this.audioContext) return;
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) throw new Error('Web Audio not supported');
-      this.audioContext = new AC();
-      this.masterGain = this.audioContext.createGain();
-      this.masterGain.gain.value = this.volume;
-      this.masterGain.connect(this.audioContext.destination);
+  // Tone.js may not be on the page (CDN blocked, offline, CSP). Toggle gates
+  // on this so the music UI doesn't throw — see toggleMusic() for the toast.
+  static isAvailable() {
+    return !!(window.Tone && window._yjToneReady !== false);
+  }
 
-      this._createRichPad();
-      this._createAthleticPulse();
-      this._createMelodyLayer();
-    } catch (e) {
-      try { console.warn('[Golden Fairway v2] Init failed:', e); } catch (_) {}
-      this.audioContext = null;
+  // async — requires a user gesture (Tone.start() handles AudioContext resume).
+  // The spec's start() called init() without await, so on first click the
+  // loops were scheduled BEFORE the synths existed → silent no-op. We return
+  // the init promise here and chain loop creation off it in start().
+  async init() {
+    if (this.initialized) return;
+    if (!GoldenFairway.isAvailable()) throw new Error('Tone.js not available');
+
+    await Tone.start();   // Required for user-gesture autoplay
+
+    Tone.Destination.volume.value = Tone.gainToDb(this.volume);
+
+    // Reverb bus — the "expensive room" sound. Tone.Reverb is convolution-based,
+    // generates an impulse on .generate() (called implicitly on first use).
+    this.reverb = new Tone.Reverb({ decay: 2.8, wet: 0.22 }).toDestination();
+
+    // LEAD VOICE — sharp attack saw for melodic phrases, long release for tail.
+    this.lead = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'sawtooth' },
+      envelope: { attack: 0.01, decay: 0.6, sustain: 0.3, release: 1.8 },
+    }).connect(this.reverb);
+    this.lead.volume.value = -8;     // sit slightly under unity for headroom
+
+    // PAD VOICE — slow sine swell, soft chord bed. Below the lead by ~10 dB.
+    this.pad = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.8, decay: 1.2, sustain: 0.6, release: 3 },
+    }).connect(this.reverb);
+    this.pad.volume.value = -18;
+
+    // DEDICATED PULSE VOICE — distinct from the lead so the sub-pulse doesn't
+    // muddle the melodic phrasing (spec bug #2). Quiet, filtered sine, even
+    // softer than the pad.
+    this.pulse = new Tone.MembraneSynth({
+      pitchDecay: 0.04,
+      octaves: 2.2,
+      envelope: { attack: 0.001, decay: 0.18, sustain: 0, release: 0.2 },
+    }).toDestination();
+    this.pulse.volume.value = -22;
+
+    this.initialized = true;
+  }
+
+  // 3–5 note phrase per bar. Chord-tone biased (root/3rd/5th/7th) with an
+  // occasional 5th-above color tone for a touch of forward-looking
+  // anticipation. Per-note velocity for human-feel.
+  _playMelodicPhrase(time, chord) {
+    const notes = chord.slice();
+    if (Math.random() > 0.6) {
+      try { notes.push(Tone.Frequency(chord[0]).transpose(7).toNote()); } catch (_) {}
     }
-  }
-
-  // === LAYER 1: Rich Prestigious Pad — the bed of the piece.
-  _createRichPad() {
-    const osc1 = this.audioContext.createOscillator();
-    osc1.type = 'sawtooth';
-    osc1.frequency.value = 104;
-
-    const osc2 = this.audioContext.createOscillator();
-    osc2.type = 'square';
-    osc2.frequency.value = 104.6;
-
-    const filter = this.audioContext.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 680;
-
-    const gain = this.audioContext.createGain();
-    gain.gain.value = 0.11;
-
-    const lfo = this.audioContext.createOscillator();
-    lfo.type = 'sine';
-    lfo.frequency.value = 0.035;
-    const lfoGain = this.audioContext.createGain();
-    lfoGain.gain.value = 120;
-    lfo.connect(lfoGain);
-    lfoGain.connect(filter.frequency);
-    lfo.start();
-
-    osc1.connect(filter);
-    osc2.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.masterGain);
-    osc1.start();
-    osc2.start();
-
-    this.oscillators.push(osc1, osc2, lfo);
-    this.padGain = gain;
-  }
-
-  // === LAYER 2: Athletic Pulse — the quiet forward drive. Bus only here;
-  // individual pulse notes are scheduled in _playPulse on every other beat.
-  _createAthleticPulse() {
-    this.pulseGain = this.audioContext.createGain();
-    this.pulseGain.gain.value = 0.07;
-
-    const filter = this.audioContext.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 220;
-
-    this.pulseGain.connect(filter);
-    filter.connect(this.masterGain);
-  }
-
-  // === LAYER 3: Melody bus — phrase-generated notes route through here.
-  _createMelodyLayer() {
-    this.melodyGain = this.audioContext.createGain();
-    this.melodyGain.gain.value = 0.26;
-
-    const filter = this.audioContext.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 2400;
-
-    this.melodyGain.connect(filter);
-    filter.connect(this.masterGain);
-  }
-
-  // === SCHEDULER — bar-aligned, phrase-emitting. Advances harmony every 4
-  // beats (1 bar). Occasionally modulates the root every 8 bars for long-term
-  // interest. Schedules ahead ~3.2s; setTimeout self-reschedules.
-  schedule() {
-    if (!this.isPlaying || !this.audioContext) return;
-    const now = this.audioContext.currentTime;
-
-    while (this.nextNoteTime < now + 3.2) {
-      this._playPhrase(this.nextNoteTime);
-      this._playPulse(this.nextNoteTime);
-
-      this.currentBeat++;
-      if (this.currentBeat % 4 === 0) {
-        this.currentBar++;
-        this._advanceHarmony();
-      }
-
-      // Musical spacing between phrase starts — small swing, never mechanical.
-      this.nextNoteTime += this.beatDuration * (1.1 + Math.random() * 0.6);
-    }
-
-    const delay = Math.max(40, (this.nextNoteTime - now) * 1000 - 120);
-    this.schedulerTimer = setTimeout(() => this.schedule(), delay);
-  }
-
-  _advanceHarmony() {
-    this.currentChordIndex = (this.currentChordIndex + 1) % this.chordProgression.length;
-    // Subtle root modulation every 8 bars — keeps a long session from feeling
-    // looped. Bounded so we don't drift the pad out of its sweet range.
-    if (this.currentBar % 8 === 0 && Math.random() < 0.3) {
-      this.rootNote = Math.max(48, Math.min(56, this.rootNote + (Math.random() > 0.5 ? 2 : -2)));
-    }
-  }
-
-  // A tasteful 3–5 note phrase. Chord-tone biased (0, 4, 7, 11 — root, third,
-  // fifth, major-seventh of the current chord) with occasional passing tones
-  // (2, 5, 9) and rare octave lifts for moments of forward excitement.
-  _playPhrase(startTime) {
-    const chordOffset = this.chordProgression[this.currentChordIndex];
-    const baseNote = this.rootNote + chordOffset;
-
+    let t = time + 0.1;
     const phraseLength = 3 + Math.floor(Math.random() * 3);
-    let time = startTime;
-
     for (let i = 0; i < phraseLength; i++) {
-      const isChordTone = Math.random() > 0.35;
-      let note;
-      if (isChordTone) {
-        note = baseNote + [0, 4, 7, 11][Math.floor(Math.random() * 4)];
-      } else {
-        note = baseNote + [2, 5, 9][Math.floor(Math.random() * 3)];
-      }
-      if (Math.random() < 0.18) note += 12;
-      this._playNote(note, time, 0.55 + Math.random() * 0.35);
-      time += this.beatDuration * (0.6 + Math.random() * 0.5);
+      const note = notes[Math.floor(Math.random() * notes.length)];
+      const velocity = 0.5 + Math.random() * 0.4;
+      try { this.lead.triggerAttackRelease(note, '8n', t, velocity); } catch (_) {}
+      t += 0.28 + Math.random() * 0.25;
     }
-  }
-
-  _playNote(midiNote, time, velocity) {
-    const v = (velocity == null) ? 0.7 : velocity;
-    const freq = 440 * Math.pow(2, (midiNote - 69) / 12);
-
-    const osc = this.audioContext.createOscillator();
-    osc.type = Math.random() > 0.5 ? 'sawtooth' : 'triangle';
-    osc.frequency.value = freq;
-
-    const gain = this.audioContext.createGain();
-    const filter = this.audioContext.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 1600 + Math.random() * 800;
-
-    const atk = 0.035;
-    const release = 0.7 + Math.random() * 1.1;
-
-    gain.gain.value = 0;
-    gain.gain.setValueAtTime(0, time);
-    gain.gain.linearRampToValueAtTime(v, time + atk);
-    gain.gain.setTargetAtTime(0.0001, time + atk + 0.08, release);
-
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.melodyGain);
-
-    osc.start(time);
-    osc.stop(time + atk + release * 2.5);
-  }
-
-  _playPulse(time) {
-    if (this.currentBeat % 2 !== 0) return;
-
-    const osc = this.audioContext.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = 88;
-
-    const gain = this.audioContext.createGain();
-    gain.gain.value = 0.22;
-
-    const filter = this.audioContext.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 180;
-
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.pulseGain);
-
-    osc.start(time);
-    gain.gain.setTargetAtTime(0.0001, time + 0.06, 0.8);
-    osc.stop(time + 1.4);
   }
 
   start() {
-    if (this.isPlaying) return;
-    this.init();
-    if (!this.audioContext) return;
+    if (this.isPlaying) return false;
+    if (!GoldenFairway.isAvailable()) return false;
 
     this.isPlaying = true;
-    this.nextNoteTime = this.audioContext.currentTime + 0.5;
-    this.currentBeat = 0;
-    this.currentBar = 0;
-    this.currentChordIndex = 0;
+    // The .then() chain is the spec bug fix: loops are created AFTER init
+    // resolves, so this.lead/this.pad/this.pulse are guaranteed to exist.
+    this.initPromise = this.init().then(() => {
+      if (!this.isPlaying) return;   // user toggled off during init
 
-    if (this.audioContext.state === 'suspended') {
-      try { this.audioContext.resume(); } catch (_) {}
-    }
-    this.schedule();
+      // Per-bar loop: chord pad swell + melodic phrase + harmony advance.
+      this.loop = new Tone.Loop((time) => {
+        const chord = this.chords[this.currentChord];
+        try { this.pad.triggerAttackRelease(chord, '2n', time, 0.6); } catch (_) {}
+        this._playMelodicPhrase(time, chord);
+        this.currentChord = (this.currentChord + 1) % this.chords.length;
+      }, '1m').start(0);
 
-    const now = this.audioContext.currentTime;
-    this.masterGain.gain.cancelScheduledValues(now);
-    this.masterGain.gain.setValueAtTime(0.01, now);
-    this.masterGain.gain.linearRampToValueAtTime(this.volume, now + 1.6);
+      // Per-beat athletic pulse on a DEDICATED voice (not the lead).
+      this.pulseLoop = new Tone.Loop((time) => {
+        const root = this.chords[this.currentChord][0];
+        try { this.pulse.triggerAttackRelease(root, '8n', time); } catch (_) {}
+      }, '4n').start('4n');
+
+      Tone.Transport.bpm.value = 82;
+      Tone.Transport.start();
+    }).catch((e) => {
+      this.isPlaying = false;
+      try { console.warn('[Golden Fairway] init failed:', e); } catch (_) {}
+    });
+    return true;
   }
 
   stop() {
     this.isPlaying = false;
-    if (this.schedulerTimer) { clearTimeout(this.schedulerTimer); this.schedulerTimer = null; }
-    if (this.masterGain && this.audioContext) {
-      const now = this.audioContext.currentTime;
-      this.masterGain.gain.linearRampToValueAtTime(0.0001, now + 1.5);
-      setTimeout(() => {
-        this.oscillators.forEach(o => { try { o.stop(); o.disconnect(); } catch (_) {} });
-        this.oscillators = [];
-        try { if (this.audioContext) this.audioContext.close(); } catch (_) {}
-        this.audioContext = null;
-      }, 1800);
-    }
+    try { if (this.loop) { this.loop.dispose(); this.loop = null; } } catch (_) {}
+    try { if (this.pulseLoop) { this.pulseLoop.dispose(); this.pulseLoop = null; } } catch (_) {}
+    try { Tone.Transport.stop(); } catch (_) {}
+    try { Tone.Transport.cancel(); } catch (_) {}
   }
 
   setVolume(v) {
     this.volume = Math.max(0, Math.min(1, v));
-    if (this.masterGain) this.masterGain.gain.value = this.volume;
+    if (GoldenFairway.isAvailable() && Tone.Destination) {
+      try { Tone.Destination.volume.value = Tone.gainToDb(this.volume); } catch (_) {}
+    }
   }
 
   toggle() {
@@ -31552,22 +31443,39 @@ class NectarMusic {
   }
 }
 
+// Singleton; variable name preserved across v122→v123 for compatibility with
+// other call sites that may reference it. Instantiates lazily on first use.
 let nectarMusic = null;
+let _yjToneToastShown = false;
 
 function toggleMusic() {
-  if (!nectarMusic) nectarMusic = new NectarMusic();
+  // v69.123 — graceful Tone.js unavailability handling. If the CDN didn't
+  // load (offline, blocked, CSP, network failure) we toast once and disable
+  // the toggle visually instead of throwing or silently no-op-ping.
+  if (!GoldenFairway.isAvailable()) {
+    if (!_yjToneToastShown) {
+      try { toast('Music unavailable — Tone.js failed to load. App is offline or CDN blocked.'); } catch (_) {}
+      _yjToneToastShown = true;
+    }
+    const btn = document.getElementById('musicToggle');
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.45'; btn.style.cursor = 'not-allowed'; }
+    return;
+  }
+  if (!nectarMusic) nectarMusic = new GoldenFairway();
   const playing = nectarMusic.toggle();
   if (!TourState.preferences) TourState.preferences = {};
-  TourState.preferences.musicEnabled = playing;
+  TourState.preferences.musicEnabled = !!playing;
   try { saveState(); } catch (_) {}
   updateMusicUI();
 }
 
 function setMusicVolume(val) {
   const v = parseInt(val, 10);
-  const clamped = Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 55;
-  if (!nectarMusic) nectarMusic = new NectarMusic();
-  nectarMusic.setVolume(clamped / 100);
+  const clamped = Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 65;
+  if (GoldenFairway.isAvailable()) {
+    if (!nectarMusic) nectarMusic = new GoldenFairway();
+    nectarMusic.setVolume(clamped / 100);
+  }
   const label = document.getElementById('musicVolLabel');
   if (label) label.textContent = String(clamped);
   if (!TourState.preferences) TourState.preferences = {};
@@ -31717,20 +31625,33 @@ function init() {
   const themeToggle = $('#themeToggle');
   if (themeToggle) themeToggle.onclick = toggleTheme;
 
-  // === v69.120 — Nectar Garden init ====================================
+  // === v69.123 — Golden Fairway init ===================================
   // Restores volume from preferences. We don't auto-START on page load even
   // if preferences.musicEnabled was true — browser autoplay policy requires
   // a user gesture for AudioContext. The user toggling once after restore
   // brings it back; the active state is reflected via updateMusicUI.
+  // If Tone.js failed to load (CDN blocked / offline), the toggle disables
+  // itself + a one-time toast fires from toggleMusic() on click.
   try {
-    if (!nectarMusic) nectarMusic = new NectarMusic();
-    if (TourState.preferences && typeof TourState.preferences.musicVolume === 'number') {
+    const toneAvail = GoldenFairway.isAvailable();
+    if (toneAvail && !nectarMusic) nectarMusic = new GoldenFairway();
+    if (nectarMusic && TourState.preferences && typeof TourState.preferences.musicVolume === 'number') {
       nectarMusic.setVolume(TourState.preferences.musicVolume / 100);
     }
+    const defaultVol = nectarMusic ? Math.round(nectarMusic.volume * 100) : 65;
     const volSlider = document.getElementById('musicVolume');
     const volLabel = document.getElementById('musicVolLabel');
-    if (volSlider) volSlider.value = String(Math.round(nectarMusic.volume * 100));
-    if (volLabel) volLabel.textContent = String(Math.round(nectarMusic.volume * 100));
+    if (volSlider) volSlider.value = String(defaultVol);
+    if (volLabel) volLabel.textContent = String(defaultVol);
+    if (!toneAvail) {
+      const btn = document.getElementById('musicToggle');
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.45';
+        btn.style.cursor = 'not-allowed';
+        btn.title = 'Music unavailable — Tone.js CDN did not load.';
+      }
+    }
     setTimeout(updateMusicUI, 80);
   } catch (_) { /* never block init on audio setup */ }
 
