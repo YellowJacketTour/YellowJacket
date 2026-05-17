@@ -2815,7 +2815,7 @@
       <div class="audio-control">
         <div class="audio-header">
           <span class="ico" aria-hidden="true">🎵</span>
-          <button id="musicToggle" class="audio-toggle-btn" type="button" aria-pressed="false" onclick="toggleMusic()">Nectar Garden</button>
+          <button id="musicToggle" class="audio-toggle-btn" type="button" aria-pressed="false" onclick="toggleMusic()">Golden Fairway</button>
         </div>
         <div class="audio-volume">
           <span style="font-size:9px; letter-spacing:0.5px;">VOL</span>
@@ -2872,7 +2872,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.120-nectar-music";
+const APP_VERSION = "2026.05.13-v69.122-golden-fairway-music";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -16410,15 +16410,68 @@ function renderActionPanel(t) {
   const right = el('div', { class: 'action-right' });
   let sliderValue = minSafe;
   const presets = el('div', { class: 'action-presets' });
-  const presetDefs = [
-    { label: 'Min', frac: -1 },     // dedicated min-raise (Grok spec)
-    { label: '⅓', frac: 0.33 },
-    { label: '½', frac: 0.5 },
-    { label: '⅔', frac: 0.67 },
-    { label: '¾', frac: 0.75 },
-    { label: 'Pot', frac: 1.0 },
-    { label: 'All-in', frac: 999 },
-  ];
+
+  // === v69.121 — REMASTERED BET-SIZING PRESETS ============================
+  // The pre-v69.121 presets had three real problems for YJ Stroke cash tables:
+  //
+  //   1. POT BUTTON WAS WRONG. It computed `bet = currentBet + pot`, which is
+  //      actually a HALF-pot raise in poker convention. A true pot-sized raise
+  //      is `call_amount + (pot + 2 × call_amount)` — the amount that, after
+  //      the opponent calls, makes the NEW pot exactly the OLD pot doubled.
+  //
+  //   2. FRACTIONS COLLAPSED PREFLOP. With pot ≈ 3 chips (SB+BB on a 1/2 game)
+  //      and a BB-min floor, the ⅓ / ½ / ⅔ buttons all clamped to min-raise
+  //      and produced the same value as the Min button — wasting 3 chips of
+  //      preset real estate. Modern clients (PokerStars, GG) switch to
+  //      BB-MULTIPLE presets preflop where the convention is "2.5x / 3x / 4x".
+  //
+  //   3. NO YJ "STREET MAX". The All-in button shoved the whole chip stack
+  //      (correct for pure NLHE), but for YJ Stroke variants — where the
+  //      Lay a Brick vs Stack Bricks rung in the loser ladder fires at
+  //      agreed-total ≥ 2× the opener — there's a meaningful "big bet" zone
+  //      well below stack. v69.121 adds a distinct "Cap" preset = 3× current
+  //      pot for YJ/BB variants that gives one-click access to that zone.
+  //
+  // Helpers that compute REAL sizes:
+  const potNow = h.pot;
+  const callAmt_ = Math.max(0, h.currentBet - h.bets[seatIdx]);
+  // True pot-sized raise total (the bet you'd input):
+  //   raise-to = currentBet + pot_after_call
+  //            = currentBet + (pot + callAmt)
+  // i.e., after the opponent calls your raise, the new pot exactly doubles.
+  const potRaiseTo = h.currentBet + potNow + callAmt_;
+  // A fraction-of-pot RAISE-TO target — interpolates between min-raise and pot-raise.
+  const fracPotRaiseTo = (f) => Math.round(minSafe + Math.max(0, (potRaiseTo - minSafe)) * f);
+  // BB-multiple raise-to (used preflop when pot is mostly blinds).
+  const bbMultRaiseTo = (mult) => Math.round(Math.max(minSafe, t.bigBlind * mult));
+  // YJ "Cap" — a sensible "street max" well above pot but below stack shove.
+  // 3× current pot is the natural threshold: it's where the Stack Bricks
+  // loser-ladder rung fires for the opponent if they brick into it.
+  const yjCap = Math.min(maxTo, Math.max(minSafe, Math.round(potNow * 3 + h.currentBet)));
+
+  // Preflop = "we're at street 0 AND pot is essentially blinds-only" — switch
+  // the middle presets to BB multiples so they don't all clamp to min.
+  const isPreflopBlinds = (h.street === 0 && potNow <= 5 * t.bigBlind);
+  const isYJVariant = (t.variant === 'yj' || t.variant === 'bb');
+
+  // Build the preset list dynamically per state.
+  const presetDefs = [];
+  presetDefs.push({ label: 'Min', valueFn: () => minSafe, title: 'Minimum legal ' + (h.currentBet > 0 ? 'raise' : 'bet') });
+  if (isPreflopBlinds) {
+    presetDefs.push({ label: '2.5×', valueFn: () => bbMultRaiseTo(2.5), title: '2.5 big blinds' });
+    presetDefs.push({ label: '3×',   valueFn: () => bbMultRaiseTo(3),   title: '3 big blinds (standard open)' });
+    presetDefs.push({ label: '4×',   valueFn: () => bbMultRaiseTo(4),   title: '4 big blinds' });
+  } else {
+    presetDefs.push({ label: '⅓',  valueFn: () => fracPotRaiseTo(1/3), title: 'Roughly one-third of a pot-sized raise' });
+    presetDefs.push({ label: '½',  valueFn: () => fracPotRaiseTo(0.5), title: 'Half-pot raise' });
+    presetDefs.push({ label: '⅔',  valueFn: () => fracPotRaiseTo(2/3), title: 'Two-thirds of a pot-sized raise' });
+  }
+  presetDefs.push({ label: 'Pot', valueFn: () => potRaiseTo, title: 'True pot-sized raise (doubles the pot after they call)' });
+  if (isYJVariant) {
+    presetDefs.push({ label: 'Cap', valueFn: () => yjCap, title: 'YJ "street max": 3× pot. Pressures the loser ladder toward Stack Bricks (+2).' });
+  }
+  presetDefs.push({ label: 'All-in', valueFn: () => maxTo, title: 'Shove your entire chip stack — irrevocable; confirms first.' });
+
   const slider = el('input', { type: 'range', min: String(minSafe), max: String(maxTo), step: String(Math.max(1, Math.floor((maxTo - minSafe) / 100) || 1)), value: String(minSafe), class: 'action-slider' });
   const amtInput = el('input', { type: 'number', min: String(minSafe), max: String(maxTo), step: '1', value: String(minSafe), class: 'action-amount' });
   function clampSet(v) {
@@ -16428,22 +16481,37 @@ function renderActionPanel(t) {
     amtInput.value = String(v);
     raiseBtn.textContent = (h.currentBet > 0 ? 'Raise to ' : 'Bet ') + v;
     if (v >= maxTo) raiseBtn.textContent = 'All-in ' + v;
+    // Visual: highlight the preset that matches the current value (if any).
+    try {
+      const ps = presets.querySelectorAll('.preset-btn');
+      ps.forEach(pb => {
+        const pv = parseInt(pb.dataset.presetValue || '0', 10);
+        pb.classList.toggle('selected', pv === v);
+      });
+    } catch (_) {}
   }
   slider.oninput = () => clampSet(slider.value);
   amtInput.oninput = () => clampSet(amtInput.value);
-  presetDefs.forEach(p => {
-    const b = el('button', { class: 'btn ghost preset-btn', text: p.label });
-    b.onclick = () => {
-      let v;
-      if (p.frac === -1) v = minSafe; // min-raise / min-bet
-      else if (p.frac >= 999) v = maxTo;
-      else {
-        const potNow = h.pot;
-        const desired = Math.round(potNow * p.frac);
-        v = h.currentBet + Math.max(t.bigBlind, desired);
-      }
-      clampSet(v);
-    };
+
+  // De-dupe pass: compute each preset's value, mark buttons that compute to
+  // the same value as an earlier preset (they'd add no information). Disabled
+  // buttons render as ghosts so the user sees "this size is degenerate".
+  const computedVals = presetDefs.map(p => Math.max(minSafe, Math.min(maxTo, p.valueFn())));
+  const seenValues = new Set();
+  presetDefs.forEach((p, idx) => {
+    const v = computedVals[idx];
+    const isDup = seenValues.has(v);
+    if (!isDup) seenValues.add(v);
+    const b = el('button', { class: 'btn ghost preset-btn' + (isDup ? ' is-degenerate' : ''), text: p.label });
+    b.title = p.title + (isDup ? ' — same value as a prior preset at this state' : ' (' + v + ')');
+    b.dataset.presetValue = String(v);
+    if (isDup) {
+      b.disabled = true;
+      b.style.opacity = '0.35';
+      b.style.cursor = 'not-allowed';
+    } else {
+      b.onclick = () => clampSet(v);
+    }
     presets.appendChild(b);
   });
   right.appendChild(presets);
@@ -31194,35 +31262,52 @@ function showActionIndicator(seatEl, action) {
 }
 
 /* ======================================================================
-   NECTAR MUSIC — v69.120 generative background audio.
+   GOLDEN FAIRWAY v2 — v69.122 state-of-the-art generative background audio.
    Pure Web Audio API · no external assets · client-side only.
-   Three concurrent voices:
-     1. WARM PAD     — two slightly-detuned low oscillators through a slow LFO-
-                       modulated lowpass, the bed of the piece.
-     2. MELODY VOICE — scheduled-ahead random walks on a major (or mixolydian)
-                       scale, evolving rootNote every 18 beats.
-     3. HONEY SHIMMER— a high band-passed sine with subtle vibrato, the
-                       "morning light through honey" texture.
+   Athletic · prestigious · reserved · quietly exciting — designed for the
+   golf-meets-poker energy of YJ. Three concurrent layers:
+     1. RICH PAD     — saw + square low oscillators through a slow LFO-modulated
+                       lowpass — the prestigious bed.
+     2. ATHLETIC PULSE — quiet ~88Hz sine pulse every 2 beats — the forward
+                       motion / drive of a long Sunday round.
+     3. MELODY VOICE — PHRASE-based generation (3–5 note phrases of chord-tones
+                       + occasional passing notes), advancing through a proper
+                       I–vi–IV–V chord progression with bar-aligned harmony
+                       changes and 8-bar modulations.
    AudioContext is created on first user click (browser autoplay policy);
    .resume() handles tabs that suspended us. Toggle + volume persist via
-   TourState.preferences.{musicEnabled, musicVolume}.
+   TourState.preferences.{musicEnabled, musicVolume}. The class is still
+   named NectarMusic so all the wiring (toggleMusic, init() restore, persisted
+   state) is unchanged across the v122 upgrade.
    ====================================================================== */
 class NectarMusic {
   constructor() {
     this.audioContext = null;
     this.masterGain = null;
     this.isPlaying = false;
-    this.volume = 0.55;
+    this.volume = 0.62;
+
     this.oscillators = [];
     this.schedulerTimer = null;
     this.nextNoteTime = 0;
-    this.currentBeat = 0;
-    this.rootNote = 55;
-    this.scale = [0, 2, 4, 5, 7, 9, 11];
-    this.bpm = 66;
+
+    this.bpm = 82;
     this.beatDuration = 60 / this.bpm;
+    this.currentBeat = 0;
+    this.currentBar = 0;
+
+    // Harmony — I–vi–IV–V (the prestigious progression, the one the cinema
+    // uses for "we won" moments — opens with the tonic, drops to a melancholy
+    // vi, lifts to the subdominant IV, then resolves on the dominant V back
+    // toward the tonic at the next bar boundary).
+    this.chordProgression = [0, 5, 3, 4];
+    this.currentChordIndex = 0;
+    this.rootNote = 52;   // E2-ish — gives the pad real weight
+
+    // Layer gain bus handles (filled in init).
+    this.padGain = null;
+    this.pulseGain = null;
     this.melodyGain = null;
-    this.melodyFilter = null;
   }
 
   init() {
@@ -31235,36 +31320,37 @@ class NectarMusic {
       this.masterGain.gain.value = this.volume;
       this.masterGain.connect(this.audioContext.destination);
 
-      this._createWarmPad();
-      this._createMelodyVoice();
-      this._createHoneyShimmer();
+      this._createRichPad();
+      this._createAthleticPulse();
+      this._createMelodyLayer();
     } catch (e) {
-      try { console.warn('[NectarMusic] Failed to initialize:', e); } catch (_) {}
+      try { console.warn('[Golden Fairway v2] Init failed:', e); } catch (_) {}
       this.audioContext = null;
     }
   }
 
-  _createWarmPad() {
+  // === LAYER 1: Rich Prestigious Pad — the bed of the piece.
+  _createRichPad() {
     const osc1 = this.audioContext.createOscillator();
     osc1.type = 'sawtooth';
-    osc1.frequency.value = 110;
+    osc1.frequency.value = 104;
 
     const osc2 = this.audioContext.createOscillator();
-    osc2.type = 'sine';
-    osc2.frequency.value = 110.4;
+    osc2.type = 'square';
+    osc2.frequency.value = 104.6;
 
     const filter = this.audioContext.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 380;
+    filter.frequency.value = 680;
 
     const gain = this.audioContext.createGain();
-    gain.gain.value = 0.16;
+    gain.gain.value = 0.11;
 
     const lfo = this.audioContext.createOscillator();
     lfo.type = 'sine';
-    lfo.frequency.value = 0.028;
+    lfo.frequency.value = 0.035;
     const lfoGain = this.audioContext.createGain();
-    lfoGain.gain.value = 160;
+    lfoGain.gain.value = 120;
     lfo.connect(lfoGain);
     lfoGain.connect(filter.frequency);
     lfo.start();
@@ -31277,113 +31363,144 @@ class NectarMusic {
     osc2.start();
 
     this.oscillators.push(osc1, osc2, lfo);
+    this.padGain = gain;
   }
 
-  _createMelodyVoice() {
-    this.melodyGain = this.audioContext.createGain();
-    this.melodyGain.gain.value = 0.20;
-    this.melodyFilter = this.audioContext.createBiquadFilter();
-    this.melodyFilter.type = 'lowpass';
-    this.melodyFilter.frequency.value = 1650;
-    this.melodyGain.connect(this.melodyFilter);
-    this.melodyFilter.connect(this.masterGain);
-    this.nextNoteTime = this.audioContext.currentTime + 1.2;
-  }
-
-  _createHoneyShimmer() {
-    const osc = this.audioContext.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = 1320;
+  // === LAYER 2: Athletic Pulse — the quiet forward drive. Bus only here;
+  // individual pulse notes are scheduled in _playPulse on every other beat.
+  _createAthleticPulse() {
+    this.pulseGain = this.audioContext.createGain();
+    this.pulseGain.gain.value = 0.07;
 
     const filter = this.audioContext.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.value = 1320;
-    filter.Q.value = 6;
+    filter.type = 'lowpass';
+    filter.frequency.value = 220;
 
-    const gain = this.audioContext.createGain();
-    gain.gain.value = 0.012;
-
-    const vib = this.audioContext.createOscillator();
-    vib.type = 'sine';
-    vib.frequency.value = 0.65;
-    const vibGain = this.audioContext.createGain();
-    vibGain.gain.value = 3.5;
-    vib.connect(vibGain);
-    vibGain.connect(osc.frequency);
-    vib.start();
-
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.masterGain);
-    osc.start();
-
-    this.oscillators.push(osc, vib);
+    this.pulseGain.connect(filter);
+    filter.connect(this.masterGain);
   }
 
-  scheduleMelody() {
+  // === LAYER 3: Melody bus — phrase-generated notes route through here.
+  _createMelodyLayer() {
+    this.melodyGain = this.audioContext.createGain();
+    this.melodyGain.gain.value = 0.26;
+
+    const filter = this.audioContext.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 2400;
+
+    this.melodyGain.connect(filter);
+    filter.connect(this.masterGain);
+  }
+
+  // === SCHEDULER — bar-aligned, phrase-emitting. Advances harmony every 4
+  // beats (1 bar). Occasionally modulates the root every 8 bars for long-term
+  // interest. Schedules ahead ~3.2s; setTimeout self-reschedules.
+  schedule() {
     if (!this.isPlaying || !this.audioContext) return;
     const now = this.audioContext.currentTime;
 
-    while (this.nextNoteTime < now + 4.0) {
-      this._playMelodyNote(this.nextNoteTime);
-      let step = this.beatDuration * (Math.random() > 0.65 ? 1.6 : 0.95);
-      step *= (0.82 + Math.random() * 0.36);
-      this.nextNoteTime += step;
+    while (this.nextNoteTime < now + 3.2) {
+      this._playPhrase(this.nextNoteTime);
+      this._playPulse(this.nextNoteTime);
+
       this.currentBeat++;
-      if (this.currentBeat % 18 === 0) this._evolveHarmony();
+      if (this.currentBeat % 4 === 0) {
+        this.currentBar++;
+        this._advanceHarmony();
+      }
+
+      // Musical spacing between phrase starts — small swing, never mechanical.
+      this.nextNoteTime += this.beatDuration * (1.1 + Math.random() * 0.6);
     }
-    const delay = Math.max(60, (this.nextNoteTime - now) * 1000 - 180);
-    this.schedulerTimer = setTimeout(() => this.scheduleMelody(), delay);
+
+    const delay = Math.max(40, (this.nextNoteTime - now) * 1000 - 120);
+    this.schedulerTimer = setTimeout(() => this.schedule(), delay);
   }
 
-  _playMelodyNote(time) {
-    const midi = this._chooseNote();
-    const freq = 440 * Math.pow(2, (midi - 69) / 12);
+  _advanceHarmony() {
+    this.currentChordIndex = (this.currentChordIndex + 1) % this.chordProgression.length;
+    // Subtle root modulation every 8 bars — keeps a long session from feeling
+    // looped. Bounded so we don't drift the pad out of its sweet range.
+    if (this.currentBar % 8 === 0 && Math.random() < 0.3) {
+      this.rootNote = Math.max(48, Math.min(56, this.rootNote + (Math.random() > 0.5 ? 2 : -2)));
+    }
+  }
+
+  // A tasteful 3–5 note phrase. Chord-tone biased (0, 4, 7, 11 — root, third,
+  // fifth, major-seventh of the current chord) with occasional passing tones
+  // (2, 5, 9) and rare octave lifts for moments of forward excitement.
+  _playPhrase(startTime) {
+    const chordOffset = this.chordProgression[this.currentChordIndex];
+    const baseNote = this.rootNote + chordOffset;
+
+    const phraseLength = 3 + Math.floor(Math.random() * 3);
+    let time = startTime;
+
+    for (let i = 0; i < phraseLength; i++) {
+      const isChordTone = Math.random() > 0.35;
+      let note;
+      if (isChordTone) {
+        note = baseNote + [0, 4, 7, 11][Math.floor(Math.random() * 4)];
+      } else {
+        note = baseNote + [2, 5, 9][Math.floor(Math.random() * 3)];
+      }
+      if (Math.random() < 0.18) note += 12;
+      this._playNote(note, time, 0.55 + Math.random() * 0.35);
+      time += this.beatDuration * (0.6 + Math.random() * 0.5);
+    }
+  }
+
+  _playNote(midiNote, time, velocity) {
+    const v = (velocity == null) ? 0.7 : velocity;
+    const freq = 440 * Math.pow(2, (midiNote - 69) / 12);
 
     const osc = this.audioContext.createOscillator();
-    osc.type = (Math.random() > 0.55) ? 'triangle' : 'sine';
+    osc.type = Math.random() > 0.5 ? 'sawtooth' : 'triangle';
     osc.frequency.value = freq;
 
     const gain = this.audioContext.createGain();
     const filter = this.audioContext.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 980 + Math.random() * 1100;
+    filter.frequency.value = 1600 + Math.random() * 800;
 
-    const atk = 0.07 + Math.random() * 0.11;
-    const rel = 2.1 + Math.random() * 3.2;
+    const atk = 0.035;
+    const release = 0.7 + Math.random() * 1.1;
 
     gain.gain.value = 0;
     gain.gain.setValueAtTime(0, time);
-    gain.gain.linearRampToValueAtTime(0.38 + Math.random() * 0.22, time + atk);
-    gain.gain.setTargetAtTime(0.0001, time + atk + 0.15, rel * 0.55);
+    gain.gain.linearRampToValueAtTime(v, time + atk);
+    gain.gain.setTargetAtTime(0.0001, time + atk + 0.08, release);
 
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(this.melodyGain);
+
     osc.start(time);
-
-    const stopAt = time + atk + rel * 2.8 + 0.8;
-    osc.stop(stopAt);
+    osc.stop(time + atk + release * 2.5);
   }
 
-  _chooseNote() {
-    const base = this.rootNote;
-    const idx = Math.floor(Math.random() * this.scale.length);
-    let note = base + this.scale[idx];
-    if (Math.random() < 0.16) note += 12;
-    if (Math.random() < 0.07) note -= 12;
-    return Math.max(48, Math.min(72, note));
-  }
+  _playPulse(time) {
+    if (this.currentBeat % 2 !== 0) return;
 
-  _evolveHarmony() {
-    const shifts = [0, 2, -1, 3, -3, 5, -2];
-    const shift = shifts[Math.floor(Math.random() * shifts.length)];
-    this.rootNote = Math.max(50, Math.min(62, this.rootNote + shift));
-    if (Math.random() < 0.28) {
-      this.scale = (Math.random() > 0.5)
-        ? [0, 2, 4, 5, 7, 9, 11]   // major
-        : [0, 2, 3, 5, 7, 9, 10];  // mixolydian-ish (a little smoky)
-    }
+    const osc = this.audioContext.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = 88;
+
+    const gain = this.audioContext.createGain();
+    gain.gain.value = 0.22;
+
+    const filter = this.audioContext.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 180;
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.pulseGain);
+
+    osc.start(time);
+    gain.gain.setTargetAtTime(0.0001, time + 0.06, 0.8);
+    osc.stop(time + 1.4);
   }
 
   start() {
@@ -31392,18 +31509,20 @@ class NectarMusic {
     if (!this.audioContext) return;
 
     this.isPlaying = true;
-    this.nextNoteTime = this.audioContext.currentTime + 0.9;
+    this.nextNoteTime = this.audioContext.currentTime + 0.5;
     this.currentBeat = 0;
+    this.currentBar = 0;
+    this.currentChordIndex = 0;
 
     if (this.audioContext.state === 'suspended') {
       try { this.audioContext.resume(); } catch (_) {}
     }
-    this.scheduleMelody();
+    this.schedule();
 
     const now = this.audioContext.currentTime;
     this.masterGain.gain.cancelScheduledValues(now);
     this.masterGain.gain.setValueAtTime(0.01, now);
-    this.masterGain.gain.linearRampToValueAtTime(this.volume, now + 2.4);
+    this.masterGain.gain.linearRampToValueAtTime(this.volume, now + 1.6);
   }
 
   stop() {
@@ -31411,13 +31530,13 @@ class NectarMusic {
     if (this.schedulerTimer) { clearTimeout(this.schedulerTimer); this.schedulerTimer = null; }
     if (this.masterGain && this.audioContext) {
       const now = this.audioContext.currentTime;
-      this.masterGain.gain.linearRampToValueAtTime(0.0001, now + 1.9);
+      this.masterGain.gain.linearRampToValueAtTime(0.0001, now + 1.5);
       setTimeout(() => {
         this.oscillators.forEach(o => { try { o.stop(); o.disconnect(); } catch (_) {} });
         this.oscillators = [];
         try { if (this.audioContext) this.audioContext.close(); } catch (_) {}
         this.audioContext = null;
-      }, 2300);
+      }, 1800);
     }
   }
 
