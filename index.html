@@ -2664,72 +2664,9 @@
   @media (prefers-reduced-motion: reduce) {
     .yj-progress-indeterminate { animation: none; }
   }
-
-  /* === v69.120 — Nectar Garden generative music controls in the sidebar foot. === */
-  .audio-control {
-    margin: 14px 0 4px;
-    padding: 10px 12px 12px;
-    background: linear-gradient(180deg, rgba(201,168,87,0.08), rgba(0,0,0,0.08));
-    border: 1px solid rgba(201,168,87,0.28);
-    border-radius: 8px;
-    font-family: -apple-system, sans-serif;
-  }
-  .audio-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-  .audio-header .ico { font-size: 15px; }
-  .audio-toggle-btn {
-    flex: 1;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.3px;
-    background: rgba(232,185,35,0.12);
-    color: var(--text-on-dark-soft);
-    border: 1px solid rgba(201,168,87,0.35);
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-  .audio-toggle-btn.active {
-    background: linear-gradient(180deg, var(--gold), #c9a857);
-    color: #2A1810;
-    border-color: #fff;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-  }
-  .audio-toggle-btn:hover:not(.active) {
-    background: rgba(232,185,35,0.22);
-    border-color: var(--gold);
-  }
-  .audio-volume {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 10px;
-    color: var(--text-on-dark-soft);
-    opacity: 0.85;
-  }
-  .audio-volume input[type="range"] {
-    flex: 1;
-    accent-color: var(--gold);
-    height: 4px;
-  }
-  body.kawaii-mode .audio-control {
-    background: linear-gradient(180deg, rgba(255,181,232,0.08), rgba(0,0,0,0.04));
-    border-color: rgba(255,181,232,0.3);
-  }
-  body.kawaii-mode .audio-toggle-btn.active {
-    background: linear-gradient(180deg, var(--kawaii-honey,#FFCC4D), #f9d71c);
-    color: #3D2A1F;
-  }
 </style>
 <!-- Three.js (Phase B atmospheric layer · loaded async; gracefully degrades if blocked) -->
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js" crossorigin="anonymous" onload="window._yj3dReady = true;" onerror="window._yj3dReady = false; console.warn('YJ: Three.js CDN load failed — 3D atmospheric layer disabled.');"></script>
-<!-- Tone.js (v69.123 Golden Fairway music engine · loaded async; if CDN is blocked the music toggle gracefully disables and the app continues to work offline). -->
-<script src="https://unpkg.com/tone@14.8.49/build/Tone.js" crossorigin="anonymous" onload="window._yjToneReady = true;" onerror="window._yjToneReady = false; console.warn('YJ: Tone.js CDN load failed — Golden Fairway music disabled.');"></script>
 </head>
 <body>
 
@@ -2810,22 +2747,6 @@
       <div style="margin-bottom: 6px;"><span class="kbd">Ctrl</span><span class="kbd">K</span> Search</div>
       <div style="margin-bottom: 6px;"><span class="kbd">?</span> Keyboard help</div>
       <div id="themeToggle" style="cursor: pointer; margin-top: 10px;"><span class="kbd">☀</span> Sunday pin position</div>
-
-      <!-- v69.120 — Nectar Garden generative music. AudioContext is constructed
-           on first click so browser autoplay policy is satisfied. State persists
-           in TourState.preferences.{musicEnabled, musicVolume}. -->
-      <div class="audio-control">
-        <div class="audio-header">
-          <span class="ico" aria-hidden="true">🎵</span>
-          <button id="musicToggle" class="audio-toggle-btn" type="button" aria-pressed="false" onclick="toggleMusic()">Golden Fairway</button>
-        </div>
-        <div class="audio-volume">
-          <span style="font-size:9px; letter-spacing:0.5px;">VOL</span>
-          <input id="musicVolume" type="range" min="0" max="100" step="5" value="55" aria-label="Music volume" oninput="setMusicVolume(this.value)">
-          <span id="musicVolLabel" style="font-family:monospace; font-size:9px; min-width:28px; text-align:right;">55</span>
-        </div>
-      </div>
-
       <div style="margin-top: 12px; font-size: 10px; opacity: 0.6;">v1.0 · offline · secure</div>
     </div>
   </aside>
@@ -2874,7 +2795,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.123-tone-golden-fairway";
+const APP_VERSION = "2026.05.13-v69.119b-felt-children-pos";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -16412,68 +16333,15 @@ function renderActionPanel(t) {
   const right = el('div', { class: 'action-right' });
   let sliderValue = minSafe;
   const presets = el('div', { class: 'action-presets' });
-
-  // === v69.121 — REMASTERED BET-SIZING PRESETS ============================
-  // The pre-v69.121 presets had three real problems for YJ Stroke cash tables:
-  //
-  //   1. POT BUTTON WAS WRONG. It computed `bet = currentBet + pot`, which is
-  //      actually a HALF-pot raise in poker convention. A true pot-sized raise
-  //      is `call_amount + (pot + 2 × call_amount)` — the amount that, after
-  //      the opponent calls, makes the NEW pot exactly the OLD pot doubled.
-  //
-  //   2. FRACTIONS COLLAPSED PREFLOP. With pot ≈ 3 chips (SB+BB on a 1/2 game)
-  //      and a BB-min floor, the ⅓ / ½ / ⅔ buttons all clamped to min-raise
-  //      and produced the same value as the Min button — wasting 3 chips of
-  //      preset real estate. Modern clients (PokerStars, GG) switch to
-  //      BB-MULTIPLE presets preflop where the convention is "2.5x / 3x / 4x".
-  //
-  //   3. NO YJ "STREET MAX". The All-in button shoved the whole chip stack
-  //      (correct for pure NLHE), but for YJ Stroke variants — where the
-  //      Lay a Brick vs Stack Bricks rung in the loser ladder fires at
-  //      agreed-total ≥ 2× the opener — there's a meaningful "big bet" zone
-  //      well below stack. v69.121 adds a distinct "Cap" preset = 3× current
-  //      pot for YJ/BB variants that gives one-click access to that zone.
-  //
-  // Helpers that compute REAL sizes:
-  const potNow = h.pot;
-  const callAmt_ = Math.max(0, h.currentBet - h.bets[seatIdx]);
-  // True pot-sized raise total (the bet you'd input):
-  //   raise-to = currentBet + pot_after_call
-  //            = currentBet + (pot + callAmt)
-  // i.e., after the opponent calls your raise, the new pot exactly doubles.
-  const potRaiseTo = h.currentBet + potNow + callAmt_;
-  // A fraction-of-pot RAISE-TO target — interpolates between min-raise and pot-raise.
-  const fracPotRaiseTo = (f) => Math.round(minSafe + Math.max(0, (potRaiseTo - minSafe)) * f);
-  // BB-multiple raise-to (used preflop when pot is mostly blinds).
-  const bbMultRaiseTo = (mult) => Math.round(Math.max(minSafe, t.bigBlind * mult));
-  // YJ "Cap" — a sensible "street max" well above pot but below stack shove.
-  // 3× current pot is the natural threshold: it's where the Stack Bricks
-  // loser-ladder rung fires for the opponent if they brick into it.
-  const yjCap = Math.min(maxTo, Math.max(minSafe, Math.round(potNow * 3 + h.currentBet)));
-
-  // Preflop = "we're at street 0 AND pot is essentially blinds-only" — switch
-  // the middle presets to BB multiples so they don't all clamp to min.
-  const isPreflopBlinds = (h.street === 0 && potNow <= 5 * t.bigBlind);
-  const isYJVariant = (t.variant === 'yj' || t.variant === 'bb');
-
-  // Build the preset list dynamically per state.
-  const presetDefs = [];
-  presetDefs.push({ label: 'Min', valueFn: () => minSafe, title: 'Minimum legal ' + (h.currentBet > 0 ? 'raise' : 'bet') });
-  if (isPreflopBlinds) {
-    presetDefs.push({ label: '2.5×', valueFn: () => bbMultRaiseTo(2.5), title: '2.5 big blinds' });
-    presetDefs.push({ label: '3×',   valueFn: () => bbMultRaiseTo(3),   title: '3 big blinds (standard open)' });
-    presetDefs.push({ label: '4×',   valueFn: () => bbMultRaiseTo(4),   title: '4 big blinds' });
-  } else {
-    presetDefs.push({ label: '⅓',  valueFn: () => fracPotRaiseTo(1/3), title: 'Roughly one-third of a pot-sized raise' });
-    presetDefs.push({ label: '½',  valueFn: () => fracPotRaiseTo(0.5), title: 'Half-pot raise' });
-    presetDefs.push({ label: '⅔',  valueFn: () => fracPotRaiseTo(2/3), title: 'Two-thirds of a pot-sized raise' });
-  }
-  presetDefs.push({ label: 'Pot', valueFn: () => potRaiseTo, title: 'True pot-sized raise (doubles the pot after they call)' });
-  if (isYJVariant) {
-    presetDefs.push({ label: 'Cap', valueFn: () => yjCap, title: 'YJ "street max": 3× pot. Pressures the loser ladder toward Stack Bricks (+2).' });
-  }
-  presetDefs.push({ label: 'All-in', valueFn: () => maxTo, title: 'Shove your entire chip stack — irrevocable; confirms first.' });
-
+  const presetDefs = [
+    { label: 'Min', frac: -1 },     // dedicated min-raise (Grok spec)
+    { label: '⅓', frac: 0.33 },
+    { label: '½', frac: 0.5 },
+    { label: '⅔', frac: 0.67 },
+    { label: '¾', frac: 0.75 },
+    { label: 'Pot', frac: 1.0 },
+    { label: 'All-in', frac: 999 },
+  ];
   const slider = el('input', { type: 'range', min: String(minSafe), max: String(maxTo), step: String(Math.max(1, Math.floor((maxTo - minSafe) / 100) || 1)), value: String(minSafe), class: 'action-slider' });
   const amtInput = el('input', { type: 'number', min: String(minSafe), max: String(maxTo), step: '1', value: String(minSafe), class: 'action-amount' });
   function clampSet(v) {
@@ -16483,37 +16351,22 @@ function renderActionPanel(t) {
     amtInput.value = String(v);
     raiseBtn.textContent = (h.currentBet > 0 ? 'Raise to ' : 'Bet ') + v;
     if (v >= maxTo) raiseBtn.textContent = 'All-in ' + v;
-    // Visual: highlight the preset that matches the current value (if any).
-    try {
-      const ps = presets.querySelectorAll('.preset-btn');
-      ps.forEach(pb => {
-        const pv = parseInt(pb.dataset.presetValue || '0', 10);
-        pb.classList.toggle('selected', pv === v);
-      });
-    } catch (_) {}
   }
   slider.oninput = () => clampSet(slider.value);
   amtInput.oninput = () => clampSet(amtInput.value);
-
-  // De-dupe pass: compute each preset's value, mark buttons that compute to
-  // the same value as an earlier preset (they'd add no information). Disabled
-  // buttons render as ghosts so the user sees "this size is degenerate".
-  const computedVals = presetDefs.map(p => Math.max(minSafe, Math.min(maxTo, p.valueFn())));
-  const seenValues = new Set();
-  presetDefs.forEach((p, idx) => {
-    const v = computedVals[idx];
-    const isDup = seenValues.has(v);
-    if (!isDup) seenValues.add(v);
-    const b = el('button', { class: 'btn ghost preset-btn' + (isDup ? ' is-degenerate' : ''), text: p.label });
-    b.title = p.title + (isDup ? ' — same value as a prior preset at this state' : ' (' + v + ')');
-    b.dataset.presetValue = String(v);
-    if (isDup) {
-      b.disabled = true;
-      b.style.opacity = '0.35';
-      b.style.cursor = 'not-allowed';
-    } else {
-      b.onclick = () => clampSet(v);
-    }
+  presetDefs.forEach(p => {
+    const b = el('button', { class: 'btn ghost preset-btn', text: p.label });
+    b.onclick = () => {
+      let v;
+      if (p.frac === -1) v = minSafe; // min-raise / min-bet
+      else if (p.frac >= 999) v = maxTo;
+      else {
+        const potNow = h.pot;
+        const desired = Math.round(potNow * p.frac);
+        v = h.currentBet + Math.max(t.bigBlind, desired);
+      }
+      clampSet(v);
+    };
     presets.appendChild(b);
   });
   right.appendChild(presets);
@@ -31263,234 +31116,6 @@ function showActionIndicator(seatEl, action) {
   setTimeout(() => { try { indicator.remove(); } catch (_) {} }, 1400);
 }
 
-/* ======================================================================
-   GOLDEN FAIRWAY — v69.123 production-grade generative music engine.
-   Powered by Tone.js (loaded async via CDN; falls back gracefully when the
-   library can't load — see _yjToneReady check below).
-   Athletic leisure · prestigious · reserved · quietly exciting.
-
-   Architecture:
-     • TRANSPORT at 82 BPM. Bar-aligned (1 bar = 4 beats).
-     • REVERB BUS (decay 2.8s · wet 0.22) — gives space and "expensive room".
-     • PAD VOICE (sine PolySynth, slow attack/release) — chord bed, soft.
-     • LEAD VOICE (saw PolySynth, sharp attack, long release) — melodic phrases.
-     • PULSE VOICE (sine MonoSynth, dedicated, distinct from lead) — ~half-beat
-       sub-pulse on every quarter note, the quiet athletic drive. The spec
-       hammered the lead synth for both melody AND pulse, which made the
-       lead muddy — we split them.
-     • Chord progression: Emaj7 → C#m7 → Amaj7 → B7. Real seventh chords
-       (the "expensive" sound) advancing one chord per bar.
-     • Phrases: 3–5 chord-tone notes per bar, with an occasional 5th-above
-       color tone and per-note random velocity in 0.5–0.9.
-
-   Spec-bug fixes shipped in this revision:
-     1. ASYNC INIT RACE — the original spec had start() call init() without
-        await; on the first click the loops were created BEFORE Tone.start()
-        and the synths existed, so nothing played. Now start() returns the
-        init promise and the loops are scheduled in the .then() chain.
-     2. PULSE-ON-LEAD CLASH — see above (now dedicated pulse synth).
-     3. NO CDN FALLBACK — if window._yjToneReady is false (offline/blocked
-        Tone.js), the toggle disables itself with a one-time toast instead
-        of silently no-op-ping or throwing.
-
-   Wiring (toggleMusic, init() restore, persisted prefs) is preserved across
-   the v122→v123 upgrade — the singleton variable is still `nectarMusic`.
-   ====================================================================== */
-class GoldenFairway {
-  constructor() {
-    this.isPlaying = false;
-    this.volume = 0.65;
-    this.initialized = false;
-    this.initPromise = null;
-
-    // Tone instruments / loops — created in init().
-    this.lead = null;
-    this.pad = null;
-    this.pulse = null;
-    this.reverb = null;
-    this.loop = null;
-    this.pulseLoop = null;
-    this.currentChord = 0;
-
-    // Emaj7 → C#m7 → Amaj7 → B7. Real 7th chords.
-    this.chords = [
-      ['E3', 'G#3', 'B3', 'D#4'],   // Emaj7  — I
-      ['C#3', 'E3', 'G#3', 'B3'],   // C#m7   — vi
-      ['A2',  'C#3', 'E3', 'G#3'],  // Amaj7  — IV
-      ['B2',  'D#3', 'F#3', 'A#3'], // B7     — V
-    ];
-  }
-
-  // Tone.js may not be on the page (CDN blocked, offline, CSP). Toggle gates
-  // on this so the music UI doesn't throw — see toggleMusic() for the toast.
-  static isAvailable() {
-    return !!(window.Tone && window._yjToneReady !== false);
-  }
-
-  // async — requires a user gesture (Tone.start() handles AudioContext resume).
-  // The spec's start() called init() without await, so on first click the
-  // loops were scheduled BEFORE the synths existed → silent no-op. We return
-  // the init promise here and chain loop creation off it in start().
-  async init() {
-    if (this.initialized) return;
-    if (!GoldenFairway.isAvailable()) throw new Error('Tone.js not available');
-
-    await Tone.start();   // Required for user-gesture autoplay
-
-    Tone.Destination.volume.value = Tone.gainToDb(this.volume);
-
-    // Reverb bus — the "expensive room" sound. Tone.Reverb is convolution-based,
-    // generates an impulse on .generate() (called implicitly on first use).
-    this.reverb = new Tone.Reverb({ decay: 2.8, wet: 0.22 }).toDestination();
-
-    // LEAD VOICE — sharp attack saw for melodic phrases, long release for tail.
-    this.lead = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'sawtooth' },
-      envelope: { attack: 0.01, decay: 0.6, sustain: 0.3, release: 1.8 },
-    }).connect(this.reverb);
-    this.lead.volume.value = -8;     // sit slightly under unity for headroom
-
-    // PAD VOICE — slow sine swell, soft chord bed. Below the lead by ~10 dB.
-    this.pad = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.8, decay: 1.2, sustain: 0.6, release: 3 },
-    }).connect(this.reverb);
-    this.pad.volume.value = -18;
-
-    // DEDICATED PULSE VOICE — distinct from the lead so the sub-pulse doesn't
-    // muddle the melodic phrasing (spec bug #2). Quiet, filtered sine, even
-    // softer than the pad.
-    this.pulse = new Tone.MembraneSynth({
-      pitchDecay: 0.04,
-      octaves: 2.2,
-      envelope: { attack: 0.001, decay: 0.18, sustain: 0, release: 0.2 },
-    }).toDestination();
-    this.pulse.volume.value = -22;
-
-    this.initialized = true;
-  }
-
-  // 3–5 note phrase per bar. Chord-tone biased (root/3rd/5th/7th) with an
-  // occasional 5th-above color tone for a touch of forward-looking
-  // anticipation. Per-note velocity for human-feel.
-  _playMelodicPhrase(time, chord) {
-    const notes = chord.slice();
-    if (Math.random() > 0.6) {
-      try { notes.push(Tone.Frequency(chord[0]).transpose(7).toNote()); } catch (_) {}
-    }
-    let t = time + 0.1;
-    const phraseLength = 3 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < phraseLength; i++) {
-      const note = notes[Math.floor(Math.random() * notes.length)];
-      const velocity = 0.5 + Math.random() * 0.4;
-      try { this.lead.triggerAttackRelease(note, '8n', t, velocity); } catch (_) {}
-      t += 0.28 + Math.random() * 0.25;
-    }
-  }
-
-  start() {
-    if (this.isPlaying) return false;
-    if (!GoldenFairway.isAvailable()) return false;
-
-    this.isPlaying = true;
-    // The .then() chain is the spec bug fix: loops are created AFTER init
-    // resolves, so this.lead/this.pad/this.pulse are guaranteed to exist.
-    this.initPromise = this.init().then(() => {
-      if (!this.isPlaying) return;   // user toggled off during init
-
-      // Per-bar loop: chord pad swell + melodic phrase + harmony advance.
-      this.loop = new Tone.Loop((time) => {
-        const chord = this.chords[this.currentChord];
-        try { this.pad.triggerAttackRelease(chord, '2n', time, 0.6); } catch (_) {}
-        this._playMelodicPhrase(time, chord);
-        this.currentChord = (this.currentChord + 1) % this.chords.length;
-      }, '1m').start(0);
-
-      // Per-beat athletic pulse on a DEDICATED voice (not the lead).
-      this.pulseLoop = new Tone.Loop((time) => {
-        const root = this.chords[this.currentChord][0];
-        try { this.pulse.triggerAttackRelease(root, '8n', time); } catch (_) {}
-      }, '4n').start('4n');
-
-      Tone.Transport.bpm.value = 82;
-      Tone.Transport.start();
-    }).catch((e) => {
-      this.isPlaying = false;
-      try { console.warn('[Golden Fairway] init failed:', e); } catch (_) {}
-    });
-    return true;
-  }
-
-  stop() {
-    this.isPlaying = false;
-    try { if (this.loop) { this.loop.dispose(); this.loop = null; } } catch (_) {}
-    try { if (this.pulseLoop) { this.pulseLoop.dispose(); this.pulseLoop = null; } } catch (_) {}
-    try { Tone.Transport.stop(); } catch (_) {}
-    try { Tone.Transport.cancel(); } catch (_) {}
-  }
-
-  setVolume(v) {
-    this.volume = Math.max(0, Math.min(1, v));
-    if (GoldenFairway.isAvailable() && Tone.Destination) {
-      try { Tone.Destination.volume.value = Tone.gainToDb(this.volume); } catch (_) {}
-    }
-  }
-
-  toggle() {
-    if (this.isPlaying) this.stop();
-    else this.start();
-    return this.isPlaying;
-  }
-}
-
-// Singleton; variable name preserved across v122→v123 for compatibility with
-// other call sites that may reference it. Instantiates lazily on first use.
-let nectarMusic = null;
-let _yjToneToastShown = false;
-
-function toggleMusic() {
-  // v69.123 — graceful Tone.js unavailability handling. If the CDN didn't
-  // load (offline, blocked, CSP, network failure) we toast once and disable
-  // the toggle visually instead of throwing or silently no-op-ping.
-  if (!GoldenFairway.isAvailable()) {
-    if (!_yjToneToastShown) {
-      try { toast('Music unavailable — Tone.js failed to load. App is offline or CDN blocked.'); } catch (_) {}
-      _yjToneToastShown = true;
-    }
-    const btn = document.getElementById('musicToggle');
-    if (btn) { btn.disabled = true; btn.style.opacity = '0.45'; btn.style.cursor = 'not-allowed'; }
-    return;
-  }
-  if (!nectarMusic) nectarMusic = new GoldenFairway();
-  const playing = nectarMusic.toggle();
-  if (!TourState.preferences) TourState.preferences = {};
-  TourState.preferences.musicEnabled = !!playing;
-  try { saveState(); } catch (_) {}
-  updateMusicUI();
-}
-
-function setMusicVolume(val) {
-  const v = parseInt(val, 10);
-  const clamped = Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 65;
-  if (GoldenFairway.isAvailable()) {
-    if (!nectarMusic) nectarMusic = new GoldenFairway();
-    nectarMusic.setVolume(clamped / 100);
-  }
-  const label = document.getElementById('musicVolLabel');
-  if (label) label.textContent = String(clamped);
-  if (!TourState.preferences) TourState.preferences = {};
-  TourState.preferences.musicVolume = clamped;
-  try { saveState(); } catch (_) {}
-}
-
-function updateMusicUI() {
-  const btn = document.getElementById('musicToggle');
-  if (!btn) return;
-  const enabled = nectarMusic && nectarMusic.isPlaying;
-  btn.classList.toggle('active', !!enabled);
-  btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-}
-
 function init() {
   // === UNIFIED SAVE / VERSION-AWARE RESTORE ===
   // Try the unified save bundle first. If it exists, hydrate everything from
@@ -31624,36 +31249,6 @@ function init() {
 
   const themeToggle = $('#themeToggle');
   if (themeToggle) themeToggle.onclick = toggleTheme;
-
-  // === v69.123 — Golden Fairway init ===================================
-  // Restores volume from preferences. We don't auto-START on page load even
-  // if preferences.musicEnabled was true — browser autoplay policy requires
-  // a user gesture for AudioContext. The user toggling once after restore
-  // brings it back; the active state is reflected via updateMusicUI.
-  // If Tone.js failed to load (CDN blocked / offline), the toggle disables
-  // itself + a one-time toast fires from toggleMusic() on click.
-  try {
-    const toneAvail = GoldenFairway.isAvailable();
-    if (toneAvail && !nectarMusic) nectarMusic = new GoldenFairway();
-    if (nectarMusic && TourState.preferences && typeof TourState.preferences.musicVolume === 'number') {
-      nectarMusic.setVolume(TourState.preferences.musicVolume / 100);
-    }
-    const defaultVol = nectarMusic ? Math.round(nectarMusic.volume * 100) : 65;
-    const volSlider = document.getElementById('musicVolume');
-    const volLabel = document.getElementById('musicVolLabel');
-    if (volSlider) volSlider.value = String(defaultVol);
-    if (volLabel) volLabel.textContent = String(defaultVol);
-    if (!toneAvail) {
-      const btn = document.getElementById('musicToggle');
-      if (btn) {
-        btn.disabled = true;
-        btn.style.opacity = '0.45';
-        btn.style.cursor = 'not-allowed';
-        btn.title = 'Music unavailable — Tone.js CDN did not load.';
-      }
-    }
-    setTimeout(updateMusicUI, 80);
-  } catch (_) { /* never block init on audio setup */ }
 
   document.addEventListener('keydown', (e) => {
     const inInput = ['INPUT','TEXTAREA','SELECT'].indexOf(document.activeElement.tagName) !== -1;
