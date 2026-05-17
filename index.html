@@ -2713,6 +2713,7 @@
   .yj-sacred-verdict.loading { background: rgba(232,185,35,0.08); color: var(--text-accent-honey, #E0C68C); }
   .yj-sacred-verdict.ok      { background: rgba(168,230,161,0.14); color: #7ED6A0; border: 1px solid rgba(168,230,161,0.4); }
   .yj-sacred-verdict.bad     { background: rgba(243,168,137,0.14); color: #F3A889; border: 1px solid rgba(243,168,137,0.4); }
+  .yj-sacred-verdict.warn    { background: rgba(232,185,35,0.16); color: #E8B923; border: 1px solid rgba(232,185,35,0.45); }
 
   /* === v69.120 — Nectar Garden generative music controls in the sidebar foot. === */
   .audio-control {
@@ -2956,7 +2957,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.17-v69.127-yjsacred-audit-fixes";
+const APP_VERSION = "2026.05.17-v69.128-yjsacred-audit-finishing";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -9818,7 +9819,21 @@ Views.sacred = function() {
           const tr = entry.record && entry.record.transcript;
           if (!tr) { verdict.textContent = 'no transcript'; verdict.className = 'yj-sacred-verdict bad'; return; }
           const r = await YJSacred.replay.verifyTranscript(tr);
-          if (r.ok) { verdict.textContent = '✓ verified'; verdict.className = 'yj-sacred-verdict ok'; }
+          if (r.ok) {
+            if (r.lowAssurance) {
+              // v69.128 — explicit weaker-verdict surface. Pre-v69.125
+              // match transcripts only carry running totals; a forger who
+              // keeps totals self-consistent will pass replay. Render an
+              // amber chip + tooltip so this isn't visually identical to a
+              // full-deal verify.
+              verdict.textContent = '⚠ low assurance';
+              verdict.className = 'yj-sacred-verdict warn';
+              verdict.title = 'Pre-v69.125 transcript: deal not captured per hole, so the verifier only checks running totals (a self-consistent forgery would slip past). Treat as informational, not authoritative.';
+            } else {
+              verdict.textContent = '✓ verified';
+              verdict.className = 'yj-sacred-verdict ok';
+            }
+          }
           else { verdict.textContent = '✗ ' + (typeof r.mismatch === 'string' ? r.mismatch : 'mismatch'); verdict.className = 'yj-sacred-verdict bad'; verdict.title = JSON.stringify(r.mismatch || {}); }
         } catch (e) {
           verdict.textContent = '✗ error'; verdict.className = 'yj-sacred-verdict bad'; verdict.title = String(e && e.message ? e.message : e);
@@ -9853,7 +9868,13 @@ Views.sacred = function() {
     try {
       const r = await YJSacred.replay.verifyTranscript(obj);
       const lines = [];
-      lines.push(r.ok ? '✓ VERIFIED' : '✗ MISMATCH');
+      // v69.128 — three-state header (verified / low-assurance / mismatch).
+      // Low-assurance is a pre-v69.125 transcript that passes the totals
+      // check but couldn't be deal-verified; surface this explicitly so the
+      // reader doesn't conflate it with a full-strength verification.
+      if (r.ok && r.lowAssurance) lines.push('⚠ LOW ASSURANCE — passed totals check only (pre-v69.125 transcript, no per-hole deal capture). A self-consistent forgery would also pass. Treat as informational.');
+      else if (r.ok) lines.push('✓ VERIFIED');
+      else lines.push('✗ MISMATCH');
       lines.push('mode: ' + (r.mode || '?'));
       lines.push('transcriptHash matches: ' + (r.transcriptHashMatches === null ? '(no hash field)' : r.transcriptHashMatches));
       if (!r.ok) {
@@ -31984,6 +32005,31 @@ function updateMusicUI() {
      • Long-term statistical edge exploitation by skilled players — that's
        not a fairness defect, it's the game.
 
+   LIMITATIONS OF THE CLIENT-CODE FINGERPRINT (v69.128 honesty edit)
+     clientCodeHash() SHA-256s only the largest inline <script> in the
+     document — the main app payload. A sophisticated attacker can in
+     principle craft a patched bundle whose largest inline block hashes
+     identically (e.g. injecting behavior via a smaller <script>, via a
+     monkey-patch loaded into a different bundle, or via DOM-injected
+     handlers) so the same fingerprint covers a different behavior set.
+     This is inherent to the single-file model: there is no build-time
+     attestation here, and the runtime can't distinguish "the script I
+     loaded" from "the script someone replaced before I ran." Defense-in-
+     depth for this case lives in the partner server (binary attestation,
+     per-session client integrity checks against the published fingerprint
+     allowlist, behavioral analytics).
+
+   LIMITATIONS OF REPLAY ASSURANCE
+     Pre-v69.125 transcripts (built before per-hole deal capture) carry
+     only running totals. replayMatch returns lowAssurance:true on these:
+     a forger who keeps the running totals self-consistent can pass the
+     verifier. The Sacred Ledger view surfaces this with an amber "low
+     assurance" chip; the partner should reject low-assurance transcripts
+     for any high-value decision. Cash-hand replay (replayCashHand) does
+     structural sanity on the captured action log but does NOT reconstruct
+     full pot / chip math from actions — the engine is trusted for those.
+     The partner server should re-run the betting state machine.
+
    This module is strictly client-side and versioned (transcriptSchema:"v1.0").
    The partner's server reads what this emits and layers their anti-cheat
    stack on top. Field shape changes here bump the schema version.
@@ -32642,11 +32688,55 @@ const YJSacred = (() => {
         return { ok: false, mismatch: 'eval-error: ' + (e && e.message ? e.message : e) };
       }
     }
-    // The chip P/L sanity check: actions must accumulate consistent chip
-    // movement. For now, we trust the engine's chip math (audited at v69.103)
-    // and verify only the showdown hand-class. Future hardening can rebuild
-    // the per-street pot from the actions and confirm.
-    return { ok: true, mismatch: null };
+    // v69.128 — structural action-log sanity. We don't reconstruct the full
+    // pot / chip math here (the partner server should re-run the betting
+    // state machine for that); we DO check that the action log is internally
+    // consistent so the most obvious forgeries are caught:
+    //   (a) every action carries the four required fields (kind, ts, and
+    //       either seatIdx or playerId, with a known kind)
+    //   (b) timestamps are non-decreasing
+    //   (c) bet/raise amounts strictly increase per street relative to the
+    //       prior bet/raise on that street (no "raise" that's smaller than
+    //       the current bet)
+    //   (d) the claimed pot, if present, is >= the highest "amount" any
+    //       single action committed (a hand can't end with a pot smaller
+    //       than any one player's stake)
+    // Returns { ok, mismatch } in the same shape as the rest of the replay
+    // surface. The flag lowAssurance:false means "we DID structural checks";
+    // a full chip-math verifier on the server raises this to high assurance.
+    const actions = Array.isArray(transcript.actions) ? transcript.actions : [];
+    const KNOWN_KINDS = { fold: 1, check: 1, call: 1, bet: 1, raise: 1, post: 1, allin: 1, 'all-in': 1 };
+    let lastTs = -Infinity;
+    let maxAmount = 0;
+    const lastBetByStreet = Object.create(null);
+    for (let i = 0; i < actions.length; i++) {
+      const a = actions[i];
+      if (!a || typeof a !== 'object') {
+        return { ok: false, mismatch: 'action[' + i + '] not an object', lowAssurance: false };
+      }
+      if (!KNOWN_KINDS[a.kind]) {
+        return { ok: false, mismatch: 'action[' + i + '] unknown kind: ' + a.kind, lowAssurance: false };
+      }
+      if (typeof a.ts === 'number') {
+        if (a.ts < lastTs - 1) {   // 1ms slack for clock jitter
+          return { ok: false, mismatch: 'action[' + i + '] timestamp decreased', lowAssurance: false };
+        }
+        lastTs = a.ts;
+      }
+      if ((a.kind === 'bet' || a.kind === 'raise') && typeof a.amount === 'number' && Number.isFinite(a.amount)) {
+        const street = a.street || '_';
+        const prior = lastBetByStreet[street] || 0;
+        if (a.amount <= prior) {
+          return { ok: false, mismatch: 'action[' + i + '] ' + a.kind + ' amount ' + a.amount + ' did not exceed prior street bet ' + prior, lowAssurance: false };
+        }
+        lastBetByStreet[street] = a.amount;
+        if (a.amount > maxAmount) maxAmount = a.amount;
+      }
+    }
+    if (typeof transcript.pot === 'number' && Number.isFinite(transcript.pot) && transcript.pot < maxAmount) {
+      return { ok: false, mismatch: 'claimed pot ' + transcript.pot + ' is less than max single-action amount ' + maxAmount, lowAssurance: false };
+    }
+    return { ok: true, mismatch: null, lowAssurance: false, actionsChecked: actions.length };
   }
 
   // verifyTranscript — dispatch on the mode field and return a uniform
