@@ -893,6 +893,134 @@
     margin: 2px 0;
     display: inline-block;
   }
+  /* v69.118 — The Hero Strip: the hero's dedicated home BELOW the felt. Real
+     poker clients (PokerStars, GG, ACR) all use this paradigm — opponents
+     around the rim, hero in a fixed bar below. Replaces the pre-v69.118
+     hero-at-felt-rim approach that collided with the action panel.
+     Layout: flex row, 3 columns (info | cards | status), responsive shrink. */
+  .yj-hero-strip {
+    margin-top: 12px;
+    padding: 14px 18px;
+    display: grid;
+    grid-template-columns: minmax(180px, auto) 1fr minmax(120px, auto);
+    gap: 18px; align-items: center;
+    background: linear-gradient(180deg, rgba(232,185,35,0.08), rgba(232,185,35,0.02));
+    border: 1px solid rgba(212,160,23,0.35);
+    border-radius: 10px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 2px 12px rgba(0,0,0,0.30);
+    color: #F5F1E8;
+  }
+  .yj-hero-strip.is-acting {
+    border-color: var(--augusta-gold-hi, #F0C75E);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.06),
+      0 0 0 1px rgba(232,185,35,0.42),
+      0 0 28px rgba(232,185,35,0.32),
+      0 2px 12px rgba(0,0,0,0.40);
+  }
+  .yj-hero-strip.is-folded {
+    opacity: 0.55;
+    filter: grayscale(0.4);
+  }
+  .yj-hero-info {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .yj-hero-avatar {
+    width: 52px; height: 52px; border-radius: 50%;
+    background:
+      radial-gradient(circle at 35% 30%, rgba(255,255,255,0.20), transparent 55%),
+      linear-gradient(160deg, var(--augusta-gold-hi,#F0C75E) 0%, var(--augusta-gold,#D4A017) 60%, var(--augusta-gold-deep,#8E6E0E) 100%);
+    color: #1B1B1B;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 800;
+    box-shadow:
+      0 2px 6px rgba(0,0,0,0.55),
+      inset 0 1px 0 rgba(255,255,255,0.30);
+    border: 2px solid rgba(245,240,230,0.55);
+    flex-shrink: 0;
+  }
+  .yj-hero-avatar.is-button {
+    box-shadow:
+      0 0 0 2px #fff,
+      0 0 0 4px var(--augusta-gold-hi, #F0C75E),
+      0 2px 6px rgba(0,0,0,0.55);
+  }
+  .yj-hero-namewrap {
+    display: flex; flex-direction: column; gap: 2px;
+    min-width: 0;
+  }
+  .yj-hero-name {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 16px; font-weight: 700;
+    color: #F5F1E8; letter-spacing: 0.01em;
+    line-height: 1.1;
+  }
+  .yj-hero-stack {
+    font-family: -apple-system, 'SF Mono', Consolas, monospace;
+    font-size: 18px; font-weight: 700;
+    color: var(--augusta-gold-hi, #F0C75E);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .yj-hero-cards {
+    display: flex; gap: 12px; justify-content: center; align-items: center;
+    min-height: 120px;
+  }
+  .yj-hero-cards .pkr-card {
+    width: 84px; height: 118px; font-size: 1.7em;
+    box-shadow: 0 6px 14px rgba(0,0,0,0.50);
+  }
+  .yj-hero-waiting-tag,
+  .yj-hero-folded-tag {
+    font-family: -apple-system, sans-serif;
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--text-secondary, #C6D0BE); opacity: 0.65;
+    padding: 36px 16px;
+    text-align: center;
+  }
+  .yj-hero-folded-tag {
+    color: #E08070;
+    border: 1px dashed rgba(224,128,112,0.45);
+    border-radius: 6px;
+  }
+  .yj-hero-status {
+    display: flex; flex-direction: column; gap: 4px; align-items: flex-end;
+  }
+  .yj-hero-tag {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 10px; letter-spacing: 0.10em; text-transform: uppercase;
+    font-weight: 700;
+    background: rgba(255,255,255,0.06);
+    color: var(--text-on-dark-soft, #E0C68C);
+    border: 1px solid rgba(212,160,23,0.28);
+    font-family: -apple-system, sans-serif;
+  }
+  .yj-hero-tag.is-button {
+    background: linear-gradient(180deg, rgba(232,185,35,0.30), rgba(232,185,35,0.12));
+    color: #FFF7E8;
+    border-color: rgba(232,185,35,0.62);
+  }
+  .yj-hero-tag.is-acting {
+    background: linear-gradient(180deg, var(--augusta-gold-hi, #F0C75E), var(--augusta-gold, #D4A017));
+    color: #1B1B1B;
+    border-color: #fff;
+    animation: yjHeroPulse 1.4s ease-in-out infinite;
+  }
+  @keyframes yjHeroPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(232,185,35,0.55); }
+    50%      { box-shadow: 0 0 0 6px rgba(232,185,35,0.00); }
+  }
+  .yj-hero-tag.is-golf.pos { color: #A8E6A1; border-color: rgba(168,230,161,0.42); }
+  .yj-hero-tag.is-golf.neg { color: #F3A889; border-color: rgba(243,168,137,0.42); }
+  .yj-hero-tag.is-golf.flat { color: var(--text-on-dark-soft); }
+  .yj-hero-tag.is-time {
+    background: rgba(176,80,80,0.18);
+    color: #FFD9C8; border-color: rgba(176,80,80,0.45);
+    font-variant-numeric: tabular-nums;
+  }
+
   /* v69.117 — Cash session KPI row, remastered as a premium stat strip.
      Was a generic stat-box row (gray pills, no hierarchy); now matches the
      Augusta-luxe Card aesthetic: serif numerals, gold-spaced caps labels,
@@ -2644,7 +2772,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.117-cash-polish-A";
+const APP_VERSION = "2026.05.13-v69.118-cash-hero-strip";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -15293,6 +15421,78 @@ function renderBetChipStack(amount) {
   return wrap;
 }
 
+// === v69.118 The Hero Strip: the hero's home below the felt =================
+//
+// Real poker clients (PokerStars, PartyPoker, GG, ACR, Chess.com's variant of
+// poker) all use the same paradigm: opponents sit around the felt rim, and the
+// HERO lives in a dedicated bar below the felt. That bar has the hero's avatar
+// + name + stack on one side, their hole cards prominently in the middle (the
+// primary read), and an info column on the other side (position / dealer
+// button / time bank / golf scorecard at YJ tables).
+//
+// Pre-v69.118 the hero was rendered at the felt's bottom rim with absolute
+// positioning — which collided with the action panel underneath, and the
+// hole cards used absolute positioning inside the felt which produced erratic
+// placement depending on felt sizing. v69.118 routes both through this fully-
+// deterministic flex layout that lives in the document flow.
+function renderHeroStrip(t, youSeatIdx, handState, golden, fourColor) {
+  const seat = (youSeatIdx >= 0) ? t.seats[youSeatIdx] : null;
+  const isActing = !!(handState && handState.actingSeat === youSeatIdx && handState.phase !== 'complete');
+  const isDealer = (t.button === youSeatIdx);
+  const isFolded = !!(handState && handState.folded && handState.folded[youSeatIdx]);
+  const isHoldingCards = !!(handState && handState.hole && handState.hole[youSeatIdx] && handState.phase !== 'complete' && handState.phase !== 'idle');
+
+  const strip = el('div', {
+    class: 'yj-hero-strip' + (isActing ? ' is-acting' : '') + (isFolded ? ' is-folded' : ''),
+    role: 'region',
+    'aria-label': 'Your seat',
+  });
+
+  // --- LEFT: avatar + name + stack -----------------------------------------
+  const heroInfo = el('div', { class: 'yj-hero-info' });
+  const avatar = el('div', { class: 'yj-hero-avatar' + (isDealer ? ' is-button' : ''), text: '★', title: 'You · seat ' + (youSeatIdx + 1) });
+  heroInfo.appendChild(avatar);
+  const nameWrap = el('div', { class: 'yj-hero-namewrap' });
+  nameWrap.appendChild(el('div', { class: 'yj-hero-name', text: (seat && seat.name) || 'You' }));
+  nameWrap.appendChild(el('div', { class: 'yj-hero-stack', text: (seat ? Math.round(seat.stack).toLocaleString() : '0') + ' ◈' }));
+  heroInfo.appendChild(nameWrap);
+  strip.appendChild(heroInfo);
+
+  // --- CENTER: hole cards (the prominent read) -----------------------------
+  const cardsWrap = el('div', { class: 'yj-hero-cards' });
+  if (isHoldingCards) {
+    renderCardsStable(cardsWrap, handState.hole[youSeatIdx], {
+      isHero: true,
+      golden: golden,
+      dealStaggerMs: 90,
+    });
+  } else if (isFolded) {
+    cardsWrap.appendChild(el('div', { class: 'yj-hero-folded-tag', text: 'FOLDED THIS HAND' }));
+  } else {
+    cardsWrap.appendChild(el('div', { class: 'yj-hero-waiting-tag', text: handState && handState.phase === 'complete' ? '— hand complete —' : '— waiting for cards —' }));
+  }
+  if (fourColor) cardsWrap.classList.add('fourcolor');
+  strip.appendChild(cardsWrap);
+
+  // --- RIGHT: status column (dealer button / time bank / golf scorecard) ---
+  const status = el('div', { class: 'yj-hero-status' });
+  if (isDealer) status.appendChild(el('span', { class: 'yj-hero-tag is-button', text: 'BUTTON', title: 'You have the dealer button this hand' }));
+  if (isActing) status.appendChild(el('span', { class: 'yj-hero-tag is-acting', text: 'YOUR TURN' }));
+  if (t.variant !== 'pure' && seat) {
+    const sl = +seat.strokeLedger || 0;
+    const cls = sl < -0.5 ? 'pos' : sl > 0.5 ? 'neg' : 'flat';
+    status.appendChild(el('span', { class: 'yj-hero-tag is-golf ' + cls, title: 'Your session golf scorecard — separate from chips, lower is better', text: '⛳ ' + (sl > 0 ? '+' : '') + sl.toFixed(1) }));
+  }
+  // Time-bank ring placeholder — when acting, show a small countdown digit.
+  if (isActing && handState && handState.timeBankExp) {
+    const remaining = Math.max(0, (handState.timeBankExp - Date.now()) / 1000);
+    status.appendChild(el('span', { class: 'yj-hero-tag is-time', text: Math.ceil(remaining) + 's', title: 'Time bank remaining' }));
+  }
+  strip.appendChild(status);
+
+  return strip;
+}
+
 // === Cash table view incremental-update infrastructure (v69.27) ============
 //
 // Background: prior to v69.27 every player action triggered a full rebuild of
@@ -15740,11 +15940,16 @@ function renderCashTableView(tableId) {
     ? ((bottomDisplayIdx - youSeatIdx + t.maxSeats) % t.maxSeats)
     : 0;
   for (let i = 0; i < t.maxSeats; i++) {
+    // v69.118 — the hero is no longer rendered at the felt rim. It moved to a
+    // dedicated hero strip BELOW the felt (see renderHeroStrip below) where it
+    // has a proper avatar + name + stack + hole-cards layout that doesn't
+    // collide with the action panel. This is the layout pattern every real
+    // poker client uses (PokerStars, GG, ACR): hero outside the felt, opponents
+    // around the rim. Skip emitting the hero's rim seat entirely.
+    if (i === youSeatIdx) continue;
     const displayIdx = (i + heroOffset) % t.maxSeats;
     const angle = (displayIdx / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
-    // Use the smaller HERO_RADIUS_Y only for the bottom-center hero seat;
-    // other seats keep the wider SEAT_RADIUS_Y so they stay at the rim.
-    const ry = (displayIdx === bottomDisplayIdx) ? HERO_RADIUS_Y : SEAT_RADIUS_Y;
+    const ry = SEAT_RADIUS_Y;
     const x = 50 + Math.cos(angle) * SEAT_RADIUS_X;
     const y = 50 + Math.sin(angle) * ry;
     const s = t.seats[i];
@@ -15937,26 +16142,17 @@ function renderCashTableView(tableId) {
   // window (~600ms after hole cards arrived). Subsequent re-renders during
   // the same hand (action ticks, log updates, time-bank refreshes) skip the
   // animation, so the cards stay still instead of re-squeezing on every event.
-  // v69.26 fix: hero hole-cards now mounted INSIDE .felt-table (not the
-  // outer cash-table-card), unifying the coordinate system with seats and
-  // eliminating the bottom-center collision with the hero seat. The
-  // .hero-hole-cards CSS class positions them at left:50%, bottom:4% of
-  // the felt with explicit z-index 22.
-  if (youSeatIdx >= 0 && handState && handState.hole && handState.hole[youSeatIdx]) {
-    // v69.32 — cardKey stable-DOM hero hole-cards.
-    // Replaces the v69.31 _holeAnimated flag approach. Now: animation is
-    // controlled purely by DOM identity. If the cards (rank+suit) match
-    // what was already in the container, they are reused untouched. If
-    // they're new (first render of this hand, or new hand), they animate
-    // once. The squeeze class is only applied to NEWLY-CREATED cards
-    // inside renderCardsStable when isHero=true.
-    const yourCards = el('div', { class: 'hero-hole-cards' + (fourColor ? ' fourcolor' : '') });
-    felt.appendChild(yourCards);
-    renderCardsStable(yourCards, handState.hole[youSeatIdx], {
-      isHero: true,
-      golden: golden,
-      dealStaggerMs: 90,
-    });
+  // v69.118 — hero hole cards no longer mount INSIDE the felt. They live in
+  // the deterministic .yj-hero-strip flexrow below (see renderHeroStrip),
+  // along with the hero's avatar/name/stack and the dealer-button indicator.
+  // Pre-v69.118 they used absolute positioning inside .felt-table which
+  // produced erratic placement (cards appearing in the left margin etc.)
+  // depending on felt sizing — the hero strip is fully deterministic.
+
+  // === Hero strip (avatar | hole cards | stack / dealer / time bank) =======
+  if (youSeatIdx >= 0) {
+    try { card.appendChild(renderHeroStrip(t, youSeatIdx, handState, golden, fourColor)); }
+    catch (_) { /* never block the table on a hero-strip render bug */ }
   }
 
   // === Interactive action panel =============================================
