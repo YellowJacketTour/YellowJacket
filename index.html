@@ -2591,7 +2591,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.114-mp-cash-scorecards";
+const APP_VERSION = "2026.05.13-v69.115-cash-card-livefix";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -16443,6 +16443,18 @@ function startCashHand(t) {
   const seated = [];
   for (let i = 0; i < t.seats.length; i++) if (t.seats[i] && !t.seats[i].sittingOut && t.seats[i].stack >= t.bigBlind) seated.push(i);
   if (seated.length < 2) { toast('Need 2+ active seats with stack >= BB'); return; }
+  // v69.115 — snapshot each seated player's pre-hand stack here (BEFORE the
+  // blinds get posted below). Stored on handState below so resolveCashHand
+  // can compute per-hand chip P/L for the Session Card. Lazy-init each seat's
+  // handLog array on first use. (v69.114 added this to the offline dealCashHand
+  // path but the LIVE engine runs through startCashHand → resolveCashHand —
+  // hence the Session Card was stuck at "No hands played yet" after a live
+  // hand played. Bug fixed in v69.115.)
+  const stackPre = {};
+  for (const i of seated) {
+    stackPre[i] = t.seats[i].stack;
+    if (!t.seats[i].handLog) t.seats[i].handLog = [];
+  }
   t.button = (t.button + 1) % t.maxSeats;
   while (!seated.includes(t.button)) t.button = (t.button + 1) % t.maxSeats;
   const deck = makeCashDeck(); shuffleCashDeck(deck);
@@ -16493,6 +16505,7 @@ function startCashHand(t) {
     handId: t.spectatorMode ? ('SH-T' + t.id + '-' + (t.handCount + 1)) : ('H-' + Date.now().toString(36) + '-' + (t.handCount + 1)),
     startedAt: Date.now(),
     goldenCard,
+    stackPre,   // v69.115 — for Session Card per-hand chip-P/L computation
   };
   for (const i of seated) recordHUDAction(t.seats[i].playerId, 'dealt', true);
   // Phase E/F/H: clear pot pile from previous hand at the start of a new deal
@@ -16910,6 +16923,9 @@ function resolveCashHand(t) {
   }
   // Auto-trigger a draw if the configured interval has elapsed.
   runGoldenLotteryDraw(false);
+  // v69.115 — also capture per-seat golfDelta + handClass for the Session Card.
+  const perSeatGolf = {};
+  const perSeatHandClass = {};
   if (t.variant !== 'pure' && isShowdown) {
     // v69.65/v69.70 — the cash golf scorecard. A separate per-hand evaluation of
     // skill, kept in TRUE golf convention (lower = better, exactly like the tour
@@ -16928,9 +16944,39 @@ function resolveCashHand(t) {
       else if (t.variant === 'yj') golfDelta = cashYJLoserGolfScore(ev.className, h.pot, t.smallBlind, t.bigBlind);
       else golfDelta = ownGolf;                          // Honored Loss
       t.seats[i].strokeLedger += golfDelta;
+      perSeatGolf[i] = golfDelta;
+      perSeatHandClass[i] = ev.className;
     }
   }
   for (const i of h.seated) t.seats[i].handsPlayed++;
+
+  // v69.115 — per-hand handLog push (Cash Session Card data, live engine path).
+  // One entry per SEATED player. Mirrors the offline dealCashHand push (v69.114)
+  // but reads from the live h.* state. Captures: hand number (t.handCount BEFORE
+  // increment so the entry indexes match the rendered hand sequence), golf
+  // delta, chip P/L (seat.stack − h.stackPre snapshot), hand class (null on
+  // fold / pre-showdown), outcome bucket, raked pot.
+  const _stackPre = (h && h.stackPre) ? h.stackPre : {};
+  for (const i of h.seated) {
+    const seat = t.seats[i];
+    if (!seat.handLog) seat.handLog = [];
+    const didFold = !!(h.folded && h.folded[i]);
+    const outcome = didFold ? 'fold'
+                  : (winnerIdx === i && !isShowdown) ? 'won-uncontested'
+                  : (winnerIdx === i) ? 'showdown-won'
+                  : isShowdown ? 'showdown-lost'
+                  : 'showdown-tied';
+    const chipDelta = (_stackPre[i] != null) ? (seat.stack - _stackPre[i]) : 0;
+    seat.handLog.push({
+      hand: t.handCount + 1,                  // t.handCount is about to be incremented below
+      golf: (perSeatGolf[i] != null) ? perSeatGolf[i] : 0,
+      chip: Math.round(chipDelta),
+      handClass: (perSeatHandClass[i] != null) ? perSeatHandClass[i] : null,
+      outcome: outcome,
+      pot: Math.round(rakedPot),
+      isShowdown: !!isShowdown,
+    });
+  }
   // v69.16 quest progress — track hero's cash hand activity
   const youSeatIdx = t.seats.findIndex(s => s && s.playerId === 0);
   if (youSeatIdx >= 0 && h.seated.indexOf(youSeatIdx) !== -1) {
@@ -18342,17 +18388,32 @@ function renderCashView(gameMode) {
       if (oldSig === newSig) {
         // Signature stable — incremental update is safe.
         const wrap = el('div', { style: 'margin-top: 18px;' });
-        // Re-render the multi-table tab strip (cheap; ~6 buttons max). Tab
-        // strip state changes whenever the active-tables list changes, so
-        // it doesn't fit the cache pattern; just rebuild it each time.
+        // v69.115 — Tab-strip rebuild uses the same ARIA tablist + arrow nav
+        // pattern as the full-mount path in renderCashTableView. Was a stale
+        // copy-paste in v69.114; this is now the same DOM both paths produce.
         if (CashLobby.activeTableIds.length > 1) {
-          const strip = el('div', { class: 'cash-tab-strip' });
+          const strip = el('div', { class: 'cash-tab-strip', role: 'tablist', 'aria-label': 'Active cash tables' });
           CashLobby.activeTableIds.forEach(id => {
             const tt = CashLobby.tables.find(x => x.id === id); if (!tt) return;
+            const isActive = (id === CashLobby.focusedTableId);
             const tab = el('button', {
-              class: 'cash-tab' + (id === CashLobby.focusedTableId ? ' active' : ''),
+              class: 'cash-tab' + (isActive ? ' active' : ''),
+              role: 'tab',
+              'aria-selected': isActive ? 'true' : 'false',
+              tabindex: isActive ? '0' : '-1',
+              'data-table-id': String(id),
               onclick: () => { CashLobby.focusedTableId = id; refreshCashView(); },
             });
+            tab.onkeydown = (e) => {
+              if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+              e.preventDefault();
+              const ids = CashLobby.activeTableIds;
+              const i = ids.indexOf(CashLobby.focusedTableId);
+              const n = ids.length;
+              const j = e.key === 'ArrowLeft' ? (i - 1 + n) % n : e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'Home' ? 0 : n - 1;
+              CashLobby.focusedTableId = ids[j];
+              refreshCashView();
+            };
             tab.appendChild(el('span', { text: tt.smallBlind + '/' + tt.bigBlind }));
             tab.appendChild(el('span', { class: 'cash-tab-variant', text: tt.variant === 'pure' ? 'NLHE' : tt.variant === 'yj' ? 'YJ-Stroke' : 'BB-Stroke' }));
             const tts = tt.handState;
@@ -18364,6 +18425,17 @@ function renderCashView(gameMode) {
           wrap.appendChild(strip);
         }
         wrap.appendChild(_yjCashedFocusedCard);
+        // v69.115 — The Session Card lives OUTSIDE the cached cash-table-card
+        // (renderCashSessionCard returns a fresh node every call) so the
+        // incremental path needs to explicitly re-render it on every refresh.
+        // Without this, the Session Card was rendered once at mount and never
+        // updated: "Hands played 1" but the card showed the empty-state
+        // because dealCashHand's handLog push happens AFTER the original mount
+        // and the incremental refresh skipped the re-render.
+        const youSeatIdx = focusedT.seats.findIndex(s => s && s.playerId === 0);
+        if (youSeatIdx >= 0) {
+          try { wrap.appendChild(renderCashSessionCard(focusedT, youSeatIdx)); } catch (_) {}
+        }
         view.appendChild(wrap);
         const ok = updateCashCardInPlace(focusedT, _yjCashedFocusedCard);
         if (!ok) {
