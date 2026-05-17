@@ -2664,6 +2664,67 @@
   @media (prefers-reduced-motion: reduce) {
     .yj-progress-indeterminate { animation: none; }
   }
+
+  /* === v69.120 — Nectar Garden generative music controls in the sidebar foot. === */
+  .audio-control {
+    margin: 14px 0 4px;
+    padding: 10px 12px 12px;
+    background: linear-gradient(180deg, rgba(201,168,87,0.08), rgba(0,0,0,0.08));
+    border: 1px solid rgba(201,168,87,0.28);
+    border-radius: 8px;
+    font-family: -apple-system, sans-serif;
+  }
+  .audio-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .audio-header .ico { font-size: 15px; }
+  .audio-toggle-btn {
+    flex: 1;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    background: rgba(232,185,35,0.12);
+    color: var(--text-on-dark-soft);
+    border: 1px solid rgba(201,168,87,0.35);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .audio-toggle-btn.active {
+    background: linear-gradient(180deg, var(--gold), #c9a857);
+    color: #2A1810;
+    border-color: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  }
+  .audio-toggle-btn:hover:not(.active) {
+    background: rgba(232,185,35,0.22);
+    border-color: var(--gold);
+  }
+  .audio-volume {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    color: var(--text-on-dark-soft);
+    opacity: 0.85;
+  }
+  .audio-volume input[type="range"] {
+    flex: 1;
+    accent-color: var(--gold);
+    height: 4px;
+  }
+  body.kawaii-mode .audio-control {
+    background: linear-gradient(180deg, rgba(255,181,232,0.08), rgba(0,0,0,0.04));
+    border-color: rgba(255,181,232,0.3);
+  }
+  body.kawaii-mode .audio-toggle-btn.active {
+    background: linear-gradient(180deg, var(--kawaii-honey,#FFCC4D), #f9d71c);
+    color: #3D2A1F;
+  }
 </style>
 <!-- Three.js (Phase B atmospheric layer · loaded async; gracefully degrades if blocked) -->
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js" crossorigin="anonymous" onload="window._yj3dReady = true;" onerror="window._yj3dReady = false; console.warn('YJ: Three.js CDN load failed — 3D atmospheric layer disabled.');"></script>
@@ -2747,6 +2808,22 @@
       <div style="margin-bottom: 6px;"><span class="kbd">Ctrl</span><span class="kbd">K</span> Search</div>
       <div style="margin-bottom: 6px;"><span class="kbd">?</span> Keyboard help</div>
       <div id="themeToggle" style="cursor: pointer; margin-top: 10px;"><span class="kbd">☀</span> Sunday pin position</div>
+
+      <!-- v69.120 — Nectar Garden generative music. AudioContext is constructed
+           on first click so browser autoplay policy is satisfied. State persists
+           in TourState.preferences.{musicEnabled, musicVolume}. -->
+      <div class="audio-control">
+        <div class="audio-header">
+          <span class="ico" aria-hidden="true">🎵</span>
+          <button id="musicToggle" class="audio-toggle-btn" type="button" aria-pressed="false" onclick="toggleMusic()">Nectar Garden</button>
+        </div>
+        <div class="audio-volume">
+          <span style="font-size:9px; letter-spacing:0.5px;">VOL</span>
+          <input id="musicVolume" type="range" min="0" max="100" step="5" value="55" aria-label="Music volume" oninput="setMusicVolume(this.value)">
+          <span id="musicVolLabel" style="font-family:monospace; font-size:9px; min-width:28px; text-align:right;">55</span>
+        </div>
+      </div>
+
       <div style="margin-top: 12px; font-size: 10px; opacity: 0.6;">v1.0 · offline · secure</div>
     </div>
   </aside>
@@ -2795,7 +2872,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.119b-felt-children-pos";
+const APP_VERSION = "2026.05.13-v69.120-nectar-music";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -31116,6 +31193,277 @@ function showActionIndicator(seatEl, action) {
   setTimeout(() => { try { indicator.remove(); } catch (_) {} }, 1400);
 }
 
+/* ======================================================================
+   NECTAR MUSIC — v69.120 generative background audio.
+   Pure Web Audio API · no external assets · client-side only.
+   Three concurrent voices:
+     1. WARM PAD     — two slightly-detuned low oscillators through a slow LFO-
+                       modulated lowpass, the bed of the piece.
+     2. MELODY VOICE — scheduled-ahead random walks on a major (or mixolydian)
+                       scale, evolving rootNote every 18 beats.
+     3. HONEY SHIMMER— a high band-passed sine with subtle vibrato, the
+                       "morning light through honey" texture.
+   AudioContext is created on first user click (browser autoplay policy);
+   .resume() handles tabs that suspended us. Toggle + volume persist via
+   TourState.preferences.{musicEnabled, musicVolume}.
+   ====================================================================== */
+class NectarMusic {
+  constructor() {
+    this.audioContext = null;
+    this.masterGain = null;
+    this.isPlaying = false;
+    this.volume = 0.55;
+    this.oscillators = [];
+    this.schedulerTimer = null;
+    this.nextNoteTime = 0;
+    this.currentBeat = 0;
+    this.rootNote = 55;
+    this.scale = [0, 2, 4, 5, 7, 9, 11];
+    this.bpm = 66;
+    this.beatDuration = 60 / this.bpm;
+    this.melodyGain = null;
+    this.melodyFilter = null;
+  }
+
+  init() {
+    if (this.audioContext) return;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) throw new Error('Web Audio not supported');
+      this.audioContext = new AC();
+      this.masterGain = this.audioContext.createGain();
+      this.masterGain.gain.value = this.volume;
+      this.masterGain.connect(this.audioContext.destination);
+
+      this._createWarmPad();
+      this._createMelodyVoice();
+      this._createHoneyShimmer();
+    } catch (e) {
+      try { console.warn('[NectarMusic] Failed to initialize:', e); } catch (_) {}
+      this.audioContext = null;
+    }
+  }
+
+  _createWarmPad() {
+    const osc1 = this.audioContext.createOscillator();
+    osc1.type = 'sawtooth';
+    osc1.frequency.value = 110;
+
+    const osc2 = this.audioContext.createOscillator();
+    osc2.type = 'sine';
+    osc2.frequency.value = 110.4;
+
+    const filter = this.audioContext.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 380;
+
+    const gain = this.audioContext.createGain();
+    gain.gain.value = 0.16;
+
+    const lfo = this.audioContext.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 0.028;
+    const lfoGain = this.audioContext.createGain();
+    lfoGain.gain.value = 160;
+    lfo.connect(lfoGain);
+    lfoGain.connect(filter.frequency);
+    lfo.start();
+
+    osc1.connect(filter);
+    osc2.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    osc1.start();
+    osc2.start();
+
+    this.oscillators.push(osc1, osc2, lfo);
+  }
+
+  _createMelodyVoice() {
+    this.melodyGain = this.audioContext.createGain();
+    this.melodyGain.gain.value = 0.20;
+    this.melodyFilter = this.audioContext.createBiquadFilter();
+    this.melodyFilter.type = 'lowpass';
+    this.melodyFilter.frequency.value = 1650;
+    this.melodyGain.connect(this.melodyFilter);
+    this.melodyFilter.connect(this.masterGain);
+    this.nextNoteTime = this.audioContext.currentTime + 1.2;
+  }
+
+  _createHoneyShimmer() {
+    const osc = this.audioContext.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = 1320;
+
+    const filter = this.audioContext.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 1320;
+    filter.Q.value = 6;
+
+    const gain = this.audioContext.createGain();
+    gain.gain.value = 0.012;
+
+    const vib = this.audioContext.createOscillator();
+    vib.type = 'sine';
+    vib.frequency.value = 0.65;
+    const vibGain = this.audioContext.createGain();
+    vibGain.gain.value = 3.5;
+    vib.connect(vibGain);
+    vibGain.connect(osc.frequency);
+    vib.start();
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start();
+
+    this.oscillators.push(osc, vib);
+  }
+
+  scheduleMelody() {
+    if (!this.isPlaying || !this.audioContext) return;
+    const now = this.audioContext.currentTime;
+
+    while (this.nextNoteTime < now + 4.0) {
+      this._playMelodyNote(this.nextNoteTime);
+      let step = this.beatDuration * (Math.random() > 0.65 ? 1.6 : 0.95);
+      step *= (0.82 + Math.random() * 0.36);
+      this.nextNoteTime += step;
+      this.currentBeat++;
+      if (this.currentBeat % 18 === 0) this._evolveHarmony();
+    }
+    const delay = Math.max(60, (this.nextNoteTime - now) * 1000 - 180);
+    this.schedulerTimer = setTimeout(() => this.scheduleMelody(), delay);
+  }
+
+  _playMelodyNote(time) {
+    const midi = this._chooseNote();
+    const freq = 440 * Math.pow(2, (midi - 69) / 12);
+
+    const osc = this.audioContext.createOscillator();
+    osc.type = (Math.random() > 0.55) ? 'triangle' : 'sine';
+    osc.frequency.value = freq;
+
+    const gain = this.audioContext.createGain();
+    const filter = this.audioContext.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 980 + Math.random() * 1100;
+
+    const atk = 0.07 + Math.random() * 0.11;
+    const rel = 2.1 + Math.random() * 3.2;
+
+    gain.gain.value = 0;
+    gain.gain.setValueAtTime(0, time);
+    gain.gain.linearRampToValueAtTime(0.38 + Math.random() * 0.22, time + atk);
+    gain.gain.setTargetAtTime(0.0001, time + atk + 0.15, rel * 0.55);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.melodyGain);
+    osc.start(time);
+
+    const stopAt = time + atk + rel * 2.8 + 0.8;
+    osc.stop(stopAt);
+  }
+
+  _chooseNote() {
+    const base = this.rootNote;
+    const idx = Math.floor(Math.random() * this.scale.length);
+    let note = base + this.scale[idx];
+    if (Math.random() < 0.16) note += 12;
+    if (Math.random() < 0.07) note -= 12;
+    return Math.max(48, Math.min(72, note));
+  }
+
+  _evolveHarmony() {
+    const shifts = [0, 2, -1, 3, -3, 5, -2];
+    const shift = shifts[Math.floor(Math.random() * shifts.length)];
+    this.rootNote = Math.max(50, Math.min(62, this.rootNote + shift));
+    if (Math.random() < 0.28) {
+      this.scale = (Math.random() > 0.5)
+        ? [0, 2, 4, 5, 7, 9, 11]   // major
+        : [0, 2, 3, 5, 7, 9, 10];  // mixolydian-ish (a little smoky)
+    }
+  }
+
+  start() {
+    if (this.isPlaying) return;
+    this.init();
+    if (!this.audioContext) return;
+
+    this.isPlaying = true;
+    this.nextNoteTime = this.audioContext.currentTime + 0.9;
+    this.currentBeat = 0;
+
+    if (this.audioContext.state === 'suspended') {
+      try { this.audioContext.resume(); } catch (_) {}
+    }
+    this.scheduleMelody();
+
+    const now = this.audioContext.currentTime;
+    this.masterGain.gain.cancelScheduledValues(now);
+    this.masterGain.gain.setValueAtTime(0.01, now);
+    this.masterGain.gain.linearRampToValueAtTime(this.volume, now + 2.4);
+  }
+
+  stop() {
+    this.isPlaying = false;
+    if (this.schedulerTimer) { clearTimeout(this.schedulerTimer); this.schedulerTimer = null; }
+    if (this.masterGain && this.audioContext) {
+      const now = this.audioContext.currentTime;
+      this.masterGain.gain.linearRampToValueAtTime(0.0001, now + 1.9);
+      setTimeout(() => {
+        this.oscillators.forEach(o => { try { o.stop(); o.disconnect(); } catch (_) {} });
+        this.oscillators = [];
+        try { if (this.audioContext) this.audioContext.close(); } catch (_) {}
+        this.audioContext = null;
+      }, 2300);
+    }
+  }
+
+  setVolume(v) {
+    this.volume = Math.max(0, Math.min(1, v));
+    if (this.masterGain) this.masterGain.gain.value = this.volume;
+  }
+
+  toggle() {
+    if (this.isPlaying) this.stop();
+    else this.start();
+    return this.isPlaying;
+  }
+}
+
+let nectarMusic = null;
+
+function toggleMusic() {
+  if (!nectarMusic) nectarMusic = new NectarMusic();
+  const playing = nectarMusic.toggle();
+  if (!TourState.preferences) TourState.preferences = {};
+  TourState.preferences.musicEnabled = playing;
+  try { saveState(); } catch (_) {}
+  updateMusicUI();
+}
+
+function setMusicVolume(val) {
+  const v = parseInt(val, 10);
+  const clamped = Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 55;
+  if (!nectarMusic) nectarMusic = new NectarMusic();
+  nectarMusic.setVolume(clamped / 100);
+  const label = document.getElementById('musicVolLabel');
+  if (label) label.textContent = String(clamped);
+  if (!TourState.preferences) TourState.preferences = {};
+  TourState.preferences.musicVolume = clamped;
+  try { saveState(); } catch (_) {}
+}
+
+function updateMusicUI() {
+  const btn = document.getElementById('musicToggle');
+  if (!btn) return;
+  const enabled = nectarMusic && nectarMusic.isPlaying;
+  btn.classList.toggle('active', !!enabled);
+  btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+}
+
 function init() {
   // === UNIFIED SAVE / VERSION-AWARE RESTORE ===
   // Try the unified save bundle first. If it exists, hydrate everything from
@@ -31249,6 +31597,23 @@ function init() {
 
   const themeToggle = $('#themeToggle');
   if (themeToggle) themeToggle.onclick = toggleTheme;
+
+  // === v69.120 — Nectar Garden init ====================================
+  // Restores volume from preferences. We don't auto-START on page load even
+  // if preferences.musicEnabled was true — browser autoplay policy requires
+  // a user gesture for AudioContext. The user toggling once after restore
+  // brings it back; the active state is reflected via updateMusicUI.
+  try {
+    if (!nectarMusic) nectarMusic = new NectarMusic();
+    if (TourState.preferences && typeof TourState.preferences.musicVolume === 'number') {
+      nectarMusic.setVolume(TourState.preferences.musicVolume / 100);
+    }
+    const volSlider = document.getElementById('musicVolume');
+    const volLabel = document.getElementById('musicVolLabel');
+    if (volSlider) volSlider.value = String(Math.round(nectarMusic.volume * 100));
+    if (volLabel) volLabel.textContent = String(Math.round(nectarMusic.volume * 100));
+    setTimeout(updateMusicUI, 80);
+  } catch (_) { /* never block init on audio setup */ }
 
   document.addEventListener('keydown', (e) => {
     const inInput = ['INPUT','TEXTAREA','SELECT'].indexOf(document.activeElement.tagName) !== -1;
