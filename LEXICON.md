@@ -112,6 +112,23 @@ Both names refer to the same scoring system. The two marks let the brand have ra
 
 ---
 
+## 7b. UI Component Marks (added 2026-05-17, v69.124)
+
+The in-app scorecard / hero / music components shipped during v69.107–123 carry their own product marks. Each is a distinct user-facing surface; collectively they are part of the protected "Honey-Stroke" product family.
+
+| Mark | Status | What it is | Casual variants |
+|------|--------|------------|------------------|
+| **The Card** | Product mark | The per-hole match scorecard (Solo / Hot-seat / Share-link). Augusta-luxe cream-paper card with 18 holes + OUT/IN/TOT subtotals, eagle/birdie/par/bogey/double cell coloring, hand-class abbreviations, honey deltas. (Shipped v69.112.) | "the hole-by-hole," "the per-hole card" — avoid the bare "scorecard" alone (ambiguous with the engine's golf-stroke ledger) |
+| **The Session Card** | Product mark | The per-hand cash session log. Grows as you play; Grid view wraps every 18 hands (golf-row cadence), Strip view scrolls horizontally. (Shipped v69.114.) | "the session log," "the per-hand card" |
+| **Hero Strip** | Product mark | The dedicated bar below the cash felt containing avatar / hole cards / status tags (BUTTON, YOUR TURN, ⛳ golf, time-bank). Replaces the pre-v69.118 hero-at-felt-rim rendering; matches the PokerStars / GG / ACR paradigm. (Shipped v69.118.) | "the hero zone," "the hero bar" |
+| **Golden Fairway** | Product mark | The generative-music engine (Tone.js-powered chord progressions, three voices, reverb). Toggle + volume in the sidebar foot. (Shipped v69.123.) | "the music toggle," "Golden Fairway music" — avoid implying it's a separate product from the Tour |
+
+**Naming conventions:**
+- "Augusta-luxe" describes the **aesthetic palette** (cream paper + gold rules + serif numerals + hair-thin borders + subtle 🐝 watermark) that runs across The Card, The Session Card, and the Loser Ladder disclosure. It is **not** a protected mark — it's the style genre. Other premium-feel screens may share it.
+- The **stroke-color tokens** (eagle/birdie/par/bogey/double cell shading) are the visual vocabulary of Honey-Stroke scoring; reuse them anywhere a hole / hand carries a golf-stroke score (the season's "now-playing" Calendar card uses the same palette).
+
+---
+
 ## 8. Style-Guide Rules
 
 These are the rules for how to USE the marks in copy. Inconsistent use erodes both the family-of-marks trademark argument and brand recognition.

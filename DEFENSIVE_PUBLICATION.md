@@ -5,6 +5,7 @@
 **Publication date:** [TO BE FILLED ON ACTUAL PUBLICATION]
 **Document SHA-256:** [TO BE COMPUTED ON ACTUAL PUBLICATION]
 **Inventory cross-reference:** This publication corresponds to assets §4 of `IP_INVENTORY.md` dated 2026-05-02.
+**Working-draft revision:** 2026-05-17 — text re-confirmed against the v69.124 build (`index.html` @ 2026-05-17). No mechanics described below have changed since v69.103; the v69.107–124 work was UI/UX surface and audit cleanup. **This document is a draft awaiting counsel sign-off**; the placeholders above will be filled at actual publication.
 
 ---
 

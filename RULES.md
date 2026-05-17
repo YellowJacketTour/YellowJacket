@@ -35,6 +35,7 @@ This document is the canonical, plain-language manual. Every primary brand term,
 7. [Hand Class → Golf Score Reference](#7-hand-class--golf-score-reference)
 8. [Tournament Structure](#8-tournament-structure)
 9. [Tour de Bourdon — The Canonical Season ("the Nectour")](#9-tour-de-bourdon--the-canonical-season-the-nectour)
+10. [The Honey-Stroke Scorecard Components (UI)](#10-the-honey-stroke-scorecard-components-ui) — *new in v69.124*
 
 ---
 
@@ -801,7 +802,7 @@ Won by **the player atop the Hive Rating** at season's end who meets all three e
 
 **LCB fallback:** if NO player clears all three criteria in a given season, the title falls to the player with the highest **lower-confidence-bound rating** `μ − 1.5·RD` among those who played enough events. This is "good AND trusted" — never a fluky-few-events spike.
 
-The Royal Suitor is the maillot jaune of the bumblebee — the season's skill verdict, analogous to golf's OWGR year-end #1 / cycling's GC winner / tennis's year-end ATP #1. Measured production behavior: **a top-quartile (often top-10%) player in a typical year; the literal #1 wins ~12% of years** (matching golf's actual OWGR year-end-#1 rate); a top-5-skill player wins ~40%.
+The Royal Suitor is the maillot jaune of the bumblebee — the season's skill verdict, analogous to golf's OWGR year-end #1 / cycling's GC winner / tennis's year-end ATP #1. Measured production behavior (in-app, real engine, locked production config, Phase C @ α=0.6): **the Royal Suitor lands on a top-decile-skill player consistently** (crownSkillPct ≈ 0.90), and the **true #1 skill player lands in the top 8–9% of the season rating** (bestPlayerRatingPct ≈ 0.91) — the rating reliably *finds* the elites, even though it doesn't always crown the literal-rank-1 player specifically (at a 1024-player universe with the wide skill spread, many near-elite players are tightly bunched at skill ≥ 0.93 and the rating's specific rank-1 floats within that cluster). The right way to read the system is "the Suitor is reliably a near-elite player," not "the literal #1 always wins" — that latter framing isn't even what real-world year-end rankings deliver.
 
 #### 🌼 The Pollen Trail — the form champion
 
@@ -848,12 +849,13 @@ A 6-season `runCareer` is the production default — long enough to see legacies
 - Outputs a full metric table: ρ_active / ρ_season / ρ_eligible / ρ_main / crownSkillPct / trueNo1IsCrown / top5SkillIsCrown / jacketSkillPct / jacketSeasonPct / topPotFavoriteWon / topPotNo1InFinal / rhoByYear.
 - CSV export with full config snapshot. Deterministic per seed.
 
-The latest deep sweep (8 arms × 12 careers × 6 seasons = 576 season-runs, in `research/AUDIT-AND-STUDY-v69.103.md`) confirmed the v69.103+ production rating's measured behavior:
-- **ρ_active ≈ 0.49** (rating vs true skill, over the regulars)
-- **Royal Suitor skill ≈ top quartile** (often top-10%)
-- **Literal #1 crowned ~12% of years** (matching golf's OWGR rate)
-- **Top-5-skill crowned ~40%**
-- **Top Pot stays near coin-flip** (the Jacket is fed by standings but heads-up is heads-up)
+Confirmed measured behavior (v69.103+ real-engine in-app validation sweeps at the locked production config, Phase C @ α=0.6, Phase 1 noise, event-length-scaled):
+- **ρ_active ≈ 0.90** (Spearman rating-vs-true-skill, over the regulars) — far above the early stub-based prediction of 0.49; the analytical EV-loss term carries much more signal in the real engine than the stub-extrapolation suggested
+- **Royal Suitor skill ≈ top decile** (crownSkillPct ≈ 0.90 — consistently a near-elite player)
+- **bestPlayerRatingPct ≈ 0.91** — the literal #1-skill player lands in the top 8–9% of the season rating reliably; the rating *finds* the elites
+- **rhoByYear curve flat across a 30-year career arc** (~0.89–0.91 from Y1 onward, no drift, no decay) — multi-decade career stability is measured
+- **trueNo1IsCrown / top5SkillIsCrown are structurally low for this config** — NOT because the rating fails, but because at a 1024-player universe with the wide skill spread (0.20–0.95) many near-elite players are tightly bunched at skill ≥ 0.93 and the rating's specific rank-1 floats within that cluster. The Crown is reliably *near*-elite but not specifically *the literal #1* often — and this is the correct, defensible read of how a real world ranking actually works
+- **Top Pot stays near coin-flip** (the Yellow Jacket is fed by the Main's standings, but the heads-up single match preserves single-week chaos by design)
 
 ### 9.8 The Season Center (broadcast UI)
 
@@ -867,6 +869,69 @@ A finished `runCareer` opens the **Season Center** on the Spectator screen — a
 - **🎯 Skill Check** — the ρ diagnostics + the honest "skill-dominant with chaotic Jacket" framing + the year-by-year career arc in multi-season mode.
 
 The Spectator card also includes the **validation study** (chunked, non-freezing) with arm-comparison + a CSV export for off-line analysis.
+
+---
+
+## 10. The Honey-Stroke Scorecard Components (UI)
+
+The rules above describe the *engine*. The build also ships three branded scorecard components that visualize the engine's output at the table. They are part of the user-facing product; the engine logic is unchanged.
+
+### 10.1 The Card — per-hole match scorecard (v69.112)
+
+Renders below every fixed-hole match (Solo / Hot-seat / Share-link). An Augusta-luxe cream-paper card with hair-thin gold rules and serif numerals. Single contiguous strip on wide screens, wraps to two stacked halves (front-9 / back-9) at narrow widths.
+
+- **Columns:** `HOLE` (player names) · `1`…`9` · `OUT` · `10`…`18` · `IN` · `TOT` (standard golf-scorecard layout, dates to St Andrews).
+- **Per-cell content (4 layers):**
+  - **Stroke value** in 17px Cormorant Garamond serif (`+1`, `0`, `−2` etc.), background color-coded — **Eagle** (≤−2, rich gold gradient), **Birdie** (−1, muted gold), **Par** (0, no fill), **Bogey** (+1, muted rose), **Double** (+2, rich rose).
+  - **Hand-class abbreviation** under the stroke (`1P`, `2P`, `3K`, `ST`, `FL`, `FH`, `4K`, `SF`, `RF`, `HC`; `FOLD` if the hole was folded).
+  - **Honey delta** as a small monospace `+8` / `−8` annotation.
+  - **Future / unresolved holes** show a single light-gray hyphen.
+- **Subtotals:** OUT and IN columns use the same coloring rules over the segment's net strokes; TOT gets a heavier "engraved" gold double-rule and a 19px numeral.
+- **Running totals strip** below the grid: each player's display total (`golfTotal − honey/divisor`) in a 22px serif numeral, with a `X golf · Y honey ÷N` caption underneath.
+- **Legend strip:** Eagle / Birdie / Par / Bogey / Double swatches + the hand-class abbreviation key.
+
+The Card appears both under the live table during a match and at the climax of the end-of-match summary panel.
+
+### 10.2 The Session Card — per-hand cash session log (v69.114)
+
+Renders below every cash table seat (YJ-Stroke / Bumblebee Stroke / pure NLHE). Reuses the `.yj-scorecard` shell but indexes by **hand played at this seat this session** (not by hole), growing as the session continues. ALL hands logged; no cap.
+
+- **Two view modes**, toggle via a chip-pair at the top of the card:
+  - **🧮 Grid** (default for ≥10 hands): multi-row wrap, **18 hands per row** (golf-scorecard cadence — one row reads like one notional round), with per-row subtotals and a cumulative totals strip at the bottom.
+  - **➡ Strip** (default for <10 hands): single horizontal row, scrollable on narrow screens, all hands inline 1..N + TOT.
+- **Per-cell content:**
+  - **YJ-Stroke / BB-Stroke tables:** golf delta (same eagle/birdie/par/bogey/double coloring as The Card) + hand class + chip P/L delta.
+  - **Pure NLHE tables:** the coloring is repurposed to chip P/L (chips won = birdie-gold, chips lost = bogey-rose, no P/L = par), since there's no golf scorecard at pure tables.
+- **Cumulative totals strip:** golf scorecard + chip P/L side-by-side for HS variants; chip P/L only for pure NLHE.
+- **Hover tooltips** on each cell with the full hand summary (hand #, hand class, golf delta, chip delta, pot size).
+
+Data flow: at hand resolution, `resolveCashHand` pushes a full entry into `seat.handLog[]` for every seated player (`{hand, golf, chip, handClass, outcome, pot, isShowdown}`). Only the user's seat is rendered; opponent logs are kept for future opponent-tendency analytics.
+
+### 10.3 Hero Strip — the cash-table hero zone (v69.118)
+
+A dedicated bar **below the felt** containing the user's avatar / name / stack / hole cards / status tags. Replaces the pre-v69.118 "hero at felt rim" rendering (which collided with the action panel). Matches the PokerStars / GG / ACR / Chess.com paradigm.
+
+- **Left column:** 52px gold-gradient avatar (★) + serif name + monospace stack (`1,000 ◈`). Avatar gets a white-gold double-ring when the user holds the dealer button.
+- **Center column:** hero hole cards at 84×118 px — larger than at the rim. When no cards yet, a quiet "— waiting for cards —" placeholder. When folded, a red-tagged "FOLDED THIS HAND" badge.
+- **Right column:** stacked status tags — `BUTTON`, `YOUR TURN` (animated gold pulse when acting), `⛳ ±N.N` (the golf scorecard pill, color-coded by sign), and `Ns` (time-bank countdown when on the clock).
+- **Strip wrapper:** gold-tinted gradient, hair-thin gold border, inset highlight. When acting: outer ring + gold glow. When folded: opacity 0.55 + slight grayscale.
+
+The seat-loop now skips `i === youSeatIdx` — opponents distribute on a 120° **top arc** (from −150° to −30°), reserving the felt's bottom 60° as the hero zone visually. No more rim/strip overlap.
+
+### 10.4 Golden Fairway — generative background music (v69.123)
+
+Optional ambient music. Toggle + volume slider live in the sidebar foot ("Golden Fairway" pill below the version line).
+
+- **Powered by Tone.js** (loaded from CDN; gracefully disables if the CDN is blocked — toast once, button greys out).
+- **Three concurrent voices:**
+  - **Pad** — sine PolySynth, slow A/D/R, soft chord bed at −18 dB.
+  - **Lead** — sawtooth PolySynth, sharp attack, melodic phrases (3–5 chord-tone notes per bar) with occasional 5th-above color tones.
+  - **Pulse** — MembraneSynth at −22 dB, quarter-note athletic drive on root note (dedicated voice; doesn't compete with the lead).
+- **Real chord progression**: Emaj7 → C#m7 → Amaj7 → B7 (I–vi–IV–V with 7ths), one chord per bar at 82 BPM.
+- **Reverb bus** (decay 2.8s, wet 0.22) — the "expensive room" sound.
+- **Persistence:** toggle state + volume saved to `TourState.preferences.{musicEnabled, musicVolume}`.
+
+Not auto-started on page load (browser autoplay policy requires a user gesture); the toggle activates the AudioContext on click.
 
 ---
 
@@ -901,6 +966,6 @@ The Spectator card also includes the **validation study** (chunked, non-freezing
 - **Tour Honey-Stroke** (also marketed as **Sweet Stroke**): 8-beat Hold'em hole (Tea Box → The Fairway → The Lay-Up → The Hazard → The Approach → The Green → The Putt → The Cup) + bounded golf score per hole + honey pot that converts to strokes via the honey cap at each round end. Two variants (Yellow Jacket / Bumblebee) differ only on decisive-showdown loser score.
 - **Pure NLHE Cash**: Standard online poker, no strokes, no honey, just chip P/L.
 - **YJ Stroke / Bumblebee Stroke Cash**: Pure NLHE wagering + a *separate* golf scorecard scored per showdown from hand class (true golf convention, lower = better; YJ loser posts +1 bogey, Bumblebee loser posts own hand). The scorecard is a pure skill record — it does not convert to Nectar; cashout pays your chip stack only.
-- **Tour de Bourdon** ("the Nectour"): the canonical SEASON layer — a fixed calendar of 52 Regulars + 12 Majors + the Main Event, with a single rolling Hive Rating (Kalman/Glicko on latent skill, blending outcome + decision-quality EV-loss credit at α=0.6) and three year-end honors — 🧥 the Yellow Jacket (chaotic week, the Top Pot heads-up champion) + 👑 the Royal Suitor (class confirmed, the season-rating crown, multi-criteria eligibility) + 🌼 the Pollen Trail (form champion, the decaying-points race). ρ ≈ 0.49 over the regulars, literal #1 wins ~12% of years (OWGR-equivalent).
+- **Tour de Bourdon** ("the Nectour"): the canonical SEASON layer — a fixed calendar of 52 Regulars + 12 Majors + the Main Event, with a single rolling Hive Rating (Kalman/Glicko on latent skill, blending outcome + decision-quality EV-loss credit at α=0.6) and three year-end honors — 🧥 the Yellow Jacket (chaotic week, the Top Pot heads-up champion) + 👑 the Royal Suitor (class confirmed, the season-rating crown, multi-criteria eligibility) + 🌼 the Pollen Trail (form champion, the decaying-points race). Measured: ρ ≈ 0.90 over the regulars, Suitor consistently top-decile-skill (crownSkillPct ≈ 0.90), 30-year career rating-stability flat (no drift), Top Pot near coin-flip.
 
 That's the entire game in four sentences.

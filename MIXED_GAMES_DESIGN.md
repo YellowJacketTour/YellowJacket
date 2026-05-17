@@ -15,8 +15,8 @@
 **Document version:** 1.0
 **Author of record:** Dalton Graham
 **Owning entity:** Blank Canvas, Inc. (Wyoming)
-**Date:** 2026-05-02
-**Status:** Design specification for the mixed-games extension of the Yellow Jacket Tour rule system. Describes the full extension framework: Pot-Limit Omaha is implementation-ready; lowball variants (Razz, 2-7 Triple Draw, Badugi) and Big O are framework-only and require evaluator development.
+**Date:** 2026-05-02 (last revised 2026-05-17 against the v69.124 build)
+**Status:** Design specification for the mixed-games extension of the Yellow Jacket Tour rule system. Describes the full extension framework: Pot-Limit Omaha is implementation-ready; lowball variants (Razz, 2-7 Triple Draw, Badugi) and Big O are framework-only and require evaluator development. Verified against the v69.124 single-file build (`index.html` @ 2026-05-17): nothing in the mixed-games design depends on changes shipped since 2026-05-02 — the core engine, the scoring law, the wagering primitive, and the per-variant calibration approach are all unchanged. The v69.107–124 work is UI/UX surface (The Card, The Session Card, Hero Strip, Golden Fairway music, audit cleanup) and does not affect this spec.
 
 **Audience:** Engineering reviewers, poker subject-matter experts (cash game and tournament professionals), academic reviewers of skill-vs-luck systems, and actuarial reviewers of variance compression and calibration claims.
 
@@ -407,7 +407,7 @@ Rather than picking a categorical bucket threshold (which would re-introduce Sch
 
 **Variant differentiation preserved.** Bumblebee remains "loser scores own hand" universally (no percentile gate). Yellow Jacket remains "loser typically posts +1 bogey, except respected losses." The percentile cutoff (70th) is the lowball-variant analogue of Hold'em's existing "straight-or-better" respected-loss sub-rule, and it preserves the equity-cost asymmetry that drives YJ's strategic profile.
 
-**Calibration target.** The 70th percentile cutoff is a starting estimate, not a derived constant. The expected effect, to be confirmed by simulation, is that roughly 25–30% of decisive lowball YJ losses qualify as respected (versus roughly 18–22% in Hold'em YJ under the current straight-or-better rule). If measured authoredVsMeasuredSkill drifts negative under the 70th-percentile cutoff, raise the cutoff to 75th; if champion 72-hole scores compress relative to Hold'em majors, lower the cutoff to 65th. The Variant Calibration Mode (§19) automates this sweep.
+**Calibration target.** The 70th percentile cutoff is a starting estimate, not a derived constant. The expected effect, to be confirmed by simulation, is that roughly 25–30% of decisive lowball YJ losses qualify as respected — far more than Hold'em's straight-or-better rule produces (the Hold'em "Next Best" rung fires only when *both* players have a straight or better, a coincidence on the order of ~1–3% of decisive showdowns), which is exactly the point: the percentile cutoff is set high enough to give a continuous-strength variant the gradient that Hold'em's discrete categories supply naturally. If measured authoredVsMeasuredSkill drifts negative under the 70th-percentile cutoff, raise the cutoff to 75th; if champion 72-hole scores compress relative to Hold'em majors, lower the cutoff to 65th. The Variant Calibration Mode (§19) automates this sweep.
 
 ---
 

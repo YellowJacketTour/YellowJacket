@@ -12,8 +12,8 @@
 **Document version:** 1.0
 **Author of record:** Dalton Graham
 **Owning entity:** Blank Canvas, Inc. (Wyoming)
-**Date:** 2026-05-02
-**Build status:** anchored to the canonical production release as of the document date.
+**Date:** 2026-05-02 (re-verified 2026-05-17 against the v69.124 build)
+**Build status:** anchored to the canonical production release as of the document date. Re-verification note (2026-05-17): the formal specification below has been audited against the v69.124 single-file build (`index.html` @ 2026-05-17, the v69.124-spring-cleaning ship). **No mathematical objects in this document have changed** — the Honey-Stroke scoring law, the agreed-total wagering primitive, the round-divisor normalization, the dual-variant loss rule, the pot-gated brick sub-rule, the Tour de Bourdon Kalman/Glicko-2 rating filter, the Phase C observed-action / EV-loss skill-credit term, and the field-selection / off-season / honor-eligibility transitions are all in their last-canonical form (per the v69.103 audit committed in `research/AUDIT-AND-STUDY-v69.103.md`). The work shipped during v69.107–124 is UI/UX surface (The Card, The Session Card, Hero Strip, Golden Fairway music, dead-code/CSS prune) and does not modify any object formalized here.
 
 This document is the formal mathematical specification of the Yellow Jacket Tour rule system. Every rule, every parameter, every transformation in the playable build is restated here as a precise mathematical object: a set, a function, a state-machine transition, or a numerical map.
 
