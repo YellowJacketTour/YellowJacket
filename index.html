@@ -385,6 +385,11 @@
        container's inline (horizontal) size, independent of viewport. */
     container-type: inline-size;
     container-name: felt-container;
+    /* v69.116 — bottom buffer so the hero seat plate (at y ≈ 90% of felt)
+       and the bottom rim's avatar overhang never collide with the action
+       panel below. Was zero pre-v69.116; the hero plate visibly overlapped
+       the bet slider / Raise-to-N button at the bottom of the felt. */
+    padding-bottom: 36px;
   }
   .felt-table {
     position: relative;
@@ -616,7 +621,13 @@
   /* v69.28 — hero hole-cards at y=88% inside felt, sized 78x108 (best-in-class
      hero sizing per WSOP/PokerStars/GG). */
   .hero-hole-cards {
-    position: absolute; left: 50%; bottom: 6%;
+    /* v69.116 — anchored to the hero seat's row (y ≈ 88-92% of felt) and
+       offset HORIZONTALLY to the left of the seat plate so the two don't
+       stack. The seat plate centerpoint is at (50%, 90%); we offset the
+       cards to ~32% horizontal so they sit to the left of the plate at the
+       same vertical band — like a real player at a felt with their cards
+       in front of them and their stack badge beside. */
+    position: absolute; left: 32%; bottom: 6%;
     transform: translate(-50%, 0);
     display: flex; gap: 10px;
     z-index: 22;
@@ -882,10 +893,52 @@
     margin: 2px 0;
     display: inline-block;
   }
-  .cash-session-row { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
-  .cash-stat { padding: 8px 10px; background: rgba(255,255,255,0.06); border-radius: 6px; }
-  .cash-stat .lbl { font-size: 10px; opacity: 0.7; }
-  .cash-stat .val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  /* v69.117 — Cash session KPI row, remastered as a premium stat strip.
+     Was a generic stat-box row (gray pills, no hierarchy); now matches the
+     Augusta-luxe Card aesthetic: serif numerals, gold-spaced caps labels,
+     fine gold rules between cells. Lives below the action log, above the
+     Session Card — the "where do I stand right now" glanceable summary. */
+  .cash-session-row {
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px solid rgba(212,160,23,0.20);
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0;
+    background: linear-gradient(180deg, rgba(232,185,35,0.04), transparent);
+    border-radius: 0 0 8px 8px;
+  }
+  .cash-stat {
+    padding: 6px 14px 4px;
+    background: transparent;
+    border-radius: 0;
+    border-right: 1px solid rgba(212,160,23,0.14);
+    text-align: center;
+  }
+  .cash-stat:last-child { border-right: none; }
+  .cash-stat .lbl {
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-accent-honey, #E0C68C);
+    opacity: 0.78;
+    font-weight: 600;
+  }
+  .cash-stat .val {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 24px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    margin-top: 3px;
+    color: #F5F1E8;
+    letter-spacing: -0.01em;
+  }
+  /* v69.117 — visual rhythm between the major sections of the cash card.
+     Hair-thin gold rules separate action log → stats; the card itself gets a
+     slightly larger inner padding so the felt + table-head + log + stats +
+     Session Card aren't crammed together. */
+  .cash-table-card { padding: 18px 18px 16px; }
+  .cash-log { margin-top: 18px; }   /* was 14 — gives the felt action panel below it some breathing room */
   /* === HUD pills on opponent seats ======================================== */
   /* v69.26 — HUD pills are now collapsed by default into a single "HUD" toggle
      pill. Click to expand the full V/P/A · 3B/CB · WTSD/W$ row. Reduces
@@ -2591,7 +2644,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.115-cash-card-livefix";
+const APP_VERSION = "2026.05.13-v69.117-cash-polish-A";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -15563,9 +15616,28 @@ function renderCashTableView(tableId) {
   } else {
     dealBtn.disabled = true;
   }
-  const standBtn = el('button', { class: 'btn ghost', text: 'Stand up' });
-  standBtn.onclick = () => { standUpFromTable(t.id, youSeatIdx); };
+  // v69.117 — Stand-up gets visual + behavioral separation from the Deal CTA.
+  // Was a ghost button immediately adjacent to the gold "Next hand →" — easy
+  // to misclick during fast play. Now: a vertical gold divider between them,
+  // smaller text on Stand-up, and a confirm() guard. Net session results in
+  // the toast as a softener (so you can copy them before sitting back down).
+  const standBtn = el('button', { class: 'btn ghost small', text: '↩ Stand up', title: 'Cash out and leave the table', style: 'font-size: 11px;' });
+  standBtn.onclick = () => {
+    const me = (youSeatIdx >= 0) ? t.seats[youSeatIdx] : null;
+    const chipPL = me ? Math.round(me.stack - (me.sessionBuyIn || 0)) : 0;
+    const handsPlayed = me ? (me.handsPlayed || 0) : 0;
+    const msg = 'Stand up from this table?\n\n' +
+                '  · ' + handsPlayed + ' hand' + (handsPlayed === 1 ? '' : 's') + ' played\n' +
+                '  · chip P/L ' + (chipPL >= 0 ? '+' : '') + chipPL.toLocaleString() + '\n' +
+                (t.variant !== 'pure' && me ? '  · golf scorecard ' + (me.strokeLedger >= 0 ? '+' : '') + (Math.round((me.strokeLedger || 0) * 10) / 10) + '\n' : '') +
+                '\nYour chip stack will be settled back to Nectar; the Session Card is cleared.';
+    if (!confirm(msg)) return;
+    standUpFromTable(t.id, youSeatIdx);
+  };
   ctrl.appendChild(dealBtn);
+  // Subtle vertical divider so Stand-up reads as a separate, lower-stakes
+  // action than the bright gold Deal/Next-hand CTA.
+  ctrl.appendChild(el('span', { style: 'display: inline-block; width: 1px; align-self: stretch; background: rgba(212,160,23,0.28); margin: 4px 4px;', 'aria-hidden': 'true' }));
   ctrl.appendChild(standBtn);
   head.appendChild(ctrl);
   card.appendChild(head);
@@ -15652,6 +15724,15 @@ function renderCashTableView(tableId) {
   // visual table regardless of their actual seat number.
   const SEAT_RADIUS_X = 54;
   const SEAT_RADIUS_Y = 50;
+  // v69.116 — HERO_RADIUS_Y: the bottom-center hero seat got positioned at
+  // y=100% of the felt (sin(π/2)=1 ⇒ 50 + 50 = 100), so its plate's center
+  // sat on the felt's bottom edge and its body extended ~31px DOWN into the
+  // action panel beneath, colliding with the bet slider + Raise-to-N button.
+  // Other seats are fine (top-row at y=0, side-rows at y=25/75). Solution:
+  // pull the bottom-center seat IN with a smaller radius so its plate stays
+  // inside the felt's visible bounds. Felt-wrap also gets a small padding-
+  // bottom buffer (CSS) to absorb the remaining few px of overhang.
+  const HERO_RADIUS_Y = 40;
   const POT_CENTER_X = 50;
   const POT_CENTER_Y = 58;
   const bottomDisplayIdx = Math.floor(t.maxSeats / 2);
@@ -15661,8 +15742,11 @@ function renderCashTableView(tableId) {
   for (let i = 0; i < t.maxSeats; i++) {
     const displayIdx = (i + heroOffset) % t.maxSeats;
     const angle = (displayIdx / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
+    // Use the smaller HERO_RADIUS_Y only for the bottom-center hero seat;
+    // other seats keep the wider SEAT_RADIUS_Y so they stay at the rim.
+    const ry = (displayIdx === bottomDisplayIdx) ? HERO_RADIUS_Y : SEAT_RADIUS_Y;
     const x = 50 + Math.cos(angle) * SEAT_RADIUS_X;
-    const y = 50 + Math.sin(angle) * SEAT_RADIUS_Y;
+    const y = 50 + Math.sin(angle) * ry;
     const s = t.seats[i];
     const seatEl = el('div', {
       class: 'seat' + (s ? '' : ' empty-seat'),
@@ -18325,9 +18409,21 @@ function renderCashView(gameMode) {
   const variantFilter = isBB ? ['bb', 'pure'] : ['pure', 'yj'];
   const filteredTables = CashLobby.tables.filter(t => variantFilter.indexOf(t.variant) !== -1);
   const labelTitle = isBB ? '🌼 Bumblebee Cash' : '🐝 Yellow Jacket Cash';
+  // v69.117 — short tagline (always visible) + expandable "Loser ladder"
+  // details below for the YJ variant. The pre-v69.117 single dense line
+  // ("Bogey Loss · loser ladder: Next Best (straight+) · ...") tried to cram
+  // the whole 4-rung rule into the page subhead, hurting the page header's
+  // visual hierarchy. Now the subhead reads as a clean tagline and the full
+  // ladder lives in a one-click disclosure.
   const labelSub = isBB
-    ? 'Honored Loss · loser always scores own hand · gentler ledger'
-    : 'Bogey Loss · loser ladder: Next Best (straight+) · Take a Stroke (+1) · Lay a Brick / Stack Bricks · sharper skill';
+    ? 'Honored Loss — loser always scores own hand · gentler ledger'
+    : 'Bogey Loss — sharper skill expression with a 4-rung loser ladder';
+  const ladderRungs = isBB ? null : [
+    ['Next Best', 'straight+ keeps own −5…−1 (coolered, but a birdie\'s still a birdie)'],
+    ['Take a Stroke', 'pair / two pair / trips → +1 bogey (a routine two-putt)'],
+    ['Lay a Brick', 'high card checked through → +1 (cheap escape)'],
+    ['Stack Bricks', 'high card bet into a grown pot (≥2× opener) → +2 (the blow-up)'],
+  ];
   // Determine if user is currently seated at a table in THIS gameMode.
   const seatedHere = CashLobby.activeTableIds
     .map(id => CashLobby.tables.find(x => x.id === id))
@@ -18342,10 +18438,27 @@ function renderCashView(gameMode) {
   const crumbWrap = el('div', { class: 'crumb' }, el('a', { href: '#dashboard', text: 'Tour Home' }), ' · ' + (isBB ? 'Bumblebee Cash' : 'Yellow Jacket Cash'));
   view.appendChild(crumbWrap);
   const headerWrap = el('div', { class: 'page-header' });
-  headerWrap.appendChild(el('div', null,
-    el('h1', { text: labelTitle, style: isBB ? 'color: #f6c84c;' : '' }),
-    el('div', { class: 'sub', text: labelSub })
-  ));
+  const headerLeft = el('div');
+  headerLeft.appendChild(el('h1', { text: labelTitle, style: isBB ? 'color: #f6c84c;' : '' }));
+  headerLeft.appendChild(el('div', { class: 'sub', text: labelSub }));
+  // v69.117 — Loser-ladder disclosure under the subhead (YJ only). Compact
+  // "▸ Loser ladder" link that expands into the 4-rung table. Uses the same
+  // .yj-howitworks pattern shipped for Solo (v69.113) and Multiplayer (v69.114).
+  if (ladderRungs) {
+    const ladderDet = el('details', { class: 'yj-howitworks', style: 'margin-top: 8px; max-width: 720px;' });
+    ladderDet.appendChild(el('summary', { text: 'Loser ladder — the four rungs' }));
+    const ladderBody = el('div', { class: 'yj-howitworks-body', style: 'padding-top: 8px;' });
+    ladderRungs.forEach((row, i) => {
+      const item = el('div', { style: 'display: flex; gap: 12px; padding: 4px 0;' + (i < ladderRungs.length - 1 ? ' border-bottom: 1px dashed rgba(232,185,35,0.18);' : '') });
+      item.appendChild(el('span', { style: 'font-weight: 700; color: var(--text-accent-honey, #E0C68C); min-width: 110px; font-size: 12px;', text: row[0] }));
+      item.appendChild(el('span', { style: 'font-size: 12px; opacity: 0.85;', text: row[1] }));
+      ladderBody.appendChild(item);
+    });
+    ladderBody.appendChild(el('div', { style: 'margin-top: 8px; font-size: 11px; opacity: 0.65; font-style: italic;', text: 'A fold sits off the ladder — always +1, never +2. So a brick bet into a grown pot costs more than folding it — which is what makes pre-flop discipline and well-timed bluffs matter.' }));
+    ladderDet.appendChild(ladderBody);
+    headerLeft.appendChild(ladderDet);
+  }
+  headerWrap.appendChild(headerLeft);
   // If seated, header carries a "Back to lobby" or "Browse other tables" toggle.
   // v69.114 — aria-expanded reflects the lobby's collapse state for screen
   // readers. The button is a disclosure control, not a checkbox/pressed toggle.
