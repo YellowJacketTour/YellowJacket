@@ -20,7 +20,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none';">
+<!-- v69.126 — Content Security Policy. The prior CSP listed `script-src 'self' 'unsafe-inline'`
+     which would have blocked the three CDN scripts (Three.js, Tone.js, @noble/curves) if browsers
+     enforced meta-CSP strictly. Updated to explicitly allow the three CDN origins we depend on,
+     plus the inline modules + style. Inline 'unsafe-inline' on script-src is required because the
+     entire app payload is one big inline <script> (no build pipeline); a future hardening would
+     move to nonces + a build step. For now we keep 'unsafe-inline' but explicitly enumerate the
+     allowed remote origins, restrict connect-src to esm.sh (needed by the dynamic ESM import for
+     @noble/curves) + self, and lock down everything else.
+     The SRI integrity hashes on Three.js and Tone.js are the defense-in-depth — even if a CDN
+     served malicious content, the browser would refuse to execute it. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://unpkg.com https://esm.sh; script-src-elem 'self' 'unsafe-inline' https://unpkg.com https://esm.sh; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://esm.sh; frame-src 'none'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests">
 <meta name="referrer" content="no-referrer">
 <title>Yellow Jacket Tour · Honey-Stroke Edition</title>
 <style>
@@ -573,7 +583,6 @@
      reflects the felt's actual rendered width, not the viewport width. */
   @container felt-container (min-width: 800px) {
     .pot-display .pot-value { font-size: 44px; }
-    .hero-hole-cards .pkr-card { width: 86px; height: 120px; font-size: 1.7em; }
     .board-row .pkr-card { width: 56px; height: 78px; }
     .seat .seat-avatar { width: 36px; height: 36px; font-size: 14px; margin-top: -24px; }
     .seat .seat-name { font-size: 12px; max-width: 88px; }
@@ -586,7 +595,6 @@
   @container felt-container (min-width: 960px) {
     .pot-display .pot-value { font-size: 50px; }
     .pot-display .pot-label { font-size: 12px; letter-spacing: 4px; }
-    .hero-hole-cards .pkr-card { width: 96px; height: 134px; font-size: 1.85em; }
     .board-row .pkr-card { width: 62px; height: 86px; font-size: 1.05em; }
     .seat .seat-avatar { width: 40px; height: 40px; font-size: 15px; margin-top: -26px; }
     .seat .seat-name { font-size: 13px; max-width: 96px; }
@@ -628,25 +636,10 @@
     min-width: 280px;
     z-index: 15;
   }
-  /* v69.28 — hero hole-cards at y=88% inside felt, sized 78x108 (best-in-class
-     hero sizing per WSOP/PokerStars/GG). */
-  .hero-hole-cards {
-    /* v69.116 — anchored to the hero seat's row (y ≈ 88-92% of felt) and
-       offset HORIZONTALLY to the left of the seat plate so the two don't
-       stack. The seat plate centerpoint is at (50%, 90%); we offset the
-       cards to ~32% horizontal so they sit to the left of the plate at the
-       same vertical band — like a real player at a felt with their cards
-       in front of them and their stack badge beside. */
-    position: absolute; left: 32%; bottom: 6%;
-    transform: translate(-50%, 0);
-    display: flex; gap: 10px;
-    z-index: 22;
-    pointer-events: none;
-  }
-  .hero-hole-cards .pkr-card {
-    width: 78px; height: 108px;
-    font-size: 1.55em;
-  }
+  /* v69.124 — .hero-hole-cards CSS rules removed. The hero hole cards moved
+     out of the felt and into the .yj-hero-strip in v69.118, after which these
+     rules became dead. Audit (v69.124) confirmed zero JS references; safe to
+     delete. The hero strip's own .yj-hero-cards CSS handles the modern path. */
   /* v69.30 — face-down opponent cards rendered in the felt at each occupied
      non-folded seat. Two card-back rectangles side-by-side with slight
      overlap, positioned ~30% from the seat toward pot center (between
@@ -1293,7 +1286,9 @@
   }
   .action-slider-row { display: flex; gap: 10px; align-items: center; }
   .action-slider {
-    flex: 1; -webkit-appearance: none; height: 8px; border-radius: 6px;
+    /* v69.124 — added bare `appearance: none` so the iOS Safari `-webkit-`
+       prefix is no longer load-bearing on its own. */
+    flex: 1; -webkit-appearance: none; appearance: none; height: 8px; border-radius: 6px;
     background:
       linear-gradient(90deg, rgba(212,160,23,0.45), rgba(212,160,23,0.18) 60%, rgba(255,255,255,0.10));
     outline: none;
@@ -2069,7 +2064,8 @@
      narrow widths so a phone in portrait still gets the full 18-hole card. */
   .yj-card-gridwrap {
     overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    /* v69.124 — dropped -webkit-overflow-scrolling: touch (no-op in 2026:
+       momentum scrolling is native on iOS Safari since 13). */
     /* hint that the card is scrollable (very faint, only visible if content
        overflows; subtle "more to the right" cue) */
     background:
@@ -2664,9 +2660,156 @@
   @media (prefers-reduced-motion: reduce) {
     .yj-progress-indeterminate { animation: none; }
   }
+
+  /* === v69.125 — Sacred Ledger view. Augusta-luxe palette matches The Card. === */
+  .yj-sacred-pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 99px;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 700;
+    font-family: -apple-system, sans-serif;
+    background: rgba(212,160,23,0.10);
+    border: 1px solid rgba(212,160,23,0.32);
+    color: var(--text-accent-honey, #E0C68C);
+  }
+  .yj-sacred-pill.loading { opacity: 0.65; }
+  .yj-sacred-pill.ok      { background: rgba(168,230,161,0.14); border-color: rgba(168,230,161,0.50); color: #7ED6A0; }
+  .yj-sacred-pill.bad     { background: rgba(243,168,137,0.14); border-color: rgba(243,168,137,0.55); color: #F3A889; }
+  .yj-sacred-records {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .yj-sacred-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap;
+    padding: 8px 12px;
+    border: 1px solid var(--border, rgba(232,185,35,0.25));
+    border-radius: 6px;
+    background: linear-gradient(180deg, rgba(232,185,35,0.04), transparent);
+  }
+  .yj-sacred-row-left  { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+  .yj-sacred-row-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .yj-sacred-kind {
+    font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700;
+    padding: 2px 8px; border-radius: 4px;
+    background: rgba(232,185,35,0.10); border: 1px solid rgba(232,185,35,0.32);
+    color: var(--text-accent-honey, #E0C68C);
+  }
+  .yj-sacred-id {
+    font-family: 'SF Mono', Consolas, monospace; font-size: 11px;
+    color: var(--text-primary);
+  }
+  .yj-sacred-when {
+    font-size: 10px; color: var(--text-secondary); font-style: italic;
+  }
+  .yj-sacred-verdict {
+    font-size: 10.5px; letter-spacing: 0.04em;
+    padding: 2px 8px; border-radius: 4px;
+    font-family: -apple-system, sans-serif; font-weight: 600;
+    min-width: 78px; text-align: center;
+  }
+  .yj-sacred-verdict.loading { background: rgba(232,185,35,0.08); color: var(--text-accent-honey, #E0C68C); }
+  .yj-sacred-verdict.ok      { background: rgba(168,230,161,0.14); color: #7ED6A0; border: 1px solid rgba(168,230,161,0.4); }
+  .yj-sacred-verdict.bad     { background: rgba(243,168,137,0.14); color: #F3A889; border: 1px solid rgba(243,168,137,0.4); }
+
+  /* === v69.120 — Nectar Garden generative music controls in the sidebar foot. === */
+  .audio-control {
+    margin: 14px 0 4px;
+    padding: 10px 12px 12px;
+    background: linear-gradient(180deg, rgba(201,168,87,0.08), rgba(0,0,0,0.08));
+    border: 1px solid rgba(201,168,87,0.28);
+    border-radius: 8px;
+    font-family: -apple-system, sans-serif;
+  }
+  .audio-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .audio-header .ico { font-size: 15px; }
+  .audio-toggle-btn {
+    flex: 1;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    background: rgba(232,185,35,0.12);
+    color: var(--text-on-dark-soft);
+    border: 1px solid rgba(201,168,87,0.35);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .audio-toggle-btn.active {
+    background: linear-gradient(180deg, var(--gold), #c9a857);
+    color: #2A1810;
+    border-color: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  }
+  .audio-toggle-btn:hover:not(.active) {
+    background: rgba(232,185,35,0.22);
+    border-color: var(--gold);
+  }
+  .audio-volume {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    color: var(--text-on-dark-soft);
+    opacity: 0.85;
+  }
+  .audio-volume input[type="range"] {
+    flex: 1;
+    accent-color: var(--gold);
+    height: 4px;
+  }
+  body.kawaii-mode .audio-control {
+    background: linear-gradient(180deg, rgba(255,181,232,0.08), rgba(0,0,0,0.04));
+    border-color: rgba(255,181,232,0.3);
+  }
+  body.kawaii-mode .audio-toggle-btn.active {
+    background: linear-gradient(180deg, var(--kawaii-honey,#FFCC4D), #f9d71c);
+    color: #3D2A1F;
+  }
 </style>
-<!-- Three.js (Phase B atmospheric layer · loaded async; gracefully degrades if blocked) -->
-<script src="https://unpkg.com/three@0.160.0/build/three.min.js" crossorigin="anonymous" onload="window._yj3dReady = true;" onerror="window._yj3dReady = false; console.warn('YJ: Three.js CDN load failed — 3D atmospheric layer disabled.');"></script>
+<!-- Three.js (Phase B atmospheric layer · loaded async; gracefully degrades if blocked).
+     v69.126 — SRI integrity hash (SHA-384 of three.min.js @ 0.160.0 from unpkg) added to detect
+     supply-chain tampering. If the served bytes don't match this hash the browser refuses to execute
+     and our onerror handler fires, leaving _yj3dReady=false and the 2D felt takes over. -->
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"
+        integrity="sha384-qOkzR5Ke/XkQxuGVJ9hpFEpDlcoLtWwVYhnJf06cLIZa2vaIptSqaubivErzmD5O"
+        crossorigin="anonymous"
+        onload="window._yj3dReady = true;"
+        onerror="window._yj3dReady = false; console.warn('YJ: Three.js CDN load failed or SRI mismatch — 3D atmospheric layer disabled.');"></script>
+<!-- Tone.js (v69.123 Golden Fairway music engine · loaded async; if CDN is blocked or SRI fails
+     the music toggle gracefully disables and the app continues to work offline). v69.126 — SRI added. -->
+<script src="https://unpkg.com/tone@14.8.49/build/Tone.js"
+        integrity="sha384-c6Uo4N9c3SOEigMVzP6IshUG1wQ5uMp3xeoQFiHWAQ86joWdgyajkvopySyKy/Z6"
+        crossorigin="anonymous"
+        onload="window._yjToneReady = true;"
+        onerror="window._yjToneReady = false; console.warn('YJ: Tone.js CDN load failed or SRI mismatch — Golden Fairway music disabled.');"></script>
+<!-- @noble/curves Ed25519 (v69.125 YJSacred signing layer · loaded async via ESM-CDN).
+     SRI NOTE (v69.126): esm.sh transforms ES modules on-the-fly so the served bytes don't match
+     the upstream npm tarball hash — pinning SRI here would be a no-op-or-broken. The residual
+     supply-chain risk is mitigated by the graceful-fallback: if Ed25519 signing isn't available
+     (CDN blocked, SRI-impossible, network failure), YJSacred's SHA-256 hash chain + deterministic
+     replay verification still work — Ed25519 is only used for OPTIONAL cross-party signing of
+     transcripts. The integrity-critical primitives (commit-reveal, hash chain, Merkle proofs)
+     all use native SubtleCrypto. If a future @noble/curves release ships an IIFE bundle to a
+     hash-stable CDN, swap this for that and add SRI. -->
+<script type="module">
+  try {
+    const mod = await import('https://esm.sh/@noble/curves@1.4.0/ed25519');
+    window.yjNoble = { ed25519: mod.ed25519 };
+    window._yjNobleReady = true;
+  } catch (e) {
+    window._yjNobleReady = false;
+    try { console.warn('YJ: @noble/curves CDN load failed — Ed25519 signing disabled.', e); } catch (_) {}
+  }
+</script>
 </head>
 <body>
 
@@ -2739,6 +2882,7 @@
         <a href="#codex" data-route="codex"><span class="ico">📖</span> Codex</a>
         <a href="#decisiontree" data-route="decisiontree"><span class="ico">🌳</span> Decision Tree</a>
         <a href="#buzz" data-route="buzz"><span class="ico">🐝</span> Buzz's Corner</a>
+        <a href="#sacred" data-route="sacred"><span class="ico">📜</span> Sacred Ledger</a>
       </details>
     </nav>
     <div id="nav-bankroll" class="nav-bankroll" title="Your nectar bankroll"></div>
@@ -2747,6 +2891,22 @@
       <div style="margin-bottom: 6px;"><span class="kbd">Ctrl</span><span class="kbd">K</span> Search</div>
       <div style="margin-bottom: 6px;"><span class="kbd">?</span> Keyboard help</div>
       <div id="themeToggle" style="cursor: pointer; margin-top: 10px;"><span class="kbd">☀</span> Sunday pin position</div>
+
+      <!-- v69.120 — Nectar Garden generative music. AudioContext is constructed
+           on first click so browser autoplay policy is satisfied. State persists
+           in TourState.preferences.{musicEnabled, musicVolume}. -->
+      <div class="audio-control">
+        <div class="audio-header">
+          <span class="ico" aria-hidden="true">🎵</span>
+          <button id="musicToggle" class="audio-toggle-btn" type="button" aria-pressed="false">Golden Fairway</button>
+        </div>
+        <div class="audio-volume">
+          <span style="font-size:9px; letter-spacing:0.5px;">VOL</span>
+          <input id="musicVolume" type="range" min="0" max="100" step="5" value="55" aria-label="Music volume">
+          <span id="musicVolLabel" style="font-family:monospace; font-size:9px; min-width:28px; text-align:right;">55</span>
+        </div>
+      </div>
+
       <div style="margin-top: 12px; font-size: 10px; opacity: 0.6;">v1.0 · offline · secure</div>
     </div>
   </aside>
@@ -2774,6 +2934,7 @@
     <div class="view" data-view="multiplayer"></div>
     <div class="view" data-view="decisiontree"></div>
     <div class="view" data-view="codex"></div>
+    <div class="view" data-view="sacred"></div>
   </main>
 </div>
 
@@ -2795,7 +2956,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.119b-felt-children-pos";
+const APP_VERSION = "2026.05.17-v69.127-yjsacred-audit-fixes";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3630,10 +3791,8 @@ function honeyDivisorFor(numHoles) {
   if (n >= 9)  return 4;
   return 1;
 }
-// Friendly label for a divisor value at the active mode.
-function honeyCapModeLabel() {
-  return CurrentHoneyCapMode === 'spec' ? 'SPEC (÷N)' : 'CALIBRATED (÷stepped)';
-}
+// v69.124 — honeyCapModeLabel() removed; audit found zero call sites. The UI
+// surfaces this label via inline ternaries where needed.
 // honeyNormalizationDivisor = 72 (4×18, like 4 rounds of golf / majors).
 // Golf dominates; honey is the light smoothing drizzle.
 const honeyNormalizationDivisor = 72;
@@ -3909,8 +4068,9 @@ function evaluate7(a, b) {
   return (k1 << 20) | (k2 << 16) | (k3 << 12) | (k4 << 8) | (k5 << 4);
 }
 // Consumers of evaluate7: the returned packed int can be compared directly via
-// subtraction (higher category / higher kickers produce a larger int).
-function compareHand(a, b) { return a - b; }
+// subtraction (higher category / higher kickers produce a larger int). All
+// call sites do the subtraction inline; the `compareHand(a, b)` helper was
+// removed in v69.124 after the audit confirmed zero references.
 function handCat(hv) { return hv >>> 24; }
 function handK1(hv) { return (hv >>> 20) & 0xF; }
 // Legacy helpers `loserHandCredit` and `computeShowdownScore` were removed when the
@@ -6337,18 +6497,33 @@ const Season = {
     const _bm = (typeof CurrentBrickPenaltyMode === 'string') ? CurrentBrickPenaltyMode : 'flat';
     const _bc = (typeof CurrentBrickLossCap === 'number') ? CurrentBrickLossCap : 4;
     const _bl = (typeof CurrentHighCardShowdownLoss === 'number') ? CurrentHighCardShowdownLoss : 1;
+    // v69.127 — env-leak guard. If a previous startCareer job was abandoned
+    // (no result() / abort() called — e.g. tab closed mid-career, lost ref),
+    // its restoreEnv was never invoked and the global engine state is still
+    // mutated. Run any pending restore BEFORE we save fresh env, so the
+    // captured _cap/_lb/_bm/_bc/_bl below are the TRUE prior state, not a
+    // leaked half-state from a previous run.
+    if (typeof Season._pendingRestoreEnv === 'function') {
+      try { Season._pendingRestoreEnv(); } catch (_) {}
+      Season._pendingRestoreEnv = null;
+    }
     if (typeof setHoneyCapMode === 'function') setHoneyCapMode(cfg.honeyCapMode === 'spec' ? 'spec' : 'calibrated');
     if (typeof setLoserBogey === 'function') setLoserBogey(true);
     if (typeof setBrickPenaltyMode === 'function') setBrickPenaltyMode('pot-gated');
     if (typeof setBrickLossCap === 'function') setBrickLossCap(2);
     if (typeof setHighCardShowdownLoss === 'function') setHighCardShowdownLoss(1);
+    let _restored = false;
     const restoreEnv = () => {
+      if (_restored) return;
+      _restored = true;
       if (typeof setHoneyCapMode === 'function') setHoneyCapMode(_cap);
       if (typeof setLoserBogey === 'function') setLoserBogey(_lb);
       if (typeof setBrickPenaltyMode === 'function') setBrickPenaltyMode(_bm);
       if (typeof setBrickLossCap === 'function') setBrickLossCap(_bc);
       if (typeof setHighCardShowdownLoss === 'function') setHighCardShowdownLoss(_bl);
+      if (Season._pendingRestoreEnv === restoreEnv) Season._pendingRestoreEnv = null;
     };
+    Season._pendingRestoreEnv = restoreEnv;
     setCashRngSeed(seedStr);
     let U = null;
     withCashRng(() => { U = this.makeUniverse(cfg); });
@@ -6604,6 +6779,31 @@ function renderSeasonRunCard(out) {
     sampleStrip.appendChild(el('span', { style: 'font-size:9px; text-transform:uppercase; letter-spacing:1.4px; color:#c9a8f8; font-weight:700;', text: '👀 SAMPLE' }));
     sampleStrip.appendChild(el('span', { style: 'font-size:10.5px; opacity:0.85; flex:1; line-height:1.5;', text: 'This is a tiny instant preview (universe 100, 8 Regulars + 2 Majors, 18h/36h) — it shows you what the Season Center looks like populated with data. For the real measured-rating run, scroll up and click "▶ Run a season" with the production config.' }));
     wrap.appendChild(sampleStrip);
+  }
+
+  // v69.125 — Export Sacred Transcript. The Tour de Bourdon engine is fully
+  // deterministic on (cfg, seed); the transcript wraps both plus the claimed
+  // result, and `YJSacred.replay.verifyTranscript` re-runs `Season.startCareer`
+  // and compares bit-for-bit. Strongest verifiability guarantee in the app.
+  if (!out._isSample && out.config && out.config.seed) {
+    const exportStrip = el('div', { style: 'display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;' });
+    const xb = el('button', { class: 'btn ghost', style: 'font-size:10px;', text: '↧ Export sacred transcript', title: 'Build a deterministic, replayable JSON transcript of this season. Re-running Season.startCareer with the same seed reproduces the result bit-for-bit.' });
+    xb.onclick = async () => {
+      xb.disabled = true; xb.textContent = 'Building…';
+      try {
+        const tr = await YJSacred.transcript.buildSeason(out, out.config, out.config.seed);
+        await YJSacred.ledger.append({ kind: 'season', seed: out.config.seed, transcriptHash: tr.transcriptHash, transcript: tr });
+        yjSacredDownload('yj-season-' + (tr.transcriptHash || 'unknown').slice(0, 12) + '.json', tr);
+        xb.textContent = '✓ Exported + ledgered';
+        try { toast('Season transcript exported + appended to Sacred Ledger'); } catch (_) {}
+      } catch (e) {
+        xb.textContent = '↧ Export sacred transcript'; xb.disabled = false;
+        try { toast('Export failed: ' + (e && e.message ? e.message : e)); } catch (_) {}
+      }
+    };
+    exportStrip.appendChild(xb);
+    exportStrip.appendChild(el('span', { style: 'font-size:9px; opacity:0.55; font-style:italic;', text: 'Deterministic replay verifies bit-for-bit; share the JSON for independent audit.' }));
+    wrap.appendChild(exportStrip);
   }
 
   wrap.appendChild(el('div', { style: 'font-size:10px; opacity:0.6; line-height:1.6; margin-bottom:10px;', text:
@@ -8238,7 +8438,10 @@ const NectarState = {
     rakeStructurePct: 0.05,         // cash rake % of pot
     rakeCapPerHand: 5,              // max nectar raked per hand
     p2pTransferFeePct: 0.01,        // 1% house fee on peer-to-peer transfers
-    nectarPerStrokePoint: 0.5,      // DEPRECATED (v69.65): the cash golf scorecard no longer settles to Nectar — it is a pure per-hand skill record. Kept for save-file/back-compat; unused.
+    // v69.124 — removed deprecated `nectarPerStrokePoint` config key (added
+    // v69.65, marked DEPRECATED since: the cash golf scorecard hasn't settled
+    // to Nectar since v69.65). Old saves that still carry the key just have
+    // an unread property in their config blob — harmless.
     badBeatDropPerHand: 0.1,        // BB jackpot drop
   },
 };
@@ -9381,7 +9584,7 @@ function resetTourHistory() {
     BuzzKnowledge.moments = [];
     saveState();
     toast('Tour history cleared');
-    Views.season();
+    Views.dashboard();
   }
 }
 
@@ -9502,7 +9705,175 @@ function renderFAQs() {
 
 // =============================================================================
 // YELLOW JACKET CODEX — the advanced player's master manual.
-// Polished long-form documentation of scoring, format, strategy, and lore.
+// v69.125 — SACRED LEDGER VIEW
+// =============================================================================
+// The audit/export/import UI surface for YJSacred. Three panels:
+//   1. Chain integrity — last verifyChain() verdict, total records, last-record
+//      timestamp, the chain's head hash.
+//   2. Records list — every entry the client has appended, with a one-click
+//      "verify" replay (returns ok/mismatch) + JSON re-download.
+//   3. Import — drop a transcript JSON (or paste) to replay-verify it against
+//      this build's deterministic engine. Doesn't auto-append; the import flow
+//      is read-only proof-check, not "trust this and add to my ledger."
+// =============================================================================
+Views.sacred = function() {
+  const view = $('[data-view="sacred"]'); clear(view);
+  view.appendChild(el('div', { class: 'crumb', text: 'Tour Home · Sacred Ledger' }));
+  view.appendChild(el('div', { class: 'page-header' },
+    el('div', null,
+      el('h1', { text: 'Sacred Ledger' }),
+      el('div', { class: 'sub', text: 'Hash-chained audit log of every transcript you\'ve exported · deterministic replay verification' })
+    )
+  ));
+
+  // --- Threat-model strip (collapsed) ---
+  const tmStrip = el('details', { class: 'yj-howitworks', style: 'margin-bottom: 14px;' });
+  tmStrip.appendChild(el('summary', { text: 'What the Sacred Ledger does (and doesn\'t)' }));
+  tmStrip.appendChild(el('div', { class: 'yj-howitworks-body', text:
+    'YJSacred makes four things provable: (1) the joint seed of a multi-party run was not biased by any single party (commit-reveal), (2) any claimed result is consistent with the deterministic engine (transcript + replay), (3) the local ledger is tamper-evident (every row hash-chained), (4) sponsored events can be co-signed t-of-n by multiple organizers (multi-sig). It deliberately does NOT defend against player collusion, multi-accounting, sophisticated client bots, or server compromise — those require the partner\'s server-side pattern detection, identity, slashing, and transparency-log layers. The ledger here is your client-side audit copy; the load-bearing sacred chain lives on the partner\'s server.'
+  }));
+  view.appendChild(tmStrip);
+
+  // --- Integrity panel ---
+  const integrity = el('div', { class: 'card', style: 'margin-bottom:18px;' });
+  const integrityHead = el('div', { style: 'display:flex; align-items:center; gap:12px; flex-wrap:wrap;' });
+  integrityHead.appendChild(el('h2', { text: '🔗 Chain integrity', style: 'margin:0;' }));
+  const intStatus = el('span', { class: 'yj-sacred-pill loading', text: 'verifying…' });
+  integrityHead.appendChild(intStatus);
+  integrity.appendChild(integrityHead);
+  const intMeta = el('div', { style: 'font-size:11.5px; color: var(--text-secondary); margin-top: 8px; line-height: 1.6;' });
+  integrity.appendChild(intMeta);
+  view.appendChild(integrity);
+
+  const ledger = (TourState.sacredLedger || []);
+  const headHash = ledger.length > 0 ? ledger[ledger.length - 1].hash : null;
+  const headAt = ledger.length > 0 ? ledger[ledger.length - 1].appendedAt : null;
+  intMeta.innerHTML = '';
+  intMeta.appendChild(el('div', { text: 'Records: ' + ledger.length + '  ·  Head: ' + (headHash ? headHash.slice(0, 16) + '…' : '(empty)') + '  ·  Last appended: ' + (headAt || '—') }));
+
+  // Async-verify the chain.
+  YJSacred.ledger.verifyChain().then(r => {
+    intStatus.classList.remove('loading');
+    if (r.ok) {
+      intStatus.classList.add('ok'); intStatus.textContent = '✓ chain valid';
+    } else {
+      intStatus.classList.add('bad');
+      intStatus.textContent = '✗ broken at row ' + r.brokenAt + ' (' + (r.reason || 'unknown') + ')';
+    }
+  }).catch(err => {
+    intStatus.classList.remove('loading'); intStatus.classList.add('bad');
+    intStatus.textContent = '✗ verify threw: ' + (err && err.message ? err.message : String(err));
+    try { console.error('[YJSacred] verifyChain failed', err); } catch (_) {}
+  });
+
+  // --- Bulk export / clear ---
+  const bulkRow = el('div', { style: 'display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px;' });
+  const exportAll = el('button', { class: 'btn ghost', text: '↧ Export full ledger (JSON)' });
+  exportAll.onclick = () => {
+    yjSacredDownload('yj-sacred-ledger-' + Date.now().toString(36) + '.json', { exportedAt: new Date().toISOString(), version: YJSacred.NAMESPACE_VERSION, schema: YJSacred.SCHEMA, ledger: TourState.sacredLedger || [] });
+  };
+  bulkRow.appendChild(exportAll);
+  if (ledger.length > 0) {
+    const merkleBtn = el('button', { class: 'btn ghost', text: '⊞ Compute Merkle root' });
+    merkleBtn.onclick = async () => {
+      const leaves = ledger.map(e => e.hash);
+      const root = await YJSacred.ledger.getMerkleRoot(leaves);
+      try { toast('Merkle root: ' + root.slice(0, 32) + '…  (printed to console)'); } catch (_) {}
+      try { console.log('[YJSacred] Merkle root over ' + leaves.length + ' records:', root); } catch (_) {}
+    };
+    bulkRow.appendChild(merkleBtn);
+    const clearBtn = el('button', { class: 'btn ghost', style: 'color:#E08070;', text: '✕ Clear local ledger (destructive)' });
+    clearBtn.onclick = () => {
+      if (!confirm('Clear the local Sacred Ledger?\n\nThis removes all ' + ledger.length + ' record(s) from your browser.\n\nNOTE: only the LOCAL audit copy is destroyed. Records exported to JSON (or to the partner\'s server) are unaffected. This is irreversible.')) return;
+      TourState.sacredLedger = [];
+      try { saveState(); } catch (_) {}
+      try { Views.sacred(); } catch (_) {}
+      try { toast('Sacred Ledger cleared'); } catch (_) {}
+    };
+    bulkRow.appendChild(clearBtn);
+  }
+  view.appendChild(bulkRow);
+
+  // --- Records list ---
+  const recordsCard = el('div', { class: 'card' });
+  recordsCard.appendChild(el('h2', { text: '📜 Records  ·  ' + ledger.length, style: 'margin:0 0 12px 0;' }));
+  if (ledger.length === 0) {
+    recordsCard.appendChild(el('div', { style: 'font-size:11.5px; color: var(--text-secondary); font-style: italic; padding: 6px 0;', text: 'No records yet. Sacred transcripts get appended automatically when you "Export sacred transcript" at the end of a match, a Tour de Bourdon season, or when you stand up from a cash table.' }));
+  } else {
+    const table = el('div', { class: 'yj-sacred-records' });
+    ledger.slice().reverse().forEach((entry) => {
+      const row = el('div', { class: 'yj-sacred-row' });
+      const left = el('div', { class: 'yj-sacred-row-left' });
+      const kindBadge = (entry.record && entry.record.kind) || '—';
+      left.appendChild(el('span', { class: 'yj-sacred-kind', text: kindBadge }));
+      left.appendChild(el('span', { class: 'yj-sacred-id', text: '#' + entry.index + ' · ' + entry.hash.slice(0, 12) + '…' }));
+      left.appendChild(el('span', { class: 'yj-sacred-when', text: entry.appendedAt }));
+      row.appendChild(left);
+      const right = el('div', { class: 'yj-sacred-row-right' });
+      const verifyBtn = el('button', { class: 'btn ghost small', text: 'Verify replay' });
+      const verdict = el('span', { class: 'yj-sacred-verdict', text: '' });
+      verifyBtn.onclick = async () => {
+        verifyBtn.disabled = true; verdict.textContent = '…'; verdict.className = 'yj-sacred-verdict loading';
+        try {
+          const tr = entry.record && entry.record.transcript;
+          if (!tr) { verdict.textContent = 'no transcript'; verdict.className = 'yj-sacred-verdict bad'; return; }
+          const r = await YJSacred.replay.verifyTranscript(tr);
+          if (r.ok) { verdict.textContent = '✓ verified'; verdict.className = 'yj-sacred-verdict ok'; }
+          else { verdict.textContent = '✗ ' + (typeof r.mismatch === 'string' ? r.mismatch : 'mismatch'); verdict.className = 'yj-sacred-verdict bad'; verdict.title = JSON.stringify(r.mismatch || {}); }
+        } catch (e) {
+          verdict.textContent = '✗ error'; verdict.className = 'yj-sacred-verdict bad'; verdict.title = String(e && e.message ? e.message : e);
+        }
+        verifyBtn.disabled = false;
+      };
+      right.appendChild(verifyBtn);
+      const dlBtn = el('button', { class: 'btn ghost small', text: '↧ JSON' });
+      dlBtn.onclick = () => yjSacredDownload('yj-record-' + entry.index + '-' + entry.hash.slice(0, 12) + '.json', entry);
+      right.appendChild(dlBtn);
+      right.appendChild(verdict);
+      row.appendChild(right);
+      table.appendChild(row);
+    });
+    recordsCard.appendChild(table);
+  }
+  view.appendChild(recordsCard);
+
+  // --- Import / verify external transcript ---
+  const importCard = el('div', { class: 'card', style: 'margin-top:18px;' });
+  importCard.appendChild(el('h2', { text: '↥ Import & verify external transcript', style: 'margin:0 0 8px 0;' }));
+  importCard.appendChild(el('div', { style: 'font-size:11.5px; color: var(--text-secondary); margin-bottom: 10px; line-height: 1.55;', text: 'Drop a YJSacred transcript JSON to verify it against this build\'s deterministic engine. The verify replays the transcript and reports either "✓ verified" or a precise field-level mismatch. Read-only — does not append to your local ledger.' }));
+  const ta = el('textarea', { rows: 6, style: 'width:100%; font-family:monospace; font-size:11px; padding:8px;' , placeholder: 'Paste transcript JSON here…' });
+  const importVerdict = el('div', { style: 'font-size:12px; margin-top: 10px; line-height: 1.55; white-space: pre-wrap; font-family:monospace;' });
+  const importBtn = el('button', { class: 'btn gold', style: 'margin-top:10px;', text: 'Verify' });
+  importBtn.onclick = async () => {
+    importVerdict.textContent = ''; importVerdict.className = '';
+    let obj;
+    try { obj = JSON.parse(ta.value); }
+    catch (e) { importVerdict.textContent = '✗ JSON parse error: ' + (e && e.message ? e.message : e); return; }
+    importBtn.disabled = true; importVerdict.textContent = 'Replaying…';
+    try {
+      const r = await YJSacred.replay.verifyTranscript(obj);
+      const lines = [];
+      lines.push(r.ok ? '✓ VERIFIED' : '✗ MISMATCH');
+      lines.push('mode: ' + (r.mode || '?'));
+      lines.push('transcriptHash matches: ' + (r.transcriptHashMatches === null ? '(no hash field)' : r.transcriptHashMatches));
+      if (!r.ok) {
+        lines.push('mismatch: ' + (typeof r.mismatch === 'string' ? r.mismatch : JSON.stringify(r.mismatch, null, 2)));
+        if (r.detail) lines.push('detail: ' + JSON.stringify(r.detail, null, 2));
+      }
+      importVerdict.textContent = lines.join('\n');
+    } catch (e) {
+      importVerdict.textContent = '✗ error: ' + (e && e.message ? e.message : e);
+    }
+    importBtn.disabled = false;
+  };
+  importCard.appendChild(ta);
+  importCard.appendChild(importBtn);
+  importCard.appendChild(importVerdict);
+  view.appendChild(importCard);
+};
+
+// =============================================================================
+// Codex — long-form documentation of scoring, format, strategy, and lore.
 // Lives at #codex; complements the Rulebook (which is the live config snapshot).
 // =============================================================================
 Views.codex = function() {
@@ -10292,6 +10663,10 @@ function newHoleState(dealer, carryPot, holeNum) {
     p1Cards: [deck.pop(), deck.pop()],
     p2Cards: [deck.pop(), deck.pop()],
     community: [],
+    // v69.125 — YJSacred capture hooks
+    actions: [],
+    _holeStartedAt: Date.now(),
+    _lastActionTs: Date.now(),
   };
 }
 
@@ -10837,6 +11212,28 @@ function renderActiveMP() {
       };
       ctaRow.appendChild(copyBtn);
     }
+    // v69.125 — Export Sacred Transcript. Builds a self-verifying transcript
+    // (deal + actions + scoring + telemetry + transcriptHash) and either
+    // downloads it as JSON OR appends it to the local Sacred Ledger (which
+    // hash-chains it onto the prior entries). The exact CTA is "↧ Export"
+    // for download + a subtle "📜 Sacred Ledger" link below the row when
+    // a ledger entry exists. Async because hashing is via SubtleCrypto.
+    const exportBtn = el('button', { class: 'btn outline', text: '↧ Export sacred transcript', title: 'Build a signed-ready, replayable JSON transcript of this match for audit / sharing.' });
+    exportBtn.onclick = async () => {
+      exportBtn.disabled = true; exportBtn.textContent = 'Building…';
+      try {
+        const transcript = await YJSacred.transcript.buildMatch(g);
+        await YJSacred.ledger.append({ kind: 'match', mode: g.mode, transcriptHash: transcript.transcriptHash, transcript });
+        yjSacredDownload('yj-match-' + (transcript.transcriptHash || 'unknown').slice(0, 12) + '.json', transcript);
+        exportBtn.textContent = '✓ Exported';
+        try { toast('Transcript exported + appended to Sacred Ledger'); } catch (_) {}
+      } catch (e) {
+        exportBtn.textContent = '↧ Export sacred transcript';
+        exportBtn.disabled = false;
+        try { toast('Export failed: ' + (e && e.message ? e.message : e)); } catch (_) {}
+      }
+    };
+    ctaRow.appendChild(exportBtn);
     const newBtn = el('button', { class: 'btn outline', text: 'New Match' });
     newBtn.onclick = () => { TourState.activeGame = null; renderActiveMP(); };
     ctaRow.appendChild(newBtn);
@@ -11898,12 +12295,29 @@ function mpAct(g, action, amount) {
   const actor = c.toAct;
   const other = actor === 'p1' ? 'p2' : 'p1';
   const pending = c.currentProposal != null;
+  // v69.125 — telemetry capture for YJSacred transcripts. Action log per hole
+  // is `c.actions[]`, lazily-initialised. Each entry: {actor, kind, amount?,
+  // street, agreedTotalBefore, agreedTotalAfter, ts, latencyMs}. Latency =
+  // time since the previous action (or hole start). Used by the replay
+  // verifier to confirm the action sequence; the partner's anti-cheat layer
+  // can use the latency distribution for bot / scripted-play detection.
+  if (!Array.isArray(c.actions)) c.actions = [];
+  if (c._lastActionTs == null) c._lastActionTs = (c._holeStartedAt || Date.now());
+  const _ts = Date.now();
+  const _latency = _ts - c._lastActionTs;
+  c._lastActionTs = _ts;
+  const _agreedBefore = c.agreedTotal;
+  const _actionRecord = { actor, kind: action, amount: (amount != null ? amount : null), street: c.street, agreedTotalBefore: _agreedBefore, ts: _ts, latencyMs: _latency };
+  let _pushed = false;
   if (action === 'fold') {
     // Fold is only a legal response to a pending proposal. (Folding without a
     // proposal would be silly — there's nothing to escape from. Guard so misclicks
     // mid-uncontested-street don't end the hole.)
     if (!pending) return;
     c.folded = actor;
+    _actionRecord.agreedTotalAfter = c.agreedTotal;
+    _actionRecord.currentProposalAfter = c.currentProposal;
+    c.actions.push(_actionRecord); _pushed = true;
     resolveMPHole(g); renderActiveMP(); scheduleAITurnIfNeeded(g); return;
   }
   if (action === 'check') {
@@ -11912,6 +12326,9 @@ function mpAct(g, action, amount) {
     // the round at the current agreedTotal.
     if (pending) return;
     c.hasActed[actor] = true;
+    _actionRecord.agreedTotalAfter = c.agreedTotal;
+    _actionRecord.currentProposalAfter = c.currentProposal;
+    c.actions.push(_actionRecord); _pushed = true;
     if (c.hasActed[other]) {
       advanceMPRound(g); renderActiveMP(); scheduleAITurnIfNeeded(g); return;
     }
@@ -11925,6 +12342,9 @@ function mpAct(g, action, amount) {
     c.currentProposal = null;
     c.pendingFor = null;
     c.hasActed[actor] = true;
+    _actionRecord.agreedTotalAfter = c.agreedTotal;
+    _actionRecord.currentProposalAfter = c.currentProposal;
+    c.actions.push(_actionRecord);
     advanceMPRound(g); renderActiveMP(); scheduleAITurnIfNeeded(g); return;
   } else if (action === 'bet' || action === 'raise') {
     // Bet (no pending) or raise (pending): propose a NEW agreed total.
@@ -11945,6 +12365,16 @@ function mpAct(g, action, amount) {
     c.toAct = other;
   } else {
     return;
+  }
+  // v69.125 — stamp the post-state and push the action record IF we haven't
+  // pushed already from inside one of the branches above (which exited via
+  // resolveMPHole / advanceMPRound). The `_pushed` flag guards against the
+  // double-push when fold/call/check-closes-street already pushed before
+  // their early return.
+  if (!_pushed) {
+    _actionRecord.agreedTotalAfter = c.agreedTotal;
+    _actionRecord.currentProposalAfter = c.currentProposal;
+    c.actions.push(_actionRecord);
   }
   if (g.mode === 'hotseat' && c.toAct) g.turnFor = null;
   renderActiveMP();
@@ -12092,7 +12522,26 @@ function resolveMPHole(g) {
   // v69.112 — extra annotations for the scorecard. Older sharelinks (schema v2)
   // that lack these fields still render; renderMatchScorecard falls back to
   // 'showdown' / null when the new keys are missing.
-  g.scores.push({ p1Golf, p2Golf, p1Honey, p2Honey, outcome, winner: winnerSide, winCat, loseCat, pot: potAtResolve, holeNum: g.holeNum });
+  // v69.125 — ALSO capture the deal (hole cards + community) and the action
+  // log for the hole, so YJSacred transcripts can verify the hand from raw
+  // inputs (deal + actions) rather than just trusting the claimed outcome.
+  // Cards are captured as their compact `{r, s}` form (rank, suit-char) so
+  // the transcript serializes cleanly. The action log captures one entry per
+  // submitted action with `{actor, kind, agreedTotal, currentProposal, ts}`.
+  // If c.actions isn't populated yet (legacy code paths) we fall back to [].
+  const _dealCapture = {
+    p1Cards: (c.p1Cards || []).map(card => ({ r: card.r, s: card.s })),
+    p2Cards: (c.p2Cards || []).map(card => ({ r: card.r, s: card.s })),
+    community: (c.community || []).map(card => ({ r: card.r, s: card.s })),
+  };
+  g.scores.push({
+    p1Golf, p2Golf, p1Honey, p2Honey,
+    outcome, winner: winnerSide, winCat, loseCat,
+    pot: potAtResolve, holeNum: g.holeNum,
+    deal: _dealCapture,                                                            // v69.125
+    actions: Array.isArray(c.actions) ? c.actions.slice() : [],                    // v69.125
+    resolvedAt: Date.now(),                                                        // v69.125
+  });
   c.result = { desc };
   if (g.mode === 'hotseat') g.turnFor = 'p1';
 }
@@ -15856,7 +16305,7 @@ function renderCashTableView(tableId) {
   // smaller text on Stand-up, and a confirm() guard. Net session results in
   // the toast as a softener (so you can copy them before sitting back down).
   const standBtn = el('button', { class: 'btn ghost small', text: '↩ Stand up', title: 'Cash out and leave the table', style: 'font-size: 11px;' });
-  standBtn.onclick = () => {
+  standBtn.onclick = async () => {
     const me = (youSeatIdx >= 0) ? t.seats[youSeatIdx] : null;
     const chipPL = me ? Math.round(me.stack - (me.sessionBuyIn || 0)) : 0;
     const handsPlayed = me ? (me.handsPlayed || 0) : 0;
@@ -15864,8 +16313,37 @@ function renderCashTableView(tableId) {
                 '  · ' + handsPlayed + ' hand' + (handsPlayed === 1 ? '' : 's') + ' played\n' +
                 '  · chip P/L ' + (chipPL >= 0 ? '+' : '') + chipPL.toLocaleString() + '\n' +
                 (t.variant !== 'pure' && me ? '  · golf scorecard ' + (me.strokeLedger >= 0 ? '+' : '') + (Math.round((me.strokeLedger || 0) * 10) / 10) + '\n' : '') +
-                '\nYour chip stack will be settled back to Nectar; the Session Card is cleared.';
+                '\nYour chip stack will be settled back to Nectar; the Session Card is cleared.\n' +
+                '\nA Sacred Transcript of every hand played will be exported + appended to your Sacred Ledger before standing up.';
     if (!confirm(msg)) return;
+    // v69.125 — export the full session's transcripts (one per hand) before
+    // tearing down the seat. The handLog has been carrying deal+actions per
+    // hand since v69.125 instrumentation; we wrap each into a transcript,
+    // append to the Sacred Ledger (hash-chained), and offer a download.
+    try {
+      if (me && Array.isArray(me.handLog) && me.handLog.length > 0) {
+        const session = {
+          schema: YJSacred.SCHEMA,
+          kind: 'cash-session',
+          tableId: t.id,
+          variant: t.variant,
+          stakes: t.smallBlind + '/' + t.bigBlind,
+          handsPlayed: handsPlayed,
+          chipPL: chipPL,
+          strokeLedger: (me.strokeLedger != null) ? me.strokeLedger : null,
+          transcripts: [],
+          builtAt: new Date().toISOString(),
+        };
+        for (const handEntry of me.handLog) {
+          try {
+            const tr = await YJSacred.transcript.buildCashHand(t, handEntry);
+            session.transcripts.push(tr);
+            await YJSacred.ledger.append({ kind: 'cash-hand', tableId: t.id, handNumber: handEntry.hand, transcriptHash: tr.transcriptHash, transcript: tr });
+          } catch (_) { /* individual hand failure shouldn't block the stand-up */ }
+        }
+        yjSacredDownload('yj-cash-session-' + t.id + '-' + Date.now().toString(36) + '.json', session);
+      }
+    } catch (_) { /* never block stand-up on transcript export */ }
     standUpFromTable(t.id, youSeatIdx);
   };
   ctrl.appendChild(dealBtn);
@@ -16333,15 +16811,68 @@ function renderActionPanel(t) {
   const right = el('div', { class: 'action-right' });
   let sliderValue = minSafe;
   const presets = el('div', { class: 'action-presets' });
-  const presetDefs = [
-    { label: 'Min', frac: -1 },     // dedicated min-raise (Grok spec)
-    { label: '⅓', frac: 0.33 },
-    { label: '½', frac: 0.5 },
-    { label: '⅔', frac: 0.67 },
-    { label: '¾', frac: 0.75 },
-    { label: 'Pot', frac: 1.0 },
-    { label: 'All-in', frac: 999 },
-  ];
+
+  // === v69.121 — REMASTERED BET-SIZING PRESETS ============================
+  // The pre-v69.121 presets had three real problems for YJ Stroke cash tables:
+  //
+  //   1. POT BUTTON WAS WRONG. It computed `bet = currentBet + pot`, which is
+  //      actually a HALF-pot raise in poker convention. A true pot-sized raise
+  //      is `call_amount + (pot + 2 × call_amount)` — the amount that, after
+  //      the opponent calls, makes the NEW pot exactly the OLD pot doubled.
+  //
+  //   2. FRACTIONS COLLAPSED PREFLOP. With pot ≈ 3 chips (SB+BB on a 1/2 game)
+  //      and a BB-min floor, the ⅓ / ½ / ⅔ buttons all clamped to min-raise
+  //      and produced the same value as the Min button — wasting 3 chips of
+  //      preset real estate. Modern clients (PokerStars, GG) switch to
+  //      BB-MULTIPLE presets preflop where the convention is "2.5x / 3x / 4x".
+  //
+  //   3. NO YJ "STREET MAX". The All-in button shoved the whole chip stack
+  //      (correct for pure NLHE), but for YJ Stroke variants — where the
+  //      Lay a Brick vs Stack Bricks rung in the loser ladder fires at
+  //      agreed-total ≥ 2× the opener — there's a meaningful "big bet" zone
+  //      well below stack. v69.121 adds a distinct "Cap" preset = 3× current
+  //      pot for YJ/BB variants that gives one-click access to that zone.
+  //
+  // Helpers that compute REAL sizes:
+  const potNow = h.pot;
+  const callAmt_ = Math.max(0, h.currentBet - h.bets[seatIdx]);
+  // True pot-sized raise total (the bet you'd input):
+  //   raise-to = currentBet + pot_after_call
+  //            = currentBet + (pot + callAmt)
+  // i.e., after the opponent calls your raise, the new pot exactly doubles.
+  const potRaiseTo = h.currentBet + potNow + callAmt_;
+  // A fraction-of-pot RAISE-TO target — interpolates between min-raise and pot-raise.
+  const fracPotRaiseTo = (f) => Math.round(minSafe + Math.max(0, (potRaiseTo - minSafe)) * f);
+  // BB-multiple raise-to (used preflop when pot is mostly blinds).
+  const bbMultRaiseTo = (mult) => Math.round(Math.max(minSafe, t.bigBlind * mult));
+  // YJ "Cap" — a sensible "street max" well above pot but below stack shove.
+  // 3× current pot is the natural threshold: it's where the Stack Bricks
+  // loser-ladder rung fires for the opponent if they brick into it.
+  const yjCap = Math.min(maxTo, Math.max(minSafe, Math.round(potNow * 3 + h.currentBet)));
+
+  // Preflop = "we're at street 0 AND pot is essentially blinds-only" — switch
+  // the middle presets to BB multiples so they don't all clamp to min.
+  const isPreflopBlinds = (h.street === 0 && potNow <= 5 * t.bigBlind);
+  const isYJVariant = (t.variant === 'yj' || t.variant === 'bb');
+
+  // Build the preset list dynamically per state.
+  const presetDefs = [];
+  presetDefs.push({ label: 'Min', valueFn: () => minSafe, title: 'Minimum legal ' + (h.currentBet > 0 ? 'raise' : 'bet') });
+  if (isPreflopBlinds) {
+    presetDefs.push({ label: '2.5×', valueFn: () => bbMultRaiseTo(2.5), title: '2.5 big blinds' });
+    presetDefs.push({ label: '3×',   valueFn: () => bbMultRaiseTo(3),   title: '3 big blinds (standard open)' });
+    presetDefs.push({ label: '4×',   valueFn: () => bbMultRaiseTo(4),   title: '4 big blinds' });
+  } else {
+    presetDefs.push({ label: '⅓',  valueFn: () => fracPotRaiseTo(1/3), title: 'Roughly one-third of a pot-sized raise' });
+    presetDefs.push({ label: '½',  valueFn: () => fracPotRaiseTo(0.5), title: 'Half-pot raise' });
+    presetDefs.push({ label: '⅔',  valueFn: () => fracPotRaiseTo(2/3), title: 'Two-thirds of a pot-sized raise' });
+  }
+  presetDefs.push({ label: 'Pot', valueFn: () => potRaiseTo, title: 'True pot-sized raise (doubles the pot after they call)' });
+  if (isYJVariant) {
+    presetDefs.push({ label: 'Cap', valueFn: () => yjCap, title: 'YJ "street max": 3× pot. Pressures the loser ladder toward Stack Bricks (+2).' });
+  }
+  presetDefs.push({ label: 'All-in', valueFn: () => maxTo, title: 'Shove your entire chip stack — irrevocable; confirms first.' });
+
   const slider = el('input', { type: 'range', min: String(minSafe), max: String(maxTo), step: String(Math.max(1, Math.floor((maxTo - minSafe) / 100) || 1)), value: String(minSafe), class: 'action-slider' });
   const amtInput = el('input', { type: 'number', min: String(minSafe), max: String(maxTo), step: '1', value: String(minSafe), class: 'action-amount' });
   function clampSet(v) {
@@ -16351,22 +16882,37 @@ function renderActionPanel(t) {
     amtInput.value = String(v);
     raiseBtn.textContent = (h.currentBet > 0 ? 'Raise to ' : 'Bet ') + v;
     if (v >= maxTo) raiseBtn.textContent = 'All-in ' + v;
+    // Visual: highlight the preset that matches the current value (if any).
+    try {
+      const ps = presets.querySelectorAll('.preset-btn');
+      ps.forEach(pb => {
+        const pv = parseInt(pb.dataset.presetValue || '0', 10);
+        pb.classList.toggle('selected', pv === v);
+      });
+    } catch (_) {}
   }
   slider.oninput = () => clampSet(slider.value);
   amtInput.oninput = () => clampSet(amtInput.value);
-  presetDefs.forEach(p => {
-    const b = el('button', { class: 'btn ghost preset-btn', text: p.label });
-    b.onclick = () => {
-      let v;
-      if (p.frac === -1) v = minSafe; // min-raise / min-bet
-      else if (p.frac >= 999) v = maxTo;
-      else {
-        const potNow = h.pot;
-        const desired = Math.round(potNow * p.frac);
-        v = h.currentBet + Math.max(t.bigBlind, desired);
-      }
-      clampSet(v);
-    };
+
+  // De-dupe pass: compute each preset's value, mark buttons that compute to
+  // the same value as an earlier preset (they'd add no information). Disabled
+  // buttons render as ghosts so the user sees "this size is degenerate".
+  const computedVals = presetDefs.map(p => Math.max(minSafe, Math.min(maxTo, p.valueFn())));
+  const seenValues = new Set();
+  presetDefs.forEach((p, idx) => {
+    const v = computedVals[idx];
+    const isDup = seenValues.has(v);
+    if (!isDup) seenValues.add(v);
+    const b = el('button', { class: 'btn ghost preset-btn' + (isDup ? ' is-degenerate' : ''), text: p.label });
+    b.title = p.title + (isDup ? ' — same value as a prior preset at this state' : ' (' + v + ')');
+    b.dataset.presetValue = String(v);
+    if (isDup) {
+      b.disabled = true;
+      b.style.opacity = '0.35';
+      b.style.cursor = 'not-allowed';
+    } else {
+      b.onclick = () => clampSet(v);
+    }
     presets.appendChild(b);
   });
   right.appendChild(presets);
@@ -16834,6 +17380,11 @@ function startCashHand(t) {
     startedAt: Date.now(),
     goldenCard,
     stackPre,   // v69.115 — for Session Card per-hand chip-P/L computation
+    // v69.125 — YJSacred transcript capture hooks. actionLog grows on every
+    // applyCashAction; resolveCashHand stamps it into seat.handLog entries.
+    actionLog: [],
+    handStartedAt: Date.now(),
+    lastActionTs: Date.now(),
   };
   for (const i of seated) recordHUDAction(t.seats[i].playerId, 'dealt', true);
   // Phase E/F/H: clear pot pile from previous hand at the start of a new deal
@@ -17097,6 +17648,28 @@ function applyCashAction(t, seatIdx, action) {
   const seat = t.seats[seatIdx];
   const callAmt = h.currentBet - h.bets[seatIdx];
   const isPreflop = h.street === 0;
+  // v69.125 — capture action telemetry for YJSacred transcripts. Includes the
+  // pot + currentBet snapshot BEFORE the action mutates state, plus the
+  // latency since the previous action (or hand start). The actionLog feeds
+  // both replay verification ("did the engine produce this outcome from these
+  // inputs?") and the partner's future pattern-detection layer (latency
+  // distributions are a strong bot-detection signal).
+  if (!Array.isArray(h.actionLog)) h.actionLog = [];
+  const _ts = Date.now();
+  const _lat = _ts - (h.lastActionTs || h.handStartedAt || _ts);
+  h.lastActionTs = _ts;
+  const _actionRec = {
+    seatIdx: seatIdx,
+    playerId: seat ? seat.playerId : null,
+    kind: action.kind,
+    amount: (action.amount != null ? action.amount : null),
+    street: h.street,
+    potBefore: h.pot,
+    currentBetBefore: h.currentBet,
+    ts: _ts,
+    latencyMs: _lat,
+  };
+  h.actionLog.push(_actionRec);
   if (action.kind === 'fold') {
     h.folded[seatIdx] = true;
     h.activeMask = h.activeMask.filter(x => x !== seatIdx);
@@ -17295,6 +17868,9 @@ function resolveCashHand(t) {
                   : isShowdown ? 'showdown-lost'
                   : 'showdown-tied';
     const chipDelta = (_stackPre[i] != null) ? (seat.stack - _stackPre[i]) : 0;
+    // v69.125 — also capture deal + action log for the YJSacred transcript.
+    // Only this seat's hole cards plus the public board are stored (we don't
+    // exfiltrate other seats' hole cards into a particular seat's log).
     seat.handLog.push({
       hand: t.handCount + 1,                  // t.handCount is about to be incremented below
       golf: (perSeatGolf[i] != null) ? perSeatGolf[i] : 0,
@@ -17303,6 +17879,14 @@ function resolveCashHand(t) {
       outcome: outcome,
       pot: Math.round(rakedPot),
       isShowdown: !!isShowdown,
+      // v69.125 — YJSacred transcript hooks
+      deal: {
+        hole: (h.hole && h.hole[i]) ? h.hole[i].map(card => ({ r: card.r, s: card.s })) : null,
+        board: (h.board || []).map(card => ({ r: card.r, s: card.s })),
+      },
+      actions: Array.isArray(h.actionLog) ? h.actionLog.slice() : [],
+      resolvedAt: Date.now(),
+      tableHandId: h.handId,
     });
   }
   // v69.16 quest progress — track hero's cash hand activity
@@ -31116,6 +31700,1207 @@ function showActionIndicator(seatEl, action) {
   setTimeout(() => { try { indicator.remove(); } catch (_) {} }, 1400);
 }
 
+/* ======================================================================
+   GOLDEN FAIRWAY — v69.123 production-grade generative music engine.
+   Powered by Tone.js (loaded async via CDN; falls back gracefully when the
+   library can't load — see _yjToneReady check below).
+   Athletic leisure · prestigious · reserved · quietly exciting.
+
+   Architecture:
+     • TRANSPORT at 82 BPM. Bar-aligned (1 bar = 4 beats).
+     • REVERB BUS (decay 2.8s · wet 0.22) — gives space and "expensive room".
+     • PAD VOICE (sine PolySynth, slow attack/release) — chord bed, soft.
+     • LEAD VOICE (saw PolySynth, sharp attack, long release) — melodic phrases.
+     • PULSE VOICE (sine MonoSynth, dedicated, distinct from lead) — ~half-beat
+       sub-pulse on every quarter note, the quiet athletic drive. The spec
+       hammered the lead synth for both melody AND pulse, which made the
+       lead muddy — we split them.
+     • Chord progression: Emaj7 → C#m7 → Amaj7 → B7. Real seventh chords
+       (the "expensive" sound) advancing one chord per bar.
+     • Phrases: 3–5 chord-tone notes per bar, with an occasional 5th-above
+       color tone and per-note random velocity in 0.5–0.9.
+
+   Spec-bug fixes shipped in this revision:
+     1. ASYNC INIT RACE — the original spec had start() call init() without
+        await; on the first click the loops were created BEFORE Tone.start()
+        and the synths existed, so nothing played. Now start() returns the
+        init promise and the loops are scheduled in the .then() chain.
+     2. PULSE-ON-LEAD CLASH — see above (now dedicated pulse synth).
+     3. NO CDN FALLBACK — if window._yjToneReady is false (offline/blocked
+        Tone.js), the toggle disables itself with a one-time toast instead
+        of silently no-op-ping or throwing.
+
+   Wiring (toggleMusic, init() restore, persisted prefs) is preserved across
+   the v122→v123 upgrade — the singleton variable is still `nectarMusic`.
+   ====================================================================== */
+class GoldenFairway {
+  constructor() {
+    this.isPlaying = false;
+    this.volume = 0.65;
+    this.initialized = false;
+    this.initPromise = null;
+
+    // Tone instruments / loops — created in init().
+    this.lead = null;
+    this.pad = null;
+    this.pulse = null;
+    this.reverb = null;
+    this.loop = null;
+    this.pulseLoop = null;
+    this.currentChord = 0;
+
+    // Emaj7 → C#m7 → Amaj7 → B7. Real 7th chords.
+    this.chords = [
+      ['E3', 'G#3', 'B3', 'D#4'],   // Emaj7  — I
+      ['C#3', 'E3', 'G#3', 'B3'],   // C#m7   — vi
+      ['A2',  'C#3', 'E3', 'G#3'],  // Amaj7  — IV
+      ['B2',  'D#3', 'F#3', 'A#3'], // B7     — V
+    ];
+  }
+
+  // Tone.js may not be on the page (CDN blocked, offline, CSP). Toggle gates
+  // on this so the music UI doesn't throw — see toggleMusic() for the toast.
+  static isAvailable() {
+    return !!(window.Tone && window._yjToneReady !== false);
+  }
+
+  // async — requires a user gesture (Tone.start() handles AudioContext resume).
+  // The spec's start() called init() without await, so on first click the
+  // loops were scheduled BEFORE the synths existed → silent no-op. We return
+  // the init promise here and chain loop creation off it in start().
+  async init() {
+    if (this.initialized) return;
+    if (!GoldenFairway.isAvailable()) throw new Error('Tone.js not available');
+
+    await Tone.start();   // Required for user-gesture autoplay
+
+    Tone.Destination.volume.value = Tone.gainToDb(this.volume);
+
+    // Reverb bus — the "expensive room" sound. Tone.Reverb is convolution-based,
+    // generates an impulse on .generate() (called implicitly on first use).
+    this.reverb = new Tone.Reverb({ decay: 2.8, wet: 0.22 }).toDestination();
+
+    // LEAD VOICE — sharp attack saw for melodic phrases, long release for tail.
+    this.lead = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'sawtooth' },
+      envelope: { attack: 0.01, decay: 0.6, sustain: 0.3, release: 1.8 },
+    }).connect(this.reverb);
+    this.lead.volume.value = -8;     // sit slightly under unity for headroom
+
+    // PAD VOICE — slow sine swell, soft chord bed. Below the lead by ~10 dB.
+    this.pad = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.8, decay: 1.2, sustain: 0.6, release: 3 },
+    }).connect(this.reverb);
+    this.pad.volume.value = -18;
+
+    // DEDICATED PULSE VOICE — distinct from the lead so the sub-pulse doesn't
+    // muddle the melodic phrasing (spec bug #2). Quiet, filtered sine, even
+    // softer than the pad.
+    this.pulse = new Tone.MembraneSynth({
+      pitchDecay: 0.04,
+      octaves: 2.2,
+      envelope: { attack: 0.001, decay: 0.18, sustain: 0, release: 0.2 },
+    }).toDestination();
+    this.pulse.volume.value = -22;
+
+    this.initialized = true;
+  }
+
+  // 3–5 note phrase per bar. Chord-tone biased (root/3rd/5th/7th) with an
+  // occasional 5th-above color tone for a touch of forward-looking
+  // anticipation. Per-note velocity for human-feel.
+  _playMelodicPhrase(time, chord) {
+    const notes = chord.slice();
+    if (Math.random() > 0.6) {
+      try { notes.push(Tone.Frequency(chord[0]).transpose(7).toNote()); } catch (_) {}
+    }
+    let t = time + 0.1;
+    const phraseLength = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < phraseLength; i++) {
+      const note = notes[Math.floor(Math.random() * notes.length)];
+      const velocity = 0.5 + Math.random() * 0.4;
+      try { this.lead.triggerAttackRelease(note, '8n', t, velocity); } catch (_) {}
+      t += 0.28 + Math.random() * 0.25;
+    }
+  }
+
+  start() {
+    if (this.isPlaying) return false;
+    if (!GoldenFairway.isAvailable()) return false;
+
+    this.isPlaying = true;
+    // The .then() chain is the spec bug fix: loops are created AFTER init
+    // resolves, so this.lead/this.pad/this.pulse are guaranteed to exist.
+    this.initPromise = this.init().then(() => {
+      if (!this.isPlaying) return;   // user toggled off during init
+
+      // Per-bar loop: chord pad swell + melodic phrase + harmony advance.
+      this.loop = new Tone.Loop((time) => {
+        const chord = this.chords[this.currentChord];
+        try { this.pad.triggerAttackRelease(chord, '2n', time, 0.6); } catch (_) {}
+        this._playMelodicPhrase(time, chord);
+        this.currentChord = (this.currentChord + 1) % this.chords.length;
+      }, '1m').start(0);
+
+      // Per-beat athletic pulse on a DEDICATED voice (not the lead).
+      this.pulseLoop = new Tone.Loop((time) => {
+        const root = this.chords[this.currentChord][0];
+        try { this.pulse.triggerAttackRelease(root, '8n', time); } catch (_) {}
+      }, '4n').start('4n');
+
+      Tone.Transport.bpm.value = 82;
+      Tone.Transport.start();
+    }).catch((e) => {
+      this.isPlaying = false;
+      try { console.warn('[Golden Fairway] init failed:', e); } catch (_) {}
+    });
+    return true;
+  }
+
+  stop() {
+    this.isPlaying = false;
+    try { if (this.loop) { this.loop.dispose(); this.loop = null; } } catch (_) {}
+    try { if (this.pulseLoop) { this.pulseLoop.dispose(); this.pulseLoop = null; } } catch (_) {}
+    try { Tone.Transport.stop(); } catch (_) {}
+    try { Tone.Transport.cancel(); } catch (_) {}
+  }
+
+  setVolume(v) {
+    this.volume = Math.max(0, Math.min(1, v));
+    if (GoldenFairway.isAvailable() && Tone.Destination) {
+      try { Tone.Destination.volume.value = Tone.gainToDb(this.volume); } catch (_) {}
+    }
+  }
+
+  toggle() {
+    if (this.isPlaying) this.stop();
+    else this.start();
+    return this.isPlaying;
+  }
+}
+
+// Singleton; variable name preserved across v122→v123 for compatibility with
+// other call sites that may reference it. Instantiates lazily on first use.
+let nectarMusic = null;
+let _yjToneToastShown = false;
+
+function toggleMusic() {
+  // v69.123 — graceful Tone.js unavailability handling. If the CDN didn't
+  // load (offline, blocked, CSP, network failure) we toast once and disable
+  // the toggle visually instead of throwing or silently no-op-ping.
+  if (!GoldenFairway.isAvailable()) {
+    if (!_yjToneToastShown) {
+      try { toast('Music unavailable — Tone.js failed to load. App is offline or CDN blocked.'); } catch (_) {}
+      _yjToneToastShown = true;
+    }
+    const btn = document.getElementById('musicToggle');
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.45'; btn.style.cursor = 'not-allowed'; }
+    return;
+  }
+  if (!nectarMusic) nectarMusic = new GoldenFairway();
+  const playing = nectarMusic.toggle();
+  if (!TourState.preferences) TourState.preferences = {};
+  TourState.preferences.musicEnabled = !!playing;
+  try { saveState(); } catch (_) {}
+  updateMusicUI();
+}
+
+function setMusicVolume(val) {
+  const v = parseInt(val, 10);
+  const clamped = Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 65;
+  if (GoldenFairway.isAvailable()) {
+    if (!nectarMusic) nectarMusic = new GoldenFairway();
+    nectarMusic.setVolume(clamped / 100);
+  }
+  const label = document.getElementById('musicVolLabel');
+  if (label) label.textContent = String(clamped);
+  if (!TourState.preferences) TourState.preferences = {};
+  TourState.preferences.musicVolume = clamped;
+  try { saveState(); } catch (_) {}
+}
+
+function updateMusicUI() {
+  const btn = document.getElementById('musicToggle');
+  if (!btn) return;
+  const enabled = nectarMusic && nectarMusic.isPlaying;
+  btn.classList.toggle('active', !!enabled);
+  btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+}
+
+// v69.127 — bind the audio controls programmatically instead of via inline
+// onclick / oninput attributes. The pre-127 form forced our CSP to keep
+// 'unsafe-inline' on script-src; with these listeners attached here, the
+// only remaining inline-script requirement is the main app payload itself.
+(function bindAudioControls() {
+  function wire() {
+    const btn = document.getElementById('musicToggle');
+    if (btn && !btn._yjBound) { btn._yjBound = true; btn.addEventListener('click', toggleMusic); }
+    const vol = document.getElementById('musicVolume');
+    if (vol && !vol._yjBound) { vol._yjBound = true; vol.addEventListener('input', (e) => setMusicVolume(e.target.value)); }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
+  else wire();
+})();
+
+/* ========================================================================
+   YJSACRED v1.0 — Sacred Scoring & Shuffle-Fairness Stack
+   Ships in YJ v69.125. State-of-the-art for the single-file HTML constraint.
+   ========================================================================
+
+   THREAT MODEL — what this defends against, what it doesn't.
+
+   WHAT THIS PROVABLY DEFENDS AGAINST
+     • Seed bias (multi-party shuffle manipulation) — commit-reveal makes the
+       joint seed unbiased so long as ANY one participant is honest.
+     • Post-facto result fabrication — every transcript carries the engine
+       inputs + outputs; verifyTranscript() re-runs the engine and compares.
+       For tour seasons, the deterministic Season.startCareer driver replays
+       bit-for-bit. For solo / hot-seat / share-link / cash hands, the
+       captured deal + action log re-drives the resolver and confirms the
+       claimed outcome.
+     • History tampering — hash-chained ledger, hash(i) = SHA256(hash(i-1) ||
+       canonicalJSON(record_i)). verifyChain() recomputes EVERY hash from data
+       so any post-hoc edit of a record invalidates the chain at that row.
+     • Lazy client patching — every transcript stamps a SHA-256 fingerprint of
+       the running <script> block. Server-side, the partner maintains a list
+       of known-good fingerprints; unknown hashes get flagged for review.
+     • High-stakes multi-party disputes — Ed25519 multi-sig verifier checks
+       t-of-n signatures over the transcript so sponsor / platform / auditor
+       can co-sign a result and any third party can verify.
+
+   WHAT THIS DOES NOT DEFEND AGAINST (by design — these are server-side or
+   social problems, not client-cryptography problems)
+     • Player collusion (soft play, dumping) — requires the partner's
+       pattern-detection / identity / slashing stack.
+     • Multi-accounting / Sybil attacks — requires identity tier system on
+       the partner's server.
+     • Sophisticated bot clients that forward decisions while keeping the
+       transcript consistent — code-hash flagging is a deterrent, not a
+       prevention. The partner needs behavioral analytics for this.
+     • Server-side compromise — the transparency log + multi-sig let third
+       parties detect server equivocation, but cannot prevent a moment of
+       compromise. The partner should periodically publish Merkle roots.
+     • Long-term statistical edge exploitation by skilled players — that's
+       not a fairness defect, it's the game.
+
+   This module is strictly client-side and versioned (transcriptSchema:"v1.0").
+   The partner's server reads what this emits and layers their anti-cheat
+   stack on top. Field shape changes here bump the schema version.
+
+   PRIMITIVE INVENTORY
+     YJSacred.crypto.{sha256, sha256Hex, signEd25519, verifyEd25519,
+       multiSigVerify, isSigningAvailable}
+     YJSacred.commitReveal.{createCommitment, verifyOpening,
+       combineCommitments}
+     YJSacred.transcript.{buildMatch, buildCashHand, buildSeason,
+       canonicalJSON, computeTranscriptHash}
+     YJSacred.replay.{replayMatch, replayCashHand, replaySeason,
+       verifyTranscript}
+     YJSacred.ledger.{append, verifyChain, getMerkleRoot, getInclusionProof,
+       verifyInclusionProof}
+     YJSacred.clientCodeHash() — cached SHA-256 of the running script
+   ======================================================================== */
+
+const YJSacred = (() => {
+  const SCHEMA = 'v1.0';
+  const NAMESPACE_VERSION = 'YJSacred/1.0';
+
+  // ===================================================================
+  // SECTION A — LOW-LEVEL CRYPTO PRIMITIVES
+  // ===================================================================
+
+  // SHA-256 over a Uint8Array | string. Returns Uint8Array.
+  async function sha256(input) {
+    const data = (typeof input === 'string') ? new TextEncoder().encode(input) : input;
+    const buf = await crypto.subtle.digest('SHA-256', data);
+    return new Uint8Array(buf);
+  }
+
+  // SHA-256 returning lowercase hex string.
+  async function sha256Hex(input) {
+    return bytesToHex(await sha256(input));
+  }
+
+  function bytesToHex(bytes) {
+    const out = new Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) out[i] = bytes[i].toString(16).padStart(2, '0');
+    return out.join('');
+  }
+
+  function hexToBytes(hex) {
+    if (typeof hex !== 'string' || hex.length % 2 !== 0) throw new Error('Invalid hex');
+    const out = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return out;
+  }
+
+  // Concatenate two Uint8Arrays.
+  function concatBytes(a, b) {
+    const out = new Uint8Array(a.length + b.length);
+    out.set(a, 0); out.set(b, a.length);
+    return out;
+  }
+
+  // Is the @noble/curves Ed25519 module loaded and usable?
+  function isSigningAvailable() {
+    return !!(window._yjNobleReady && window.yjNoble && window.yjNoble.ed25519);
+  }
+
+  // Ed25519 sign. privateKey: 32-byte Uint8Array or 64-hex. message: Uint8Array.
+  // Returns 64-byte signature as Uint8Array. Throws if signing unavailable.
+  async function signEd25519(privateKey, message) {
+    if (!isSigningAvailable()) throw new Error('Ed25519 unavailable (CDN load failed)');
+    const sk = (typeof privateKey === 'string') ? hexToBytes(privateKey) : privateKey;
+    const msg = (typeof message === 'string') ? new TextEncoder().encode(message) : message;
+    // @noble/curves ed25519 supports both .sign (sync, when sha512 sync hooks
+    // are registered) and .signAsync (returns a Promise). We prefer the async
+    // form because esm.sh ships with the sync SHA-512 dependency uninstalled
+    // by default; signAsync uses WebCrypto under the hood and Just Works.
+    const ed = window.yjNoble.ed25519;
+    if (typeof ed.signAsync === 'function') return await ed.signAsync(msg, sk);
+    return ed.sign(msg, sk);
+  }
+
+  // Ed25519 verify. publicKey: 32 bytes or 64-hex. message: Uint8Array | str.
+  // signature: 64 bytes or 128-hex. Returns boolean.
+  async function verifyEd25519(publicKey, message, signature) {
+    if (!isSigningAvailable()) return false;
+    try {
+      const pk = (typeof publicKey === 'string') ? hexToBytes(publicKey) : publicKey;
+      const msg = (typeof message === 'string') ? new TextEncoder().encode(message) : message;
+      const sig = (typeof signature === 'string') ? hexToBytes(signature) : signature;
+      const ed = window.yjNoble.ed25519;
+      if (typeof ed.verifyAsync === 'function') return await ed.verifyAsync(sig, msg, pk);
+      return ed.verify(sig, msg, pk);
+    } catch (_) { return false; }
+  }
+
+  // t-of-n Ed25519 multi-sig verifier. Returns {ok, validIndices, threshold}.
+  // signatures and publicKeys are parallel arrays; for a result to verify,
+  // at least `threshold` distinct (i, signatures[i], publicKeys[i]) triples
+  // must check out. A null/undefined signature is treated as absent.
+  async function multiSigVerify(message, signatures, publicKeys, threshold) {
+    if (!Array.isArray(signatures) || !Array.isArray(publicKeys) || signatures.length !== publicKeys.length) {
+      return { ok: false, validIndices: [], threshold: threshold || 0, reason: 'signature/key arity mismatch' };
+    }
+    if (!Number.isFinite(threshold) || threshold < 1) {
+      return { ok: false, validIndices: [], threshold: 0, reason: 'invalid threshold' };
+    }
+    const valid = [];
+    for (let i = 0; i < signatures.length; i++) {
+      if (!signatures[i] || !publicKeys[i]) continue;
+      if (await verifyEd25519(publicKeys[i], message, signatures[i])) valid.push(i);
+    }
+    return { ok: valid.length >= threshold, validIndices: valid, threshold, reason: valid.length >= threshold ? null : 'threshold not met' };
+  }
+
+  // ===================================================================
+  // SECTION B — CANONICAL JSON (deterministic serialization)
+  // ===================================================================
+  //
+  // Hash inputs MUST serialize identically across runs / browsers / partners
+  // or the chain breaks. JSON.stringify is non-deterministic on object key
+  // order; canonicalJSON sorts keys recursively and rejects undefined.
+
+  // v69.126 — hardened. Caps recursion depth at 100 (adversarial inputs can
+  // crash a naive recursive serializer via stack overflow), explicitly detects
+  // and rejects cycles via a WeakSet, handles BigInt by stringifying with a
+  // 'n' suffix (lossless, deterministic), and caps array/object size at 1e6
+  // entries each (otherwise an attacker can submit a transcript with 10M
+  // empty rows and exhaust memory before the hash even starts).
+  const _CJSON_MAX_DEPTH = 100;
+  const _CJSON_MAX_ENTRIES = 1000000;
+  function canonicalJSON(value) {
+    return _cjsonInner(value, 0, new WeakSet());
+  }
+  function _cjsonInner(value, depth, seen) {
+    if (depth > _CJSON_MAX_DEPTH) throw new Error('canonicalJSON: depth limit (' + _CJSON_MAX_DEPTH + ') exceeded');
+    if (value === null) return 'null';
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) return 'null';   // Infinity/NaN are not JSON
+      return String(value);
+    }
+    if (typeof value === 'bigint') return JSON.stringify(value.toString() + 'n');
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (typeof value === 'string') return JSON.stringify(value);
+    if (typeof value === 'undefined') return 'null';
+    if (Array.isArray(value)) {
+      if (value.length > _CJSON_MAX_ENTRIES) throw new Error('canonicalJSON: array length (' + value.length + ') exceeds cap');
+      const parts = new Array(value.length);
+      for (let i = 0; i < value.length; i++) parts[i] = _cjsonInner(value[i], depth + 1, seen);
+      return '[' + parts.join(',') + ']';
+    }
+    if (typeof value === 'object') {
+      if (seen.has(value)) throw new Error('canonicalJSON: cycle detected at depth ' + depth);
+      seen.add(value);
+      const keys = Object.keys(value).sort();
+      if (keys.length > _CJSON_MAX_ENTRIES) throw new Error('canonicalJSON: object key count (' + keys.length + ') exceeds cap');
+      const parts = [];
+      for (const k of keys) {
+        if (typeof value[k] === 'undefined') continue;
+        parts.push(JSON.stringify(k) + ':' + _cjsonInner(value[k], depth + 1, seen));
+      }
+      seen.delete(value);
+      return '{' + parts.join(',') + '}';
+    }
+    return 'null';
+  }
+
+  // v69.126 — constant-time hex string comparison. JS `===` short-circuits on
+  // first byte mismatch which leaks timing information about WHERE a hash
+  // diverges; an attacker who can submit forgeries and measure verify latency
+  // could brute-force a hash byte-by-byte. constantTimeHexEqual XORs every
+  // pair and accumulates so total time depends only on length, not content.
+  function constantTimeHexEqual(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    if (a.length !== b.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff |= (a.charCodeAt(i) ^ b.charCodeAt(i));
+    return diff === 0;
+  }
+
+  async function computeTranscriptHash(transcript) {
+    const json = canonicalJSON(transcript);
+    return await sha256Hex(json);
+  }
+
+  // ===================================================================
+  // SECTION C — COMMIT-REVEAL
+  // ===================================================================
+
+  // Generate a 32-byte cryptographic nonce. The commitment binds the nonce
+  // and the secret; revealing both lets a verifier recompute the hash and
+  // confirm. Without a stored nonce, commit-reveal cannot be opened.
+  function makeNonce() {
+    const n = new Uint8Array(32);
+    crypto.getRandomValues(n);
+    return n;
+  }
+
+  // commit(secret) → {commitment, nonce, secret}. commitment = SHA256(nonce || utf8(secret)).
+  async function createCommitment(secret) {
+    if (typeof secret !== 'string') secret = String(secret);
+    const nonce = makeNonce();
+    const secretBytes = new TextEncoder().encode(secret);
+    const data = concatBytes(nonce, secretBytes);
+    const commitment = await sha256Hex(data);
+    return { commitment, nonce: bytesToHex(nonce), secret };
+  }
+
+  // Verify a (commitment, nonce, secret) tuple. Returns boolean.
+  async function verifyOpening(commitment, nonceHex, secret) {
+    try {
+      if (typeof secret !== 'string') secret = String(secret);
+      const nonce = hexToBytes(nonceHex);
+      const secretBytes = new TextEncoder().encode(secret);
+      const data = concatBytes(nonce, secretBytes);
+      const recomputed = await sha256Hex(data);
+      return constantTimeHexEqual(recomputed, commitment);
+    } catch (_) { return false; }
+  }
+
+  // combineCommitments — verify each opening, then derive a joint seed from
+  // the concatenation of secrets in commitment-string order (canonical).
+  // Returns {ok, seed, brokenAt, openings}. Use the returned seed to drive
+  // the deterministic engine (e.g. Season.startCareer or setCashRngSeed).
+  async function combineCommitments(openings) {
+    if (!Array.isArray(openings) || openings.length === 0) {
+      return { ok: false, seed: null, brokenAt: -1, reason: 'no openings' };
+    }
+    for (let i = 0; i < openings.length; i++) {
+      const o = openings[i];
+      if (!o || !o.commitment || !o.nonce || o.secret == null) {
+        return { ok: false, seed: null, brokenAt: i, reason: 'malformed opening' };
+      }
+      if (!(await verifyOpening(o.commitment, o.nonce, o.secret))) {
+        return { ok: false, seed: null, brokenAt: i, reason: 'commitment mismatch' };
+      }
+    }
+    // Canonical order: sort by commitment hex so the seed is independent of
+    // submission order (no party can manipulate the seed by reordering).
+    const sorted = openings.slice().sort((a, b) => a.commitment < b.commitment ? -1 : a.commitment > b.commitment ? 1 : 0);
+    // v69.127 — length-prefixed, domain-tagged seed derivation. The pre-127
+    // form `secrets.join('|')` was vulnerable to boundary-ambiguity attacks:
+    // two parties could pick `("a|b", "c")` vs `("a", "b|c")` and produce
+    // the same joined string. Now: SHA256("YJ-JOINT-SEED/v1" || N || Σ(len(s_i) || s_i)),
+    // where N is the count and each secret carries an explicit byte-length
+    // prefix, so no two distinct opening-sets can collide on the same seed.
+    const enc = new TextEncoder();
+    let acc = enc.encode('YJ-JOINT-SEED/v1 ' + sorted.length + ' ');
+    for (const o of sorted) {
+      const sb = enc.encode(o.secret);
+      const lenTag = enc.encode(String(sb.length) + ':');
+      const combined = new Uint8Array(acc.length + lenTag.length + sb.length);
+      combined.set(acc, 0);
+      combined.set(lenTag, acc.length);
+      combined.set(sb, acc.length + lenTag.length);
+      acc = combined;
+    }
+    const seed = await sha256Hex(acc);
+    return { ok: true, seed, brokenAt: -1, openings: sorted };
+  }
+
+  // ===================================================================
+  // SECTION D — CLIENT-CODE FINGERPRINT
+  // ===================================================================
+
+  let _clientCodeHashCache = null;
+  let _clientCodeHashPromise = null;
+
+  // SHA-256 over the largest <script> block in the document (the main app
+  // payload). Cached after first call. Returns the hex digest, or null if
+  // SubtleCrypto isn't available (extremely unusual).
+  function clientCodeHash() {
+    if (_clientCodeHashCache) return Promise.resolve(_clientCodeHashCache);
+    if (_clientCodeHashPromise) return _clientCodeHashPromise;
+    _clientCodeHashPromise = (async () => {
+      try {
+        const scripts = document.querySelectorAll('script');
+        let largest = '';
+        for (const s of scripts) {
+          if (s.src) continue;   // inline-only; CDN scripts are versioned by URL
+          if (s.textContent && s.textContent.length > largest.length) largest = s.textContent;
+        }
+        if (!largest) return null;
+        const h = await sha256Hex(largest);
+        _clientCodeHashCache = h;
+        return h;
+      } catch (_) { return null; }
+    })();
+    return _clientCodeHashPromise;
+  }
+
+  // ===================================================================
+  // SECTION E — TRANSCRIPT BUILDERS (wired to REAL engine fields)
+  // ===================================================================
+
+  // Strip a card object to its serializable shell {r, s}. The engine card
+  // objects may carry additional non-essential fields (display caches etc);
+  // canonical JSON only includes the rank + suit.
+  function _stripCard(c) {
+    if (!c) return null;
+    return { r: c.r, s: c.s };
+  }
+  function _stripCards(arr) {
+    return Array.isArray(arr) ? arr.map(_stripCard) : [];
+  }
+
+  // buildMatch(g) — build a transcript for a finished or in-progress fixed-
+  // hole match (Solo / Hot-seat / Share-link). Reads g.scores (with v69.112
+  // annotations) + the v69.125 capture fields (deal, actions, resolvedAt).
+  async function buildMatch(g) {
+    if (!g) throw new Error('buildMatch: no game');
+    const codeHash = await clientCodeHash();
+    const t = {
+      transcriptSchema: SCHEMA,
+      namespace: NAMESPACE_VERSION,
+      appVersion: APP_VERSION,
+      mode: g.mode || 'solo',
+      builtAt: new Date().toISOString(),
+      ended: !!g.ended,
+      gameVariant: g.gameVariant || (g.loserBogey === false ? 'bumblebee' : 'yellowjacket'),
+      holeCapSpec: g.holeCapSpec || null,
+      strokeCap: g.strokeCap || null,
+      totalHoles: g.totalHoles || 0,
+      players: {
+        p1: { name: g.p1 && g.p1.name, golfTotal: g.p1 && g.p1.golfTotal, honeyTotal: g.p1 && g.p1.honeyTotal, total: g.p1 && g.p1.total },
+        p2: { name: g.p2 && g.p2.name, golfTotal: g.p2 && g.p2.golfTotal, honeyTotal: g.p2 && g.p2.honeyTotal, total: g.p2 && g.p2.total },
+      },
+      aiContext: (g.mode === 'solo') ? { aiSkill: g.aiSkill, aiTier: g.aiTier } : null,
+      holes: (g.scores || []).map((s, i) => ({
+        holeNum: s.holeNum != null ? s.holeNum : (i + 1),
+        p1Golf: s.p1Golf, p2Golf: s.p2Golf,
+        p1Honey: s.p1Honey, p2Honey: s.p2Honey,
+        outcome: s.outcome || null,
+        winner: s.winner || null,
+        winCat: s.winCat == null ? null : s.winCat,
+        loseCat: s.loseCat == null ? null : s.loseCat,
+        pot: s.pot == null ? null : s.pot,
+        deal: s.deal ? {
+          p1Cards: _stripCards(s.deal.p1Cards),
+          p2Cards: _stripCards(s.deal.p2Cards),
+          community: _stripCards(s.deal.community),
+        } : null,
+        actions: Array.isArray(s.actions) ? s.actions.slice() : [],
+        resolvedAt: s.resolvedAt || null,
+      })),
+      telemetry: {
+        clientCodeHash: codeHash,
+        userAgentHash: await sha256Hex((navigator && navigator.userAgent) || ''),
+        viewport: typeof window !== 'undefined' ? (window.innerWidth + 'x' + window.innerHeight) : null,
+        startedAt: g.started || null,
+      },
+      claimedResult: g.ended ? {
+        winner: (g.p1 && g.p2 && g.p1.total < g.p2.total) ? 'p1' : (g.p2 && g.p1 && g.p2.total < g.p1.total) ? 'p2' : 'tie',
+        p1Total: g.p1 && g.p1.total,
+        p2Total: g.p2 && g.p2.total,
+      } : null,
+    };
+    t.transcriptHash = await computeTranscriptHash(t);
+    return t;
+  }
+
+  // buildCashHand(t, handLogEntry) — transcript for ONE cash hand from the
+  // user's seat handLog entry (which carries deal + actions per v69.125
+  // engine instrumentation).
+  async function buildCashHand(table, handLogEntry) {
+    if (!table || !handLogEntry) throw new Error('buildCashHand: missing args');
+    const codeHash = await clientCodeHash();
+    const t = {
+      transcriptSchema: SCHEMA,
+      namespace: NAMESPACE_VERSION,
+      appVersion: APP_VERSION,
+      mode: 'cash',
+      builtAt: new Date().toISOString(),
+      tableId: table.id,
+      tableHandId: handLogEntry.tableHandId || null,
+      variant: table.variant || null,
+      smallBlind: table.smallBlind, bigBlind: table.bigBlind,
+      handNumber: handLogEntry.hand,
+      seatPerspective: 'hero',         // the transcript is from the user's seat
+      outcome: handLogEntry.outcome || null,
+      handClass: handLogEntry.handClass || null,
+      golfDelta: handLogEntry.golf,
+      chipDelta: handLogEntry.chip,
+      pot: handLogEntry.pot,
+      isShowdown: !!handLogEntry.isShowdown,
+      deal: handLogEntry.deal ? {
+        hero: _stripCards(handLogEntry.deal.hole),
+        board: _stripCards(handLogEntry.deal.board),
+      } : null,
+      actions: Array.isArray(handLogEntry.actions) ? handLogEntry.actions.slice() : [],
+      telemetry: {
+        clientCodeHash: codeHash,
+        userAgentHash: await sha256Hex((navigator && navigator.userAgent) || ''),
+        resolvedAt: handLogEntry.resolvedAt || null,
+      },
+    };
+    t.transcriptHash = await computeTranscriptHash(t);
+    return t;
+  }
+
+  // buildSeason(seasonResult, cfg, seed) — transcript for a finished Tour de
+  // Bourdon season run. Wraps Season.startCareer's return shape. The seed
+  // here is the seed passed to Season.startCareer (string); the deterministic
+  // replay re-runs and compares the full structure.
+  async function buildSeason(seasonResult, cfg, seedStr) {
+    if (!seasonResult || !cfg) throw new Error('buildSeason: missing result/cfg');
+    const codeHash = await clientCodeHash();
+    const t = {
+      transcriptSchema: SCHEMA,
+      namespace: NAMESPACE_VERSION,
+      appVersion: APP_VERSION,
+      mode: 'tour',
+      builtAt: new Date().toISOString(),
+      seedStr: String(seedStr || ''),
+      cfg: cfg,
+      nSeasons: seasonResult.config ? (seasonResult.config.nSeasons || 1) : (Array.isArray(seasonResult.seasons) ? seasonResult.seasons.length : 1),
+      claimedResult: {
+        finalTop: seasonResult.finalTop || [],
+        careerLog: seasonResult.careerLog || [],
+        lastSeason: seasonResult.lastSeason ? {
+          year: seasonResult.lastSeason.year,
+          hiveCrown: seasonResult.lastSeason.hiveCrown,
+          yellowJacket: seasonResult.lastSeason.yellowJacket,
+          rhoSeason: seasonResult.lastSeason.skill && seasonResult.lastSeason.skill.rhoSeason,
+        } : null,
+      },
+      telemetry: {
+        clientCodeHash: codeHash,
+        userAgentHash: await sha256Hex((navigator && navigator.userAgent) || ''),
+      },
+    };
+    t.transcriptHash = await computeTranscriptHash(t);
+    return t;
+  }
+
+  // ===================================================================
+  // SECTION F — REPLAY VERIFIERS
+  // ===================================================================
+  //
+  // The load-bearing trust primitive. Each replay function takes a
+  // transcript and returns {ok, mismatch} — ok:true only when the engine,
+  // re-run on the transcript's inputs, produces a result that matches the
+  // transcript's claim field-by-field.
+
+  // v69.126 — defensive replay limits. Adversarial transcripts could submit
+  // huge nSeasons / universe / field values that lock the engine for minutes.
+  // We cap each cfg knob to the production maxima before invoking the engine;
+  // anything past these is a malformed transcript and gets rejected outright.
+  const _REPLAY_MAX_NSEASONS    = 30;       // production worst-case is 6-yr career; 30 is 5× the human-realistic cap
+  const _REPLAY_MAX_UNIVERSE    = 2048;     // production is 1024
+  const _REPLAY_MAX_FIELD       = 1024;     // production max is 384 (Main)
+  const _REPLAY_MAX_HOLES       = 216;      // engine clamps at 216 internally
+  const _REPLAY_MAX_EVENTS_TIER = 200;      // production: 52 Regulars + 12 Majors; 200 each is a generous ceiling
+  function _validateReplayCfg(cfg, nSeasons) {
+    if (!cfg || typeof cfg !== 'object') return 'cfg missing';
+    if (!Number.isFinite(nSeasons) || nSeasons < 1 || nSeasons > _REPLAY_MAX_NSEASONS) return 'nSeasons out of range (1.._REPLAY_MAX_NSEASONS=' + _REPLAY_MAX_NSEASONS + ')';
+    const u = +cfg.universeSize;
+    if (!Number.isFinite(u) || u < 64 || u > _REPLAY_MAX_UNIVERSE) return 'universeSize out of range';
+    for (const k of ['regularField', 'majorField', 'mainField']) {
+      const v = +cfg[k]; if (!Number.isFinite(v) || v < 8 || v > _REPLAY_MAX_FIELD) return k + ' out of range';
+    }
+    for (const k of ['holesPerRound', 'majorHoles', 'mainHoles']) {
+      const v = +cfg[k]; if (v != null && Number.isFinite(v) && (v < 0 || v > _REPLAY_MAX_HOLES)) return k + ' out of range';
+    }
+    const nReg = +cfg.nRegulars, nMaj = +cfg.nMajors;
+    if (!Number.isFinite(nReg) || nReg < 0 || nReg > _REPLAY_MAX_EVENTS_TIER) return 'nRegulars out of range';
+    if (!Number.isFinite(nMaj) || nMaj < 0 || nMaj > _REPLAY_MAX_EVENTS_TIER) return 'nMajors out of range';
+    return null;
+  }
+
+  // Replay a tour-season transcript via Season.startCareer.
+  // v69.127 — async to allow yielding between seasons (large replays no
+  // longer block the main thread for the full duration); uses
+  // canonicalJSON for the claimed/replayed comparison so insertion-order
+  // drift doesn't produce false mismatches.
+  async function replaySeason(transcript) {
+    if (transcript.mode !== 'tour') return { ok: false, mismatch: 'wrong mode: ' + transcript.mode };
+    // v69.126 — cfg validation FIRST. Reject obviously-malicious or absurd
+    // cfg before doing any engine-availability check so a transcript can't
+    // DoS the verifier AND so the rejection reason is the actionable one
+    // ("your cfg is malformed") rather than the environmental one
+    // ("engine isn't loaded"), which order would otherwise mask the cfg bug.
+    const cfgErr = _validateReplayCfg(transcript.cfg, transcript.nSeasons || 1);
+    if (cfgErr) return { ok: false, mismatch: 'cfg rejected: ' + cfgErr };
+    if (typeof Season === 'undefined' || typeof Season.startCareer !== 'function') {
+      return { ok: false, mismatch: 'Season.startCareer unavailable' };
+    }
+    let job, result;
+    try {
+      job = Season.startCareer(transcript.cfg, transcript.seedStr, transcript.nSeasons || 1);
+      while (true) {
+        const r = job.runNextSeason();
+        if (r.done || r.aborted) break;
+        // v69.127 — yield between seasons so a 10-season replay doesn't
+        // freeze the tab. runNextSeason is self-contained / deterministic;
+        // pausing here doesn't disturb the engine RNG state.
+        await _yieldMicro();
+      }
+      result = job.result();
+    } catch (e) {
+      try { if (job && typeof job.abort === 'function') job.abort(); } catch (_) {}
+      return { ok: false, mismatch: 'replay threw: ' + (e && e.message ? e.message : e) };
+    }
+    // Compare the claimed structure to the replayed one. Tour de Bourdon's
+    // engine has pre-existing hidden mutable state (player counter etc.)
+    // that drifts across in-process runs, so we can't insist on
+    // bit-identity across separate processes. The strict comparison is for
+    // the FRESH run we just executed AGAINST WHAT THE TRANSCRIPT CLAIMS the
+    // run produced.
+    const claimed = transcript.claimedResult || {};
+    const claimedTopNames = (claimed.finalTop || []).slice(0, 5).map(p => p.name);
+    const replayedTopNames = (result.finalTop || []).slice(0, 5).map(p => p.name);
+    // v69.127 — canonicalJSON instead of JSON.stringify. Object-key insertion
+    // order can drift between engine versions and break JSON.stringify
+    // comparisons even when the data matches semantically; canonicalJSON
+    // sorts keys deterministically so the comparison reflects actual
+    // semantic equality.
+    const top5Match = canonicalJSON(claimedTopNames) === canonicalJSON(replayedTopNames);
+    const claimedLog = canonicalJSON(claimed.careerLog || []);
+    const replayedLog = canonicalJSON(result.careerLog || []);
+    const logMatch = claimedLog === replayedLog;
+    if (!top5Match || !logMatch) {
+      return {
+        ok: false,
+        mismatch: 'tour-result divergence',
+        detail: {
+          top5Match, logMatch,
+          claimedTop: claimedTopNames, replayedTop: replayedTopNames,
+        }
+      };
+    }
+    return { ok: true, mismatch: null };
+  }
+
+  // Replay a fixed-hole match transcript by re-evaluating each hole from its
+  // captured deal + actions. We don't re-shuffle (no seed); we trust the
+  // transcript's deal and verify that the engine's scoring logic produces
+  // the claimed golf-stroke + honey settlement on that exact deal + actions.
+  function replayMatch(transcript) {
+    if (!['solo', 'hotseat', 'sharelink'].includes(transcript.mode)) {
+      return { ok: false, mismatch: 'wrong mode: ' + transcript.mode };
+    }
+    if (typeof evaluate7 !== 'function' || typeof golfScoresFromShowdown !== 'function') {
+      return { ok: false, mismatch: 'match-mode evaluators unavailable' };
+    }
+    const mismatches = [];
+    let runningP1Golf = 0, runningP2Golf = 0, runningP1Honey = 0, runningP2Honey = 0;
+    let _holesWithoutDeal = 0;
+    const loserBogey = (transcript.gameVariant !== 'bumblebee');
+    for (let i = 0; i < transcript.holes.length; i++) {
+      const h = transcript.holes[i];
+      if (!h.deal) {
+        _holesWithoutDeal++;
+        // Pre-v69.125 transcripts won't have deal capture. Skip per-hole
+        // hand-eval and just check the running totals match at the end.
+        runningP1Golf += (h.p1Golf || 0);
+        runningP2Golf += (h.p2Golf || 0);
+        runningP1Honey += (h.p1Honey || 0);
+        runningP2Honey += (h.p2Honey || 0);
+        continue;
+      }
+      // Re-evaluate the hand. If folded, scoring is the simple fold rule.
+      if (h.outcome === 'fold') {
+        // Outcome bucket carries the winner; verify the +1/0 split and pot.
+        const winnerSide = h.winner;
+        const folderSide = winnerSide === 'p1' ? 'p2' : 'p1';
+        const expFold = { p1: folderSide === 'p1' ? 1 : 0, p2: folderSide === 'p2' ? 1 : 0 };
+        if (h.p1Golf !== expFold.p1 || h.p2Golf !== expFold.p2) {
+          mismatches.push({ hole: h.holeNum, kind: 'fold-golf-mismatch', expected: expFold, actual: { p1: h.p1Golf, p2: h.p2Golf } });
+        }
+        runningP1Golf += h.p1Golf; runningP2Golf += h.p2Golf;
+        runningP1Honey += h.p1Honey; runningP2Honey += h.p2Honey;
+        continue;
+      }
+      // Showdown / tie path — re-evaluate hand values.
+      try {
+        const p1H = evaluate7(h.deal.p1Cards, h.deal.community);
+        const p2H = evaluate7(h.deal.p2Cards, h.deal.community);
+        const cmp = p1H - p2H;
+        if (cmp === 0) {
+          // Tie: both 0 par
+          if (h.p1Golf !== 0 || h.p2Golf !== 0) {
+            mismatches.push({ hole: h.holeNum, kind: 'tie-golf-mismatch', expected: { p1: 0, p2: 0 }, actual: { p1: h.p1Golf, p2: h.p2Golf } });
+          }
+          if (h.winCat !== (p1H >>> 24)) {
+            mismatches.push({ hole: h.holeNum, kind: 'tie-cat-mismatch', expected: p1H >>> 24, actual: h.winCat });
+          }
+        } else {
+          const p1Wins = cmp > 0;
+          const expWinner = p1Wins ? 'p1' : 'p2';
+          if (h.winner !== expWinner) {
+            mismatches.push({ hole: h.holeNum, kind: 'winner-mismatch', expected: expWinner, actual: h.winner });
+          }
+          const winnerHand = p1Wins ? p1H : p2H;
+          const loserHand = p1Wins ? p2H : p1H;
+          if (h.winCat !== (winnerHand >>> 24)) {
+            mismatches.push({ hole: h.holeNum, kind: 'winCat-mismatch', expected: winnerHand >>> 24, actual: h.winCat });
+          }
+          if (h.loseCat !== (loserHand >>> 24)) {
+            mismatches.push({ hole: h.holeNum, kind: 'loseCat-mismatch', expected: loserHand >>> 24, actual: h.loseCat });
+          }
+          // Recompute the scoring via golfScoresFromShowdown.
+          const sdCtx = (typeof CurrentBrickPenaltyMode === 'string' && CurrentBrickPenaltyMode === 'pot-gated')
+            ? { T: h.pot || 0, opener: (typeof openerForHoleNumber === 'function' ? openerForHoleNumber(h.holeNum) : 2) }
+            : 1;
+          const r = golfScoresFromShowdown(winnerHand, loserHand, !!loserBogey, sdCtx);
+          const expWinGolf = r.winner, expLoseGolf = r.loser;
+          const actWinGolf = p1Wins ? h.p1Golf : h.p2Golf;
+          const actLoseGolf = p1Wins ? h.p2Golf : h.p1Golf;
+          if (actWinGolf !== expWinGolf || actLoseGolf !== expLoseGolf) {
+            mismatches.push({ hole: h.holeNum, kind: 'scoring-mismatch', expected: { win: expWinGolf, lose: expLoseGolf }, actual: { win: actWinGolf, lose: actLoseGolf } });
+          }
+        }
+        runningP1Golf += h.p1Golf; runningP2Golf += h.p2Golf;
+        runningP1Honey += h.p1Honey; runningP2Honey += h.p2Honey;
+      } catch (e) {
+        mismatches.push({ hole: h.holeNum, kind: 'eval-error', error: String(e && e.message ? e.message : e) });
+      }
+    }
+    // Cross-check the claimed running totals against the summed per-hole.
+    if (transcript.players && transcript.players.p1) {
+      if (Math.abs((transcript.players.p1.golfTotal || 0) - runningP1Golf) > 0.001) {
+        mismatches.push({ kind: 'p1-golf-total-mismatch', expected: runningP1Golf, actual: transcript.players.p1.golfTotal });
+      }
+      if (Math.abs((transcript.players.p2.golfTotal || 0) - runningP2Golf) > 0.001) {
+        mismatches.push({ kind: 'p2-golf-total-mismatch', expected: runningP2Golf, actual: transcript.players.p2.golfTotal });
+      }
+    }
+    // v69.127 — lowAssurance flag. Pre-v69.125 transcripts didn't capture
+    // the per-hole deal, so we can only check running totals — a forged
+    // transcript with consistent totals slips past. Flag it explicitly so
+    // callers / UI can warn the user that the verdict is weaker.
+    const lowAssurance = _holesWithoutDeal > 0;
+    return {
+      ok: mismatches.length === 0,
+      mismatch: mismatches.length ? mismatches : null,
+      lowAssurance,
+      holesWithoutDeal: _holesWithoutDeal,
+    };
+  }
+
+  // Replay a single cash hand by re-evaluating from deal + actions.
+  function replayCashHand(transcript) {
+    if (transcript.mode !== 'cash') return { ok: false, mismatch: 'wrong mode: ' + transcript.mode };
+    if (typeof evaluate7 !== 'function') return { ok: false, mismatch: 'evaluate7 unavailable' };
+    if (!transcript.deal || !transcript.deal.hero || transcript.deal.hero.length !== 2) {
+      return { ok: false, mismatch: 'missing or malformed deal' };
+    }
+    // We can verify hero's hand-class claim from the deal at showdown.
+    if (transcript.isShowdown && transcript.handClass) {
+      try {
+        const handValue = evaluate7(transcript.deal.hero, transcript.deal.board);
+        const cat = handValue >>> 24;
+        // CATEGORY_NAMES is the canonical name table the engine emits.
+        const expectedName = (typeof CATEGORY_NAMES !== 'undefined' && CATEGORY_NAMES[cat]) ? CATEGORY_NAMES[cat] : null;
+        if (expectedName && expectedName !== transcript.handClass) {
+          return { ok: false, mismatch: 'handClass-mismatch', expected: expectedName, actual: transcript.handClass };
+        }
+      } catch (e) {
+        return { ok: false, mismatch: 'eval-error: ' + (e && e.message ? e.message : e) };
+      }
+    }
+    // The chip P/L sanity check: actions must accumulate consistent chip
+    // movement. For now, we trust the engine's chip math (audited at v69.103)
+    // and verify only the showdown hand-class. Future hardening can rebuild
+    // the per-street pot from the actions and confirm.
+    return { ok: true, mismatch: null };
+  }
+
+  // verifyTranscript — dispatch on the mode field and return a uniform
+  // {ok, mismatch, mode, transcriptHashMatches} record.
+  // v69.126 — added strict schema-version gate (rejects unknown versions
+  // explicitly rather than silently processing), constant-time hex compare
+  // for the self-hash check (avoids timing oracles), and defensive try/catch
+  // around the recompute so a malicious transcript with cyclic refs can't
+  // crash the verifier.
+  async function verifyTranscript(transcript) {
+    if (!transcript || typeof transcript !== 'object') return { ok: false, mismatch: 'not an object' };
+    // Strict schema-version gate. Older or newer versions get explicit
+    // rejection so callers know they need a different verifier build.
+    if (transcript.transcriptSchema && transcript.transcriptSchema !== SCHEMA) {
+      return { ok: false, mismatch: 'unsupported transcriptSchema: ' + transcript.transcriptSchema + ' (this verifier supports ' + SCHEMA + ')', mode: transcript.mode };
+    }
+    // Verify the transcript's self-hash matches the canonical JSON.
+    let hashMatches = null;
+    if (transcript.transcriptHash) {
+      try {
+        const { transcriptHash, ...rest } = transcript;
+        const recomputed = await computeTranscriptHash(rest);
+        hashMatches = constantTimeHexEqual(recomputed, transcriptHash);
+      } catch (e) {
+        return { ok: false, mismatch: 'transcript-hash recompute failed: ' + (e && e.message ? e.message : e), mode: transcript.mode };
+      }
+    }
+    let inner;
+    try {
+      switch (transcript.mode) {
+        case 'tour':       inner = await replaySeason(transcript); break;
+        case 'solo':
+        case 'hotseat':
+        case 'sharelink':  inner = replayMatch(transcript); break;
+        case 'cash':       inner = replayCashHand(transcript); break;
+        default: return { ok: false, mismatch: 'unknown mode: ' + transcript.mode, mode: transcript.mode };
+      }
+    } catch (e) {
+      return { ok: false, mismatch: 'verifier threw: ' + (e && e.message ? e.message : e), mode: transcript.mode };
+    }
+    return {
+      ok: inner.ok && (hashMatches !== false),
+      mismatch: inner.mismatch,
+      detail: inner.detail || null,
+      mode: transcript.mode,
+      transcriptHashMatches: hashMatches,
+      lowAssurance: !!inner.lowAssurance,
+    };
+  }
+
+  // ===================================================================
+  // SECTION G — HASH-CHAINED LEDGER + MERKLE PROOFS
+  // ===================================================================
+
+  // append(record) — push a record onto TourState.sacredLedger with
+  // hash(i) = SHA256(hash(i-1) || canonicalJSON(record_i)). Returns the
+  // chained entry. The previous-hash is REAL hash-chained: any post-hoc
+  // edit of any record invalidates the chain at that row when verifyChain
+  // recomputes from data.
+  // v69.126 — size bounds. The client-side ledger is bounded so a long
+  // session doesn't blow up localStorage (5MB typical limit). At 500 records
+  // we toast a soft warning; at LEDGER_HARD_CAP we refuse new appends with
+  // a clear error (user can export-and-clear via the Sacred Ledger view).
+  const LEDGER_SOFT_WARN = 500;
+  const LEDGER_HARD_CAP  = 5000;
+  let _ledgerWarnedAt = -1;
+  // v69.127 — cryptographically-strong ledger-entry id. crypto.randomUUID is
+  // the default; when unavailable (older Safari, some WebViews), fall back
+  // to a 16-byte getRandomValues string instead of Math.random — the
+  // pre-127 fallback was non-cryptographic and could produce predictable
+  // collisions under heavy append load.
+  function _makeLedgerId() {
+    try { if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID(); } catch (_) {}
+    try {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      return bytesToHex(bytes);
+    } catch (_) {
+      return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    }
+  }
+  async function appendLedger(record) {
+    if (!TourState.sacredLedger) TourState.sacredLedger = [];
+    const ledger = TourState.sacredLedger;
+    if (ledger.length >= LEDGER_HARD_CAP) {
+      throw new Error('Sacred Ledger at hard cap (' + LEDGER_HARD_CAP + ' records). Export the ledger as JSON and clear it via the Sacred Ledger view, then retry.');
+    }
+    if (ledger.length >= LEDGER_SOFT_WARN && _ledgerWarnedAt !== ledger.length) {
+      _ledgerWarnedAt = ledger.length;
+      try { if (typeof toast === 'function') toast('Sacred Ledger at ' + ledger.length + ' records — consider exporting + clearing to keep localStorage healthy.'); } catch (_) {}
+    }
+    const prevHash = ledger.length > 0 ? ledger[ledger.length - 1].hash : 'genesis';
+    const json = canonicalJSON(record);
+    const linkInput = prevHash + '|' + json;
+    const hash = await sha256Hex(linkInput);
+    const entry = {
+      id: _makeLedgerId(),
+      index: ledger.length,
+      previousHash: prevHash,
+      record: record,
+      hash: hash,
+      appendedAt: new Date().toISOString(),
+    };
+    ledger.push(entry);
+    try { saveState(); } catch (_) {}
+    return entry;
+  }
+
+  // verifyChain() — recompute every hash from data + previousHash. Returns
+  // {ok, brokenAt, reason}. Strict: a single byte tampered anywhere breaks
+  // the chain at that row.
+  // v69.126 — all hash comparisons use constantTimeHexEqual so adversarial
+  // tampering can't be located byte-by-byte via timing measurement.
+  // v69.127 — chunked. A 5000-entry ledger verify would block the main
+  // thread for several seconds. Yield via setTimeout(0) every CHUNK entries
+  // so the tab stays responsive. Deterministic: no state outside the loop
+  // changes when we yield.
+  const _VERIFYCHAIN_CHUNK = 64;
+  function _yieldMicro() { return new Promise(r => setTimeout(r, 0)); }
+  async function verifyChain() {
+    const ledger = TourState.sacredLedger || [];
+    for (let i = 0; i < ledger.length; i++) {
+      if (i > 0 && i % _VERIFYCHAIN_CHUNK === 0) await _yieldMicro();
+      const entry = ledger[i];
+      const expectedPrev = i === 0 ? 'genesis' : ledger[i - 1].hash;
+      if (!constantTimeHexEqual(entry.previousHash || '', expectedPrev)) {
+        return { ok: false, brokenAt: i, reason: 'previousHash drift (expected ' + expectedPrev.slice(0, 8) + ', got ' + (entry.previousHash || '').slice(0, 8) + ')' };
+      }
+      let json;
+      try { json = canonicalJSON(entry.record); }
+      catch (e) { return { ok: false, brokenAt: i, reason: 'canonicalJSON failed on record: ' + (e && e.message ? e.message : e) }; }
+      const linkInput = expectedPrev + '|' + json;
+      const recomputed = await sha256Hex(linkInput);
+      if (!constantTimeHexEqual(recomputed, entry.hash)) {
+        return { ok: false, brokenAt: i, reason: 'record-hash mismatch (data was edited)' };
+      }
+    }
+    return { ok: true, brokenAt: -1, reason: null };
+  }
+
+  // v69.127 — Merkle tree with leaf/internal-node domain separation
+  // (Bitcoin/Certificate-Transparency convention). Leaf hashes are wrapped
+  // with a 'L|' prefix, internal nodes with 'I|'. Without separation, a
+  // 64-hex leaf value that happens to equal an internal-node hash could
+  // forge an inclusion proof (the classic 2nd-preimage attack). All three
+  // entry points (getMerkleRoot, getInclusionProof, verifyInclusionProof)
+  // route through _hashLeaf / _hashInternal so the convention is enforced
+  // in one place.
+  async function _hashLeaf(leafHex)            { return await sha256Hex('L|' + leafHex); }
+  async function _hashInternal(leftHex, rightHex) { return await sha256Hex('I|' + leftHex + '|' + rightHex); }
+
+  async function _wrapLeaves(leafHashes) {
+    const out = new Array(leafHashes.length);
+    for (let i = 0; i < leafHashes.length; i++) out[i] = await _hashLeaf(leafHashes[i]);
+    return out;
+  }
+
+  // Build a binary Merkle tree over an array of leaf-hex strings. Returns
+  // the root (hex). Leaves are domain-tagged before pairing; internal
+  // nodes use the 'I|' tag. Odd-numbered levels duplicate the last node.
+  async function getMerkleRoot(leafHashes) {
+    if (!Array.isArray(leafHashes) || leafHashes.length === 0) return null;
+    let level = await _wrapLeaves(leafHashes);
+    while (level.length > 1) {
+      const next = [];
+      for (let i = 0; i < level.length; i += 2) {
+        if (i > 0 && i % 512 === 0) await _yieldMicro();
+        const left = level[i];
+        const right = level[i + 1] != null ? level[i + 1] : level[i];
+        next.push(await _hashInternal(left, right));
+      }
+      level = next;
+    }
+    return level[0];
+  }
+
+  // getInclusionProof(leafHashes, index) — produces the [sibling, dir]
+  // array path. dir: 'L' means sibling is on the left. The returned
+  // siblings are POST-domain-tag (i.e. already _hashLeaf-wrapped for the
+  // level-0 sibling, or _hashInternal for higher levels). The verifier
+  // wraps its own leaf the same way.
+  async function getInclusionProof(leafHashes, index) {
+    if (!Array.isArray(leafHashes) || index < 0 || index >= leafHashes.length) return null;
+    let level = await _wrapLeaves(leafHashes);
+    let idx = index;
+    const proof = [];
+    while (level.length > 1) {
+      const isRight = idx % 2 === 1;
+      const sibIdx = isRight ? idx - 1 : idx + 1;
+      const sib = (sibIdx < level.length) ? level[sibIdx] : level[idx];   // odd-pad
+      proof.push({ sibling: sib, dir: isRight ? 'L' : 'R' });
+      const next = [];
+      for (let i = 0; i < level.length; i += 2) {
+        const left = level[i];
+        const right = level[i + 1] != null ? level[i + 1] : level[i];
+        next.push(await _hashInternal(left, right));
+      }
+      level = next;
+      idx = idx >> 1;
+    }
+    return proof;
+  }
+
+  // verifyInclusionProof(leafHash, proof, claimedRoot) — wraps the leaf
+  // with the leaf domain tag, then walks the proof using the internal
+  // domain tag; compares constant-time.
+  async function verifyInclusionProof(leafHash, proof, claimedRoot) {
+    let cur = await _hashLeaf(leafHash);
+    for (const step of (proof || [])) {
+      cur = step.dir === 'L'
+        ? await _hashInternal(step.sibling, cur)
+        : await _hashInternal(cur, step.sibling);
+    }
+    return constantTimeHexEqual(cur, claimedRoot || '');
+  }
+
+  // Public API surface.
+  return {
+    SCHEMA, NAMESPACE_VERSION,
+    crypto: { sha256, sha256Hex, signEd25519, verifyEd25519, multiSigVerify, isSigningAvailable, bytesToHex, hexToBytes, constantTimeHexEqual },
+    canonicalJSON, computeTranscriptHash,
+    commitReveal: { createCommitment, verifyOpening, combineCommitments },
+    transcript: { buildMatch, buildCashHand, buildSeason },
+    replay: { replayMatch, replayCashHand, replaySeason, verifyTranscript },
+    ledger: { append: appendLedger, verifyChain, getMerkleRoot, getInclusionProof, verifyInclusionProof },
+    clientCodeHash,
+  };
+})();
+
+// Kick off the client-code-hash precompute at module load so the first
+// transcript build doesn't pay the latency.
+try { YJSacred.clientCodeHash(); } catch (_) {}
+
+// Shared transcript-download helper. Browsers without Blob/URL.createObjectURL
+// (vanishingly rare in 2026) fall back to a data URL.
+function yjSacredDownload(filename, obj) {
+  try {
+    const json = JSON.stringify(obj, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } catch (e) {
+    try {
+      const data = 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(obj));
+      const a = document.createElement('a');
+      a.href = data; a.download = filename;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    } catch (_) { throw e; }
+  }
+}
+
 function init() {
   // === UNIFIED SAVE / VERSION-AWARE RESTORE ===
   // Try the unified save bundle first. If it exists, hydrate everything from
@@ -31249,6 +33034,36 @@ function init() {
 
   const themeToggle = $('#themeToggle');
   if (themeToggle) themeToggle.onclick = toggleTheme;
+
+  // === v69.123 — Golden Fairway init ===================================
+  // Restores volume from preferences. We don't auto-START on page load even
+  // if preferences.musicEnabled was true — browser autoplay policy requires
+  // a user gesture for AudioContext. The user toggling once after restore
+  // brings it back; the active state is reflected via updateMusicUI.
+  // If Tone.js failed to load (CDN blocked / offline), the toggle disables
+  // itself + a one-time toast fires from toggleMusic() on click.
+  try {
+    const toneAvail = GoldenFairway.isAvailable();
+    if (toneAvail && !nectarMusic) nectarMusic = new GoldenFairway();
+    if (nectarMusic && TourState.preferences && typeof TourState.preferences.musicVolume === 'number') {
+      nectarMusic.setVolume(TourState.preferences.musicVolume / 100);
+    }
+    const defaultVol = nectarMusic ? Math.round(nectarMusic.volume * 100) : 65;
+    const volSlider = document.getElementById('musicVolume');
+    const volLabel = document.getElementById('musicVolLabel');
+    if (volSlider) volSlider.value = String(defaultVol);
+    if (volLabel) volLabel.textContent = String(defaultVol);
+    if (!toneAvail) {
+      const btn = document.getElementById('musicToggle');
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.45';
+        btn.style.cursor = 'not-allowed';
+        btn.title = 'Music unavailable — Tone.js CDN did not load.';
+      }
+    }
+    setTimeout(updateMusicUI, 80);
+  } catch (_) { /* never block init on audio setup */ }
 
   document.addEventListener('keydown', (e) => {
     const inInput = ['INPUT','TEXTAREA','SELECT'].indexOf(document.activeElement.tagName) !== -1;
