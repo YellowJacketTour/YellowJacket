@@ -385,16 +385,23 @@
        container's inline (horizontal) size, independent of viewport. */
     container-type: inline-size;
     container-name: felt-container;
-    /* v69.116 — bottom buffer so the hero seat plate (at y ≈ 90% of felt)
-       and the bottom rim's avatar overhang never collide with the action
-       panel below. Was zero pre-v69.116; the hero plate visibly overlapped
-       the bet slider / Raise-to-N button at the bottom of the felt. */
-    padding-bottom: 36px;
+    /* v69.119 — small bottom buffer; the v69.118 hero-strip and v69.119
+       top-arc seat distribution mean opponent plates no longer overhang
+       into the strip below, so the buffer only needs to absorb a few px
+       of the cream-rail border. */
+    padding-bottom: 8px;
   }
   .felt-table {
     position: relative;
-    aspect-ratio: 16/9;
+    /* v69.119 — locked size. Was `aspect-ratio: 16/9; width: 100%;` which
+       made the felt's height a function of its width (and the felt was
+       perceived as "jittering" as content below the card grew, because the
+       browser was re-laying out the column repeatedly during paint). Now:
+       fixed width 100% capped at 920px, fixed height 420px, no aspect-ratio.
+       Stable across hand state changes; opponents on the top arc; hero
+       strip below with deterministic flex layout. */
     width: 100%;
+    height: 420px;
     overflow: visible;
     isolation: isolate;
     background:
@@ -964,7 +971,11 @@
   }
   .yj-hero-cards {
     display: flex; gap: 12px; justify-content: center; align-items: center;
-    min-height: 120px;
+    /* v69.119 — fixed height (not min-height) so the strip stays exactly the
+       same vertical size whether there are cards, a "waiting" tag, or a
+       "folded" tag. Eliminates the layout shift between hands that the user
+       reported as "felt size continues changing as logs update". */
+    height: 130px;
   }
   .yj-hero-cards .pkr-card {
     width: 84px; height: 118px; font-size: 1.7em;
@@ -2772,7 +2783,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.13-v69.118-cash-hero-strip";
+const APP_VERSION = "2026.05.13-v69.119-cash-top-arc-locked-felt";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -15849,9 +15860,13 @@ function renderCashTableView(tableId) {
   // Aspect-ratio: 16/9 on .felt-table preserves the felt's shape at every
   // size. Container queries on .felt-wrap-container scale internal
   // elements (hero cards, pot font) up at larger felt sizes.
+  // v69.119 — felt-wrap max-width tightened from 1080px → 920px so the felt
+  // doesn't dominate the page at wide viewports. Hero strip below scales with
+  // the same parent width, so they line up. The felt's height is now an
+  // explicit 420px (locked, no aspect-ratio jitter) — see .felt-table CSS.
   const feltWrap = el('div', {
     class: 'felt-wrap-container',
-    style: 'width: 100%; max-width: clamp(600px, 95vw, 1080px); margin: 0 auto;',
+    style: 'width: 100%; max-width: clamp(600px, 90vw, 920px); margin: 0 auto;',
   });
   const fourColor = !!(TourState.preferences && TourState.preferences.fourColorDeck);
   const felt = el('div', { class: 'felt-table' + (fourColor ? ' fourcolor' : '') });
@@ -15922,36 +15937,46 @@ function renderCashTableView(tableId) {
   // Hero rotation: the hero's data-index is rotated to the bottom-center
   // display position so the hero ALWAYS appears at the bottom of the
   // visual table regardless of their actual seat number.
-  const SEAT_RADIUS_X = 54;
-  const SEAT_RADIUS_Y = 50;
-  // v69.116 — HERO_RADIUS_Y: the bottom-center hero seat got positioned at
-  // y=100% of the felt (sin(π/2)=1 ⇒ 50 + 50 = 100), so its plate's center
-  // sat on the felt's bottom edge and its body extended ~31px DOWN into the
-  // action panel beneath, colliding with the bet slider + Raise-to-N button.
-  // Other seats are fine (top-row at y=0, side-rows at y=25/75). Solution:
-  // pull the bottom-center seat IN with a smaller radius so its plate stays
-  // inside the felt's visible bounds. Felt-wrap also gets a small padding-
-  // bottom buffer (CSS) to absorb the remaining few px of overhang.
-  const HERO_RADIUS_Y = 40;
+  // v69.119 — opponents distributed on a TOP ARC, not a full ellipse.
+  //   - Pre-v69.118: hero at the bottom of the ellipse, opponents around the rim.
+  //   - v69.118: hero moved to the strip below, opponents still on full ellipse →
+  //     bottom-row opponent plates (at y=75%) overhung into the hero strip area.
+  //   - v69.119: opponents now distributed on the TOP ~70% of the circle only
+  //     (from -150° at left-bottom to -30° at right-bottom, skipping the
+  //     bottom-center 60° arc where the hero strip lives). No more rim/strip
+  //     overlap; the cleared bottom arc visually "belongs to" the hero strip,
+  //     reinforcing the spatial logic — this is exactly the PokerStars layout.
+  const SEAT_RADIUS_X = 48;
+  const SEAT_RADIUS_Y = 36;
   const POT_CENTER_X = 50;
-  const POT_CENTER_Y = 58;
-  const bottomDisplayIdx = Math.floor(t.maxSeats / 2);
-  const heroOffset = (youSeatIdx >= 0)
-    ? ((bottomDisplayIdx - youSeatIdx + t.maxSeats) % t.maxSeats)
-    : 0;
+  const POT_CENTER_Y = 50;
+  // Opponents (everyone except the hero) get distributed evenly over a top arc
+  // spanning from -150° (left-bottom) to -30° (right-bottom). The bottom 60°
+  // arc is reserved for the hero strip.
+  const opponentCount = t.maxSeats - 1;     // hero is rendered separately
+  const arcStart = Math.PI * (-150 / 180);   // -150° in radians
+  const arcEnd   = Math.PI * (-30 / 180);    //  -30° in radians
+  const arcSpan  = arcEnd - arcStart;
+  // Map seat index → opponent slot index (0..opponentCount-1), skipping hero
+  // and preserving the table's seating order. This keeps a player's relative
+  // position consistent when they sit at the same seat across hands.
+  const opponentSlot = new Array(t.maxSeats).fill(-1);
+  let slot = 0;
+  for (let off = 1; off <= t.maxSeats; off++) {
+    const seatIdx = (youSeatIdx + off) % t.maxSeats;
+    if (seatIdx === youSeatIdx) continue;
+    opponentSlot[seatIdx] = slot++;
+  }
   for (let i = 0; i < t.maxSeats; i++) {
-    // v69.118 — the hero is no longer rendered at the felt rim. It moved to a
-    // dedicated hero strip BELOW the felt (see renderHeroStrip below) where it
-    // has a proper avatar + name + stack + hole-cards layout that doesn't
-    // collide with the action panel. This is the layout pattern every real
-    // poker client uses (PokerStars, GG, ACR): hero outside the felt, opponents
-    // around the rim. Skip emitting the hero's rim seat entirely.
     if (i === youSeatIdx) continue;
-    const displayIdx = (i + heroOffset) % t.maxSeats;
-    const angle = (displayIdx / t.maxSeats) * Math.PI * 2 - Math.PI / 2;
-    const ry = SEAT_RADIUS_Y;
+    const slotIdx = opponentSlot[i];
+    // Evenly space opponents on the top arc. For N opponents we place them at
+    // arcStart + (slotIdx + 0.5) / N * arcSpan so the first and last sit AT
+    // the arc endpoints (clean symmetry).
+    const t01 = (opponentCount <= 1) ? 0.5 : (slotIdx / (opponentCount - 1));
+    const angle = arcStart + t01 * arcSpan;
     const x = 50 + Math.cos(angle) * SEAT_RADIUS_X;
-    const y = 50 + Math.sin(angle) * ry;
+    const y = 50 + Math.sin(angle) * SEAT_RADIUS_Y;
     const s = t.seats[i];
     const seatEl = el('div', {
       class: 'seat' + (s ? '' : ' empty-seat'),
