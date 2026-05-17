@@ -2957,7 +2957,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.17-v69.129-yjsacred-cash-tightened";
+const APP_VERSION = "2026.05.17-v69.130-stroke-aware-ai";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -4635,11 +4635,44 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     const fe = foldEqFor(newLevel);
     return fe * agreedTotal + (1 - fe) * showEV(adjVal, newLevel);
   }
+  // v69.130 — match-context primitives (hoisted; consumed by foldStrokeCost
+  // amplifier below + bluffPrior/slack/bluffFreq adjustments further down).
+  // strokeAware gates the entire v130 path so callers can opt OUT for clean
+  // A/B testing against the pre-130 elite tier.
+  const strokeAware = !(gameContext && gameContext.strokeAware === false);
+  const heroFoldRate = strokeAware ? (+(gameContext && gameContext.heroRecentFoldRate) || 0) : 0;
+  const oppAggRate   = strokeAware ? (+(gameContext && gameContext.oppRecentAggressionRate) || 0) : 0;
+  const holesRem     = +(gameContext && gameContext.holesRemaining) || 0;
+  const totalHolesCtx = Math.max(1, +(gameContext && gameContext.totalHoles) || 18);
+  const matchScale   = Math.max(0, Math.min(1, holesRem / totalHolesCtx));
+  // bullyScore ∈ [0,1]: 0 at baseline (oppAggr ≤ 0.30, heroFold ≤ 0.40), grows
+  // as opp gets more aggressive AND we've been over-folding. Capped at 1.0.
+  // v69.130 calibration #2 — lowered both thresholds (0.35→0.30 aggr, 0.50→0.40
+  // fold) and increased per-unit slopes (2.0→2.4, 1.5→2.0). Empirical 30-match
+  // sweep at 72-hole length showed initial setting recognized bullying but
+  // didn't intervene aggressively enough — closed 44% of the gap when the
+  // gate is ≥80%. Faster activation + stronger response.
+  const bullyScore = strokeAware
+    ? Math.max(0, Math.min(1.0, (oppAggRate - 0.30) * 2.4 + Math.max(0, heroFoldRate - 0.40) * 2.0))
+    : 0;
   // v46: flat +1 fold cost (escalation removed). Empirical telemetry showed
   // the v43 escalation rarely fired (91% of folds at +1) so the formula was
   // decorative complexity. Pot-committed dynamics now come from pot odds
   // (which scale with agreedTotal naturally) rather than fold-cost.
-  const foldStrokeCost = 1;
+  //
+  // v69.130 — MATCH-SCALE FOLD-COST AMPLIFIER. In a long match where the bot
+  // has been folding repeatedly, each additional fold is worth MORE than +1
+  // bogey because the dynamic compounds: opponent reads us as folder → c-bets
+  // more freely → we lose more pots without showdown. The base +1 cost
+  // captures only the in-hand penalty; this term adds the cross-hand
+  // accumulation cost the pre-130 engine couldn't see. Capped at +0.75 so
+  // the bot doesn't go on tilt-call mode against a legitimate value-heavy
+  // opponent. Scales by both how many holes remain (more compound chances)
+  // and how fold-heavy the recent window has been (worse dynamic).
+  // calibration #2 — cap 0.75 → 2.0, slope 1.5 → 2.5. Folding under severe
+  // bullying now costs up to 3× the base bogey in EV terms, forcing the
+  // calc to pick "call and see a showdown" over "give up another stroke."
+  const foldStrokeCost = 1 + (strokeAware ? Math.min(2.0, matchScale * heroFoldRate * 2.5 + bullyScore * 1.0) : 0);
   const evFoldAbs = -foldStrokeCost * divisor - agreedTotal;
 
   // Build candidate set with adjTrue (oracle) for the metric.
@@ -4772,6 +4805,22 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   if (street === 'preflop') bluffPrior -= 0.02;
   bluffPrior = Math.max(0, Math.min(0.55, bluffPrior));
 
+  // v69.130 — STROKE-AWARE ANTI-BULLY DETECTION (the Tier-1 fix from
+  // YJ_AI_ENGINE_ROADMAP.md). The pre-130 engine made decisions purely from
+  // per-hole EV with no awareness that a 72-hole match is a structural
+  // setting where consistent moderate pressure compounds into a stroke
+  // catastrophe. Match #a659d6cf transcript: opponent c-bet 64/72 flops, bot
+  // folded ~88% of contested pots, net -57 strokes. _yjMatchContext supplies
+  // heroRecentFoldRate / oppRecentAggressionRate / holesRemaining; strokeAware
+  // + bullyScore are hoisted above (where foldStrokeCost reads them). Here we
+  // apply the bluffPrior boost; slack widener and counter-bluff bump live in
+  // the fold-decision and bluff branches below. All gated by strokeAware so
+  // the pre-130 legacy-elite tier can be selected for A/B comparison.
+  if (strokeAware && bullyScore > 0) {
+    // calibration #2 — cap raised 0.70 → 0.80, slope 0.25 → 0.45.
+    bluffPrior = Math.max(0, Math.min(0.80, bluffPrior + bullyScore * 0.45));
+  }
+
   // BLEND: high readingDepth nullifies the naive discount when bluff prior is
   // high. Low readingDepth applies the naive discount fully (current-v49-like).
   //   adjustedDiscount = naiveDiscount × (1 − bluffPrior)   [perfect reader]
@@ -4820,8 +4869,16 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     // at fold equity. Only fires when adj is low enough that the value-bet
     // path declined (avoid double-betting strong hands), and only if the
     // street allows room. Bluff size is small (33% of room) to limit downside.
-    if (profile.bluffFreq > 0 && adj < 0.40 && remaining > 0
-        && Math.random() < profile.bluffFreq) {
+    // v69.130 — bullying-aware bluff frequency boost. Under high bullyScore,
+    // the bot increases its own bluff rate to apply counter-pressure: if
+    // opp is c-betting every flop and getting auto-folds, never bluffing
+    // back means opp's value range is uncapped. Boost is multiplicative on
+    // the profile's natural bluffFreq so a tight-passive profile still
+    // doesn't go spew-mode — it just stops being a pure pressure-target.
+    // calibration #2 — counter-bluff boost 0.12 → 0.25.
+    const effectiveBluffFreq = profile.bluffFreq + (strokeAware ? bullyScore * 0.25 : 0);
+    if (effectiveBluffFreq > 0 && adj < 0.40 && remaining > 0
+        && Math.random() < effectiveBluffFreq) {
       const room = Math.max(0, streetCap - agreedTotal);
       const newLevel = Math.min(streetCap, agreedTotal + Math.max(1, Math.round(room * 0.33)));
       if (newLevel > agreedTotal) {
@@ -4880,8 +4937,16 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   // HU (N=2):    slack unchanged at 0.20, floor 0.05 (no behavioral change)
   const N_table = +(gameContext && gameContext.tableSize) || 2;
   const tableScale = Math.max(0, N_table - 2);
-  const slack = slackBase - 0.025 * tableScale;
-  const HARD_FOLD_FLOOR = 0.05 + 0.025 * tableScale;
+  // v69.130 — bullying-aware slack. The pre-130 slack was purely a function of
+  // profile + table size. Under the new stroke-aware engine, slack also
+  // widens when bullyScore is high: a bot that recognizes it's being pressure-
+  // exploited calls wider with marginal equity, refusing to keep paying the
+  // +1 / hole tax. Cap the widening at +0.10 so the bot doesn't become a
+  // calling station; it only loosens enough to defend the bullying gap.
+  // calibration #2 — slack boost 0.10 → 0.22 under bullying; HARD_FOLD_FLOOR
+  // floor 0.02 → 0.01 (effectively never auto-fold while bullied).
+  const slack = (slackBase - 0.025 * tableScale) + (strokeAware ? bullyScore * 0.22 : 0);
+  const HARD_FOLD_FLOOR = Math.max(0.01, 0.05 + 0.025 * tableScale - (strokeAware ? bullyScore * 0.045 : 0));
   if (callAmount > 0 && adjRead < HARD_FOLD_FLOOR) {
     return wrap({ action: 'fold' });
   }
@@ -10556,11 +10621,123 @@ function startSolo(playerName, skill, tier, holes, capSpec) {
 // In solo mode, after every state change check whether it's the AI's turn and,
 // if so, queue their decision asynchronously. The brief delay (350ms) gives the
 // human time to read the action that just happened — the AI doesn't feel robotic.
+// v69.130 — match-level context builder for the stroke-aware decision engine.
+// The pre-130 AI made decisions in a vacuum (per-hole EV only). Per the v69.129
+// bullying transcript (Grok 2026-05-17 audit + match #a659d6cf), this produces
+// a structural exploit: a human who consistently c-bets every flop folds the
+// bot off ~88% of pots, accumulating ~1 stroke/hole over a 72-hole match
+// before the bot's per-hand EV math sees the dynamic.
+//
+// _yjMatchContext scans g.scores (the resolved-holes log) and the in-progress
+// hole to surface: hero/opp running totals, recent fold-rate by side, opp's
+// recent postflop aggression rate, and holes_remaining. decideFor uses these
+// for an anti-bully defense widener + a match-scale fold-cost amplifier.
+//
+// Determinism: this is a pure function of g.scores. Replay verifier safe.
+function _yjMatchContext(g, heroSide) {
+  const opp = heroSide === 'p1' ? 'p2' : 'p1';
+  const scores = (g && g.scores) || [];
+  const totalHoles = (g && g.totalHoles) || 18;
+  const holesPlayed = scores.length;
+  const holesRemaining = Math.max(0, totalHoles - holesPlayed);
+  // Sliding window: last min(12, holesPlayed) holes. Small enough to be
+  // sensitive to a developing dynamic, large enough not to thrash on a single
+  // hole. 12/72 ≈ 17% — about the right horizon for "current vibe."
+  const W = Math.min(12, holesPlayed);
+  const windowScores = scores.slice(scores.length - W);
+  let heroFolds = 0, oppFolds = 0;
+  let heroDecisionsContested = 0, oppDecisionsContested = 0;
+  let oppPostflopAggressions = 0, oppPostflopActions = 0;
+  for (const s of windowScores) {
+    // Was the hole contested (had at least one bet/raise)?
+    let contested = false;
+    if (Array.isArray(s.actions)) {
+      for (const a of s.actions) { if (a.kind === 'bet' || a.kind === 'raise') { contested = true; break; } }
+    }
+    if (contested) {
+      if (s.winner === opp) heroDecisionsContested++;   // hero faced pressure
+      else                  oppDecisionsContested++;    // opp faced pressure
+    }
+    if (s.outcome === 'fold') {
+      // s.winner is the player who DIDN'T fold; the folder is the other side.
+      if (s.winner === opp) heroFolds++;
+      else                  oppFolds++;
+    }
+    if (Array.isArray(s.actions)) {
+      for (const a of s.actions) {
+        if (a.actor !== opp) continue;
+        if (a.street && a.street !== 'preflop') {
+          oppPostflopActions++;
+          if (a.kind === 'bet' || a.kind === 'raise') oppPostflopAggressions++;
+        }
+      }
+    }
+  }
+  const heroRecentFoldRate = heroDecisionsContested > 0 ? heroFolds / heroDecisionsContested : 0;
+  const oppRecentFoldRate  = oppDecisionsContested  > 0 ? oppFolds  / oppDecisionsContested  : 0;
+  const oppRecentAggressionRate = oppPostflopActions > 0 ? oppPostflopAggressions / oppPostflopActions : 0;
+  const gp = (g && g[heroSide]) || {};
+  const go = (g && g[opp]) || {};
+  return {
+    mode: g && g.mode,
+    heroSide,
+    gameVariant: (g && g.loserBogey === false) ? 'bumblebee' : 'yellowjacket',
+    holeNumber: g && g.holeNum,
+    totalHoles, holesPlayed, holesRemaining,
+    heroGolfTotal: +gp.golfTotal || 0,
+    heroHoneyTotal: +gp.honeyTotal || 0,
+    oppGolfTotal: +go.golfTotal || 0,
+    oppHoneyTotal: +go.honeyTotal || 0,
+    heroRecentFoldRate, oppRecentFoldRate, oppRecentAggressionRate,
+    windowSize: W,
+  };
+}
+
+// v69.130 — scripted-bully test oracle. Always c-bets flop, always min-raises
+// preflop openings, always barrels turn when called on flop. Deterministic,
+// no RNG, no equity reasoning — purely a pressure-pattern generator. Used as
+// the gate test for the new stroke-aware decideFor (the v69.129 elite tier
+// loses ~57 strokes net to this pattern; the v69.130 sentinel tier MUST not).
+function _scriptedBullyDecide(g) {
+  const c = g.current;
+  const street = c.street;
+  const isPending = c.currentProposal != null;
+  const pot = Math.max(2, c.agreedTotal || 2);
+  const cap = mpStreetCap(g, street);
+  function clampedRaise(targetTotal) {
+    const floor = isPending ? c.currentProposal : c.agreedTotal;
+    const t = Math.max(floor + 1, Math.min(cap, Math.round(targetTotal)));
+    return t > floor ? t : null;
+  }
+  if (!isPending) {
+    // No live proposal. On preflop, open for 2× the agreed total (small probe).
+    // On flop+, fire a c-bet (1× pot).
+    if (street === 'preflop') {
+      const t = clampedRaise(c.agreedTotal * 2);
+      return t != null ? { action: 'bet', amount: t } : { action: 'check' };
+    }
+    // Postflop barrel — full pot.
+    const t = clampedRaise(c.agreedTotal + pot);
+    return t != null ? { action: 'bet', amount: t } : { action: 'check' };
+  }
+  // Facing a proposal. Min-raise preflop opens (≤ 2× agreed). Call everything else.
+  if (street === 'preflop' && c.currentProposal <= c.agreedTotal * 3) {
+    const t = clampedRaise(Math.round(c.currentProposal * 1.5));
+    if (t != null) return { action: 'raise', amount: t };
+  }
+  return { action: 'call' };
+}
+
 function scheduleAITurnIfNeeded(g) {
   if (!g || g.mode !== 'solo' || g.ended) return;
   const c = g.current;
   if (!c || c.result || c.toAct == null) return;
   if (c.toAct !== 'p2') return; // p2 is always the AI in solo mode
+  // v69.130 — smoke-harness fast path. When running automated tier-vs-tier
+  // sims via YJ_AI_SMOKE, we don't want a 350ms UI animation delay between
+  // every action — that would turn a 1000-match sweep into a 4-hour wait.
+  // The harness sets g._aiNoDelay=true to short-circuit.
+  if (g._aiNoDelay) { aiTakeTurn(g); return; }
   setTimeout(() => aiTakeTurn(g), 350);
 }
 
@@ -10581,6 +10758,27 @@ function aiTakeTurn(g) {
   if (Number.isFinite(g.highCardShowdownLoss)) setHighCardShowdownLoss(g.highCardShowdownLoss);
   if (g.brickPenaltyMode) setBrickPenaltyMode(g.brickPenaltyMode);
   if (Number.isFinite(g.brickLossCap)) setBrickLossCap(g.brickLossCap);
+  // v69.130 — scripted-bully tier short-circuits decideFor entirely. Used by
+  // the YJ_AI_SMOKE harness as the gate test for the stroke-aware engine.
+  if (g.aiTier === 'scripted-bully') {
+    const decision = _scriptedBullyDecide(g);
+    switch (decision.action) {
+      case 'fold':  mpAct(g, 'fold'); return;
+      case 'check': mpAct(g, 'check'); return;
+      case 'call':  mpAct(g, 'call'); return;
+      case 'bet':
+      case 'raise': {
+        const cap = mpStreetCap(g, c.street);
+        const isP = c.currentProposal != null;
+        const floor = isP ? c.currentProposal : c.agreedTotal;
+        const t = Math.max(floor + 1, Math.min(cap, decision.amount | 0));
+        if (t > floor && t <= cap) mpAct(g, isP ? 'raise' : 'bet', t);
+        else if (isP)              mpAct(g, 'call');
+        else                        mpAct(g, 'check');
+        return;
+      }
+    }
+  }
   const profile = g.aiProfile || makeProfileForSkill(0.40);
   // v23 decideFor signature:
   //   (cards, community, currentProposal, agreedTotal, isPending,
@@ -10590,7 +10788,19 @@ function aiTakeTurn(g) {
   //   isPending=true  → { fold | call | raise }   (raise.amount = NEW agreed total)
   const isPending = c.currentProposal != null;
   const currentProposal = isPending ? c.currentProposal : c.agreedTotal;
-  const gameContext = { mode: 'solo', holeNumber: g.holeNum, totalHoles: g.totalHoles };
+  // v69.130 — match-level context. Stroke-aware decideFor reads heroFoldRate /
+  // oppAggressionRate / holesRemaining to detect bullying patterns and amplify
+  // the fold cost when in a long-horizon match the bot has been over-folding.
+  // Pre-130 tiers (legacy 'elite' etc) ignored this; v130 'sentinel' tier
+  // (and any tier !== 'legacy-elite') reads it.
+  const gameContext = Object.assign(
+    _yjMatchContext(g, 'p2'),
+    {
+      // Hint: pre-130 elite players should opt OUT of the stroke-aware path
+      // for clean A/B testing. Anything else gets the new economics.
+      strokeAware: g.aiTier !== 'legacy-elite',
+    }
+  );
   const decision = decideFor(
     c.p2Cards,        // AI hole cards
     c.community,      // visible community
@@ -31962,6 +32172,333 @@ function updateMusicUI() {
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
   else wire();
+})();
+
+/* ========================================================================
+   YJ_AI_SMOKE v69.130 — Headless tier-vs-tier match harness.
+   ========================================================================
+   Runs N solo-mode matches between two AI tiers and aggregates per-side
+   golf/honey totals + fold rates + score-trajectory stats. Lives in the
+   browser so anyone can validate the stroke-aware engine against the
+   scripted-bully oracle (or any other tier) without leaving the app.
+
+   Determinism: each match seeds Math.random via a deterministic LCG keyed
+   on (baseSeed, matchIdx). Replay-verifier safe — does NOT touch
+   TourState.sacredLedger or the live UI.
+
+   Usage from devtools:
+     YJ_AI_SMOKE.runMatches({
+       n: 200, totalHoles: 72,
+       p1Tier: 'scripted-bully',
+       p2Tier: 'sentinel-v130',    // or 'legacy-elite' for A/B
+       p2Skill: 0.85,
+       baseSeed: 'sentinel-bully-2026',
+     });
+   Returns { mean, median, sd, foldRates, p1Wins, p2Wins, ties, perMatch }.
+   ======================================================================== */
+const YJ_AI_SMOKE = (() => {
+  function lcgSeed(seedStr) {
+    // Same LCG seeding pattern the season engine uses (FNV-1a → 32-bit state).
+    let h = 2166136261;
+    for (let i = 0; i < seedStr.length; i++) {
+      h ^= seedStr.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+  function lcgNext(s) { return (Math.imul(s, 1664525) + 1013904223) >>> 0; }
+  function withSeededRng(seedStr, fn) {
+    const saved = Math.random;
+    let st = lcgSeed(seedStr) || 1;
+    Math.random = () => { st = lcgNext(st); return st / 4294967296; };
+    try { return fn(); } finally { Math.random = saved; }
+  }
+  function profileForTier(tier, skill) {
+    if (tier === 'scripted-bully') return null;            // bypasses decideFor
+    return makeProfileForSkill(typeof skill === 'number' ? skill : 0.85);
+  }
+  // Two-sided decision dispatcher. aiTakeTurn hard-codes c.toAct === 'p2', so
+  // the harness can't reuse it for p1. _takeTurn explicitly takes the actor
+  // side, looks up the right tier/profile/cards, and dispatches to either the
+  // scripted-bully oracle or decideFor.
+  function _takeTurn(g, side) {
+    const c = g.current;
+    if (!c || c.result || c.toAct !== side) return;
+    const tier   = side === 'p1' ? (g._p1Tier   || 'sentinel-v130') : (g.aiTier   || 'sentinel-v130');
+    const profile = side === 'p1' ? (g._p1Profile || g.aiProfile) : (g.aiProfile || g._p1Profile);
+    const cards  = side === 'p1' ? c.p1Cards : c.p2Cards;
+    const isP    = c.currentProposal != null;
+    if (tier === 'scripted-bully') {
+      const dec = _scriptedBullyDecide(g);
+      switch (dec.action) {
+        case 'fold':  mpAct(g, 'fold');  return;
+        case 'check': mpAct(g, 'check'); return;
+        case 'call':  mpAct(g, 'call');  return;
+        case 'bet': case 'raise': {
+          const cap = mpStreetCap(g, c.street);
+          const floor = isP ? c.currentProposal : c.agreedTotal;
+          const t = Math.max(floor + 1, Math.min(cap, dec.amount | 0));
+          if (t > floor && t <= cap) mpAct(g, isP ? 'raise' : 'bet', t);
+          else if (isP)               mpAct(g, 'call');
+          else                         mpAct(g, 'check');
+          return;
+        }
+      }
+      return;
+    }
+    const ctx = Object.assign(
+      _yjMatchContext(g, side),
+      { strokeAware: tier !== 'legacy-elite' }
+    );
+    const dec = decideFor(
+      cards, c.community,
+      isP ? c.currentProposal : c.agreedTotal,
+      c.agreedTotal, isP, profile, undefined, undefined, ctx
+    );
+    switch (dec.action) {
+      case 'fold':  mpAct(g, 'fold');  return;
+      case 'check': mpAct(g, 'check'); return;
+      case 'call':  mpAct(g, 'call');  return;
+      case 'bet': case 'raise': {
+        const cap = mpStreetCap(g, c.street);
+        const floor = isP ? c.currentProposal : c.agreedTotal;
+        const t = Math.max(floor + 1, Math.min(cap, dec.amount | 0));
+        if (t > floor && t <= cap) mpAct(g, isP ? 'raise' : 'bet', t);
+        else if (isP)               mpAct(g, 'call');
+        else                         mpAct(g, 'check');
+        return;
+      }
+      default: mpAct(g, isP ? 'call' : 'check'); return;
+    }
+  }
+  function runOneMatch(opts, matchIdx) {
+    const totalHoles = opts.totalHoles || 72;
+    const baseSeed = opts.baseSeed || 'yj-ai-smoke';
+    const seed = baseSeed + '|m' + matchIdx;
+    return withSeededRng(seed, () => {
+      const g = {
+        mode: 'solo', ended: false,
+        p1: { name: 'P1', golfTotal: 0, honeyTotal: 0, total: 0 },
+        p2: { name: 'P2', golfTotal: 0, honeyTotal: 0, total: 0 },
+        holeNum: 1, totalHoles, scores: [],
+        current: newHoleState('p1', 0, 1),
+        turnFor: 'p1', carryPot: 0, started: Date.now(),
+        strokeCap: CurrentStrokeCap, loserBogey: true,
+        decisionDivisor: CurrentDecisionDivisor,
+        honeyMagnitude: CurrentHoneyMagnitude,
+        potElasticK: CurrentPotElasticK,
+        highCardShowdownLoss: 1, brickPenaltyMode: 'pot-gated', brickLossCap: 2,
+        aiTier: opts.p2Tier || 'sentinel-v130',
+        aiSkill: typeof opts.p2Skill === 'number' ? opts.p2Skill : 0.85,
+        aiProfile: profileForTier(opts.p2Tier || 'sentinel-v130', opts.p2Skill),
+        _aiNoDelay: true,
+        _p1Tier: opts.p1Tier || 'scripted-bully',
+        _p1Skill: typeof opts.p1Skill === 'number' ? opts.p1Skill : 0.85,
+        _p1Profile: profileForTier(opts.p1Tier || 'scripted-bully', opts.p1Skill),
+      };
+      // Pump the engine: at each c.toAct switch, dispatch a decision via
+      // _takeTurn (two-sided, side-aware). The engine settles each hole via
+      // resolveMPHole → mpNextHole when ready.
+      const MAX_ACTIONS = 50 * totalHoles;
+      let n = 0;
+      while (!g.ended && n++ < MAX_ACTIONS) {
+        const c = g.current;
+        if (!c || c.result) { mpNextHole(g); continue; }
+        if (c.toAct == null) break;
+        _takeTurn(g, c.toAct);
+      }
+      // Compute fold rates per side.
+      let p1Folds = 0, p2Folds = 0, p1Contested = 0, p2Contested = 0;
+      for (const s of g.scores) {
+        let contested = false;
+        for (const a of (s.actions || [])) if (a.kind === 'bet' || a.kind === 'raise') { contested = true; break; }
+        if (contested) { if (s.winner === 'p1') p2Contested++; else if (s.winner === 'p2') p1Contested++; }
+        if (s.outcome === 'fold') { if (s.winner === 'p1') p2Folds++; else if (s.winner === 'p2') p1Folds++; }
+      }
+      const div = honeyDivisorFor(totalHoles);
+      const p1Total = g.p1.golfTotal - g.p1.honeyTotal / div;
+      const p2Total = g.p2.golfTotal - g.p2.honeyTotal / div;
+      return {
+        idx: matchIdx, holes: g.scores.length,
+        p1Golf: g.p1.golfTotal, p2Golf: g.p2.golfTotal,
+        p1Honey: g.p1.honeyTotal, p2Honey: g.p2.honeyTotal,
+        p1Total, p2Total,
+        p1FoldRate: p1Contested > 0 ? p1Folds / p1Contested : 0,
+        p2FoldRate: p2Contested > 0 ? p2Folds / p2Contested : 0,
+        winner: p1Total < p2Total ? 'p1' : p2Total < p1Total ? 'p2' : 'tie',
+      };
+    });
+  }
+  function runMatches(opts) {
+    const n = Math.max(1, +opts.n || 100);
+    const per = new Array(n);
+    for (let i = 0; i < n; i++) per[i] = runOneMatch(opts, i);
+    const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const sd = (arr) => { const m = mean(arr); return Math.sqrt(mean(arr.map(x => (x - m) * (x - m)))); };
+    const median = (arr) => { const s = arr.slice().sort((a, b) => a - b); return s.length % 2 ? s[(s.length - 1) >> 1] : 0.5 * (s[s.length / 2 - 1] + s[s.length / 2]); };
+    const p1Totals = per.map(r => r.p1Total), p2Totals = per.map(r => r.p2Total);
+    const netP2vsP1 = per.map(r => r.p1Total - r.p2Total);
+    return {
+      opts: { n, totalHoles: opts.totalHoles || 72, p1Tier: opts.p1Tier, p2Tier: opts.p2Tier, p2Skill: opts.p2Skill, baseSeed: opts.baseSeed },
+      mean: { p1Total: mean(p1Totals), p2Total: mean(p2Totals), netP2overP1: mean(netP2vsP1) },
+      median: { p1Total: median(p1Totals), p2Total: median(p2Totals), netP2overP1: median(netP2vsP1) },
+      sd: { p1Total: sd(p1Totals), p2Total: sd(p2Totals) },
+      foldRates: { p1: mean(per.map(r => r.p1FoldRate)), p2: mean(per.map(r => r.p2FoldRate)) },
+      wins: { p1: per.filter(r => r.winner === 'p1').length, p2: per.filter(r => r.winner === 'p2').length, ties: per.filter(r => r.winner === 'tie').length },
+      perMatch: per,
+    };
+  }
+  return { runMatches, runOneMatch };
+})();
+
+/* ========================================================================
+   YJ_CONFORMANCE v69.130 — JS-engine trace dumper for the future Python port.
+   ========================================================================
+   Generates deterministic random YJ holes (deal + AI-vs-AI action sequence)
+   and emits a JSONL stream of (deal, actions, p1Golf, p2Golf, p1Honey,
+   p2Honey, pot, outcome, winner, winCat, loseCat, brickMode, loserBogey,
+   honeyCapMode, brickLossCap, highCardShowdownLoss) tuples. This is the
+   gold standard the OpenSpiel YJ port (Tier 2 of the AI roadmap) must
+   reproduce bit-for-bit; any divergence kills the trained policy's
+   transfer to the live browser engine.
+
+   Usage from devtools:
+     const traces = YJ_CONFORMANCE.run({ n: 10000, baseSeed: 'yj-conf-v1' });
+     YJ_CONFORMANCE.download(traces, 'yj-conformance-v130.jsonl');
+
+   Each line is one self-contained hole. The Python port loads, runs each
+   action sequence on the same deal, and asserts identical p1Golf/p2Golf/
+   p1Honey/p2Honey/winner/winCat/loseCat. Floats compared with epsilon 1e-9.
+   ======================================================================== */
+const YJ_CONFORMANCE = (() => {
+  function lcgSeed(seedStr) {
+    let h = 2166136261;
+    for (let i = 0; i < seedStr.length; i++) { h ^= seedStr.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function lcgNext(s) { return (Math.imul(s, 1664525) + 1013904223) >>> 0; }
+  function withSeededRng(seedStr, fn) {
+    const saved = Math.random;
+    let st = lcgSeed(seedStr) || 1;
+    Math.random = () => { st = lcgNext(st); return st / 4294967296; };
+    try { return fn(); } finally { Math.random = saved; }
+  }
+  function dumpOneHole(opts, holeIdx) {
+    const baseSeed = opts.baseSeed || 'yj-conf-v1';
+    const seed = baseSeed + '|h' + holeIdx;
+    return withSeededRng(seed, () => {
+      const totalHoles = opts.totalHoles || 18;
+      const g = {
+        mode: 'solo', ended: false,
+        p1: { name: 'A', golfTotal: 0, honeyTotal: 0, total: 0 },
+        p2: { name: 'B', golfTotal: 0, honeyTotal: 0, total: 0 },
+        holeNum: 1, totalHoles, scores: [],
+        current: newHoleState(holeIdx % 2 === 0 ? 'p1' : 'p2', 0, 1),
+        turnFor: 'p1', carryPot: 0, started: Date.now(),
+        strokeCap: CurrentStrokeCap, loserBogey: !!CurrentLoserBogey,
+        decisionDivisor: CurrentDecisionDivisor,
+        honeyMagnitude: CurrentHoneyMagnitude,
+        potElasticK: CurrentPotElasticK,
+        highCardShowdownLoss: CurrentHighCardShowdownLoss,
+        brickPenaltyMode: CurrentBrickPenaltyMode,
+        brickLossCap: CurrentBrickLossCap,
+        aiTier: 'conformance', aiSkill: 0.6,
+        aiProfile: makeProfileForSkill(0.6),
+        _aiNoDelay: true,
+      };
+      // Drive both seats with deterministic decideFor calls (skill 0.6 mid-
+      // tier; the conformance suite is about CORRECTNESS of scoring/honey,
+      // not strength of play, so any deterministic policy is fine).
+      const profA = makeProfileForSkill(0.6);
+      const profB = makeProfileForSkill(0.6);
+      const MAX_ACTIONS = 100;
+      let n = 0;
+      while (!g.current.result && n++ < MAX_ACTIONS) {
+        const c = g.current;
+        if (c.toAct == null) break;
+        const isP = c.currentProposal != null;
+        const prof = c.toAct === 'p1' ? profA : profB;
+        const cards = c.toAct === 'p1' ? c.p1Cards : c.p2Cards;
+        const dec = decideFor(
+          cards, c.community,
+          isP ? c.currentProposal : c.agreedTotal,
+          c.agreedTotal, isP, prof, undefined, undefined,
+          { mode: 'solo', holeNumber: g.holeNum, totalHoles, strokeAware: false }
+        );
+        switch (dec.action) {
+          case 'fold':  mpAct(g, 'fold');  break;
+          case 'check': mpAct(g, 'check'); break;
+          case 'call':  mpAct(g, 'call');  break;
+          case 'bet': case 'raise': {
+            const cap = mpStreetCap(g, c.street);
+            const floor = isP ? c.currentProposal : c.agreedTotal;
+            const t = Math.max(floor + 1, Math.min(cap, dec.amount | 0));
+            if (t > floor && t <= cap) mpAct(g, isP ? 'raise' : 'bet', t);
+            else if (isP)              mpAct(g, 'call');
+            else                        mpAct(g, 'check');
+            break;
+          }
+          default: mpAct(g, isP ? 'call' : 'check'); break;
+        }
+      }
+      const s = g.scores[0];
+      if (!s) return null;
+      return {
+        holeIdx,
+        env: {
+          loserBogey: !!CurrentLoserBogey,
+          decisionDivisor: CurrentDecisionDivisor,
+          honeyMagnitude: CurrentHoneyMagnitude,
+          potElasticK: CurrentPotElasticK,
+          highCardShowdownLoss: CurrentHighCardShowdownLoss,
+          brickPenaltyMode: CurrentBrickPenaltyMode,
+          brickLossCap: CurrentBrickLossCap,
+          honeyCapMode: CurrentHoneyCapMode,
+          strokeCap: CurrentStrokeCap,
+        },
+        deal: {
+          p1Cards: (s.deal.p1Cards || []).map(card => ({ r: card.r, s: card.s })),
+          p2Cards: (s.deal.p2Cards || []).map(card => ({ r: card.r, s: card.s })),
+          community: (s.deal.community || []).map(card => ({ r: card.r, s: card.s })),
+        },
+        actions: (s.actions || []).map(a => ({
+          actor: a.actor, kind: a.kind, amount: a.amount,
+          street: a.street, agreedTotalBefore: a.agreedTotalBefore,
+          agreedTotalAfter: a.agreedTotalAfter,
+        })),
+        result: {
+          p1Golf: s.p1Golf, p2Golf: s.p2Golf,
+          p1Honey: s.p1Honey, p2Honey: s.p2Honey,
+          pot: s.pot, outcome: s.outcome, winner: s.winner,
+          winCat: s.winCat, loseCat: s.loseCat,
+        },
+      };
+    });
+  }
+  function run(opts) {
+    opts = opts || {};
+    const n = Math.max(1, +opts.n || 1000);
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const t = dumpOneHole(opts, i);
+      if (t) out.push(t);
+    }
+    return out;
+  }
+  function download(traces, filename) {
+    const jsonl = traces.map(t => JSON.stringify(t)).join('\n');
+    try {
+      const blob = new Blob([jsonl], { type: 'application/jsonl' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename || ('yj-conformance-' + Date.now() + '.jsonl');
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch (_) {
+      console.log('[YJ_CONFORMANCE] download failed; raw JSONL:\n', jsonl);
+    }
+  }
+  return { run, dumpOneHole, download };
 })();
 
 /* ========================================================================
