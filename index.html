@@ -2957,7 +2957,7 @@
 // a mismatch fires the smart-refresh banner so users with an older cached copy
 // of the page see a clear "new version available" prompt and can update without
 // losing progress (saves are version-independent and restore cleanly).
-const APP_VERSION = "2026.05.17-v69.130-stroke-aware-ai";
+const APP_VERSION = "2026.05.19-v69.135-sim-honey-conservation";
 const UNIFIED_SAVE_KEY = "yellowJacketSave";
 
 // LARGE SIM MODE (state-of-the-art persistence)
@@ -3517,6 +3517,188 @@ let CurrentBackNineMultiplier = 2;
 function setBackNineMultiplier(n) {
   const v = +n;
   CurrentBackNineMultiplier = (Number.isFinite(v) && v > 0) ? v : 2;
+}
+// v69.133 — HONEY CONSERVATION FLAG. Controls whether honey at hole resolution
+// is conserved between players or one-way to the winner.
+//   'one-way'    (default): winner gains the full pot in honey; loser gains 0.
+//                Loser pays only the golf-side stroke penalty. This is the
+//                original YJ rule — positive-sum on honey, "table prints"
+//                interpretation. Career ρ_active stays high (≈ 0.94, per
+//                Phase 2). Slight max-bet attractor at single events.
+//   'tug-of-war': winner gains pot/2 net; loser loses pot/2 net. Matches
+//                classical poker chip-flow (both players contributed half
+//                the pot; winner takes opponent's half). Zero-sum on honey,
+//                eliminates the max-bet positive-EV attractor at any pot
+//                size. Phase 3 of the honey-flow experiment uses this mode
+//                A/B against the default to measure skill expression delta.
+let CurrentHoneyConservation = 'one-way';
+function setHoneyConservation(m) {
+  CurrentHoneyConservation = (m === 'tug-of-war') ? 'tug-of-war' : 'one-way';
+}
+
+// =====================================================================
+// v69.134 — RULE-SET BUNDLES + AI CALIBRATION PROFILES
+// =====================================================================
+//
+// The single-global-flag pattern (set CurrentBrickPenaltyMode, set
+// CurrentHoneyConservation, etc.) was producing mismatched-flag
+// confounds in the Phase 3 honey-flow experiment: tug-of-war rules were
+// running against an AI calibrated for one-way rules, so the data
+// measured AI-mis-calibration, not the actual rule property.
+//
+// v134 introduces TWO REGISTRIES that bundle related parameters:
+//
+//   RULE_SETS          — engine-side rules (honey conservation, brick
+//                        mode, decision divisor, etc.). Each rule set
+//                        also names which AI calibration it expects.
+//   AI_CALIBRATIONS    — AI-side tunable parameters (bullyScore slopes,
+//                        fold-cost amplifiers, slack widening, etc.).
+//                        Decoupled from rule sets so experiments can
+//                        cross-pollinate.
+//
+// PRODUCTION SAFETY:
+//   • `prod-v133` is the only rule set production code ever uses.
+//   • `prod-v133.aiCalibration = 'sentinel-v130'`.
+//   • The `sentinel-v130` profile contains the EXACT constants that
+//     were hardcoded in decideFor through v133. Behavior is bit-
+//     identical when production paths don't pass an aiCalibration.
+//   • decideFor reads its calibration from gameContext.aiCalibration
+//     (a string key) with a fallback to 'sentinel-v130'. If a caller
+//     omits the field, current behavior is preserved exactly.
+//
+// EXPERIMENTAL PATHS:
+//   • Lab/harness code can pass gameContext.aiCalibration = 'sentinel-
+//     tow-v0' to drive decideFor with the experimental calibration.
+//   • applyRuleSet(g, ruleSetName) populates g with the rule-set's
+//     engine flags, used by experimental game-creation paths only.
+//   • Default game creation (createLocalGame and friends) is NOT
+//     refactored in v134 to use this — those continue to set fields
+//     directly. Migration of those paths to applyRuleSet is a future
+//     v135 step if and only if the experimental work justifies it.
+//
+const AI_CALIBRATIONS = {
+  // The production calibration as of v133. Constants here MUST equal
+  // the previously-hardcoded values in decideFor or production
+  // behavior changes. The _yj134_refactor_smoke.js test enforces this.
+  'sentinel-v130': {
+    label: 'Sentinel v130 (production)',
+    // bullyScore computation (lines around 4658 in decideFor):
+    bullyScoreAggrThreshold:    0.30,
+    bullyScoreAggrSlope:        2.4,
+    bullyScoreFoldThreshold:    0.40,
+    bullyScoreFoldSlope:        2.0,
+    bullyScoreCap:              1.0,
+    // foldStrokeCost amplifier (line ~4685):
+    foldCostBase:               1.0,
+    foldCostMatchScaleCap:      2.0,
+    foldCostMatchScaleSlope:    2.5,
+    foldCostBullyBoost:         1.0,
+    // bluffPrior boost under bullying (line ~4760):
+    bluffPriorBullyCap:         0.80,
+    bluffPriorBullyBoost:       0.45,
+    // slack widener (line ~4894):
+    slackTableScale:            0.025,
+    slackBullyBoost:            0.22,
+    // hard-fold-floor reduction under bullying (line ~4897):
+    hardFoldFloorMin:           0.01,
+    hardFoldFloorBase:          0.05,
+    hardFoldFloorTableScale:    0.025,
+    hardFoldFloorBullyReduction:0.045,
+    // counter-bluff frequency boost (line ~4938):
+    counterBluffBullyBoost:     0.25,
+    // Rule-set the AI was tuned for. decideFor uses this to choose
+    // its EV math branch when a rule set is also passed via
+    // gameContext (experimental). For sentinel-v130 = one-way.
+    tunedFor: 'one-way',
+  },
+  // Initial guess for a tug-of-war-calibrated AI. Parameters will be
+  // refined via headless parameter search in v134+ experiments. The
+  // values below are heuristic starting points based on the EV
+  // analysis: under TOW, folding costs +1 stroke AND loses half-pot
+  // honey, so the AI should fold LESS, defend more, and be less
+  // sensitive to bullyScore-driven amplification (the structural
+  // attractor is gone).
+  'sentinel-tow-v0': {
+    label: 'Sentinel tow-v0 (experimental, untuned)',
+    bullyScoreAggrThreshold:    0.40,   // higher → fires later
+    bullyScoreAggrSlope:        1.8,    // lower → less aggressive response
+    bullyScoreFoldThreshold:    0.50,
+    bullyScoreFoldSlope:        1.5,
+    bullyScoreCap:              1.0,
+    foldCostBase:               1.0,
+    foldCostMatchScaleCap:      1.0,    // lower → less amplification (fold is already expensive under TOW)
+    foldCostMatchScaleSlope:    1.5,
+    foldCostBullyBoost:         0.5,
+    bluffPriorBullyCap:         0.70,
+    bluffPriorBullyBoost:       0.30,
+    slackTableScale:            0.025,
+    slackBullyBoost:            0.15,
+    hardFoldFloorMin:           0.02,
+    hardFoldFloorBase:          0.07,
+    hardFoldFloorTableScale:    0.025,
+    hardFoldFloorBullyReduction:0.025,
+    counterBluffBullyBoost:     0.15,
+    tunedFor: 'tug-of-war',
+  },
+};
+
+const RULE_SETS = {
+  // The production rule set. Bit-identical to current v133 behavior.
+  'prod-v133': {
+    label: 'Production (v133)',
+    isProduction: true,
+    honeyConservation:    'one-way',
+    brickPenaltyMode:     'pot-gated',
+    brickLossCap:         4,
+    decisionDivisor:      9,
+    highCardShowdownLoss: 1,
+    aiCalibration:        'sentinel-v130',
+  },
+  // Experimental: tug-of-war rule + first-cut TOW AI. NEVER used by
+  // production paths; only reachable from the headless harness or a
+  // future Lab UI flag.
+  'lab-tow-v0': {
+    label: 'Lab: tug-of-war v0',
+    isProduction: false,
+    honeyConservation:    'tug-of-war',
+    brickPenaltyMode:     'flat',
+    brickLossCap:         2,
+    decisionDivisor:      18,
+    highCardShowdownLoss: 1,
+    aiCalibration:        'sentinel-tow-v0',
+  },
+};
+
+// Look up an AI calibration profile by name, with fallback to the
+// production calibration. ALWAYS returns a valid object — callers do
+// not need to null-check.
+function getAICalibration(name) {
+  if (name && AI_CALIBRATIONS[name]) return AI_CALIBRATIONS[name];
+  return AI_CALIBRATIONS['sentinel-v130'];
+}
+
+// Look up a rule set by name, with fallback to production.
+function getRuleSet(name) {
+  if (name && RULE_SETS[name]) return RULE_SETS[name];
+  return RULE_SETS['prod-v133'];
+}
+
+// applyRuleSet(g, ruleSetName) — stamps a game object with the rule
+// set's engine fields. Used by EXPERIMENTAL game-creation paths only
+// (headless harness, future Lab UI). Production createLocalGame and
+// friends continue to set fields directly. After this call, the game
+// is ready for play under the chosen rule set; aiTakeTurn and the
+// hole-resolution functions read these fields per-game.
+function applyRuleSet(g, ruleSetName) {
+  const rs = getRuleSet(ruleSetName);
+  g.ruleSetName        = ruleSetName || 'prod-v133';
+  g.honeyConservation  = rs.honeyConservation;
+  g.brickPenaltyMode   = rs.brickPenaltyMode;
+  g.brickLossCap       = rs.brickLossCap;
+  g.decisionDivisor    = rs.decisionDivisor;
+  g.highCardShowdownLoss = rs.highCardShowdownLoss;
+  g.aiCalibration      = rs.aiCalibration;
+  return g;
 }
 // DECISION DIVISOR (v39 Path 1): per-decision EV math uses a separate, smaller
 // divisor than end-of-round honey normalization. Decouples in-kernel fold cost
@@ -4639,21 +4821,30 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   // amplifier below + bluffPrior/slack/bluffFreq adjustments further down).
   // strokeAware gates the entire v130 path so callers can opt OUT for clean
   // A/B testing against the pre-130 elite tier.
+  //
+  // v69.134 — calibration is now a named profile, not hardcoded constants.
+  // gameContext.aiCalibration is a string key into AI_CALIBRATIONS; absent
+  // ⇒ the safe-fallback path returns the 'sentinel-v130' profile, whose
+  // values are bit-identical to the previously-hardcoded v130 constants.
+  // Production code never sets aiCalibration, so behavior is unchanged.
+  const _calib = (typeof getAICalibration === 'function')
+    ? getAICalibration(gameContext && gameContext.aiCalibration)
+    : { bullyScoreAggrThreshold:0.30, bullyScoreAggrSlope:2.4, bullyScoreFoldThreshold:0.40, bullyScoreFoldSlope:2.0, bullyScoreCap:1.0, foldCostBase:1.0, foldCostMatchScaleCap:2.0, foldCostMatchScaleSlope:2.5, foldCostBullyBoost:1.0, bluffPriorBullyCap:0.80, bluffPriorBullyBoost:0.45, slackTableScale:0.025, slackBullyBoost:0.22, hardFoldFloorMin:0.01, hardFoldFloorBase:0.05, hardFoldFloorTableScale:0.025, hardFoldFloorBullyReduction:0.045, counterBluffBullyBoost:0.25 };
   const strokeAware = !(gameContext && gameContext.strokeAware === false);
   const heroFoldRate = strokeAware ? (+(gameContext && gameContext.heroRecentFoldRate) || 0) : 0;
   const oppAggRate   = strokeAware ? (+(gameContext && gameContext.oppRecentAggressionRate) || 0) : 0;
   const holesRem     = +(gameContext && gameContext.holesRemaining) || 0;
   const totalHolesCtx = Math.max(1, +(gameContext && gameContext.totalHoles) || 18);
   const matchScale   = Math.max(0, Math.min(1, holesRem / totalHolesCtx));
-  // bullyScore ∈ [0,1]: 0 at baseline (oppAggr ≤ 0.30, heroFold ≤ 0.40), grows
-  // as opp gets more aggressive AND we've been over-folding. Capped at 1.0.
-  // v69.130 calibration #2 — lowered both thresholds (0.35→0.30 aggr, 0.50→0.40
-  // fold) and increased per-unit slopes (2.0→2.4, 1.5→2.0). Empirical 30-match
-  // sweep at 72-hole length showed initial setting recognized bullying but
-  // didn't intervene aggressively enough — closed 44% of the gap when the
-  // gate is ≥80%. Faster activation + stronger response.
+  // bullyScore ∈ [0,1]: 0 at baseline (oppAggr ≤ _calib.bullyScoreAggrThreshold,
+  // heroFold ≤ _calib.bullyScoreFoldThreshold), grows as opp gets more
+  // aggressive AND we've been over-folding. Capped at _calib.bullyScoreCap.
+  // v69.130 calibration #2 (now in _calib) — production thresholds 0.30/0.40,
+  // slopes 2.4/2.0. v69.134 — these are tunables in the calibration profile.
   const bullyScore = strokeAware
-    ? Math.max(0, Math.min(1.0, (oppAggRate - 0.30) * 2.4 + Math.max(0, heroFoldRate - 0.40) * 2.0))
+    ? Math.max(0, Math.min(_calib.bullyScoreCap,
+        (oppAggRate - _calib.bullyScoreAggrThreshold) * _calib.bullyScoreAggrSlope
+        + Math.max(0, heroFoldRate - _calib.bullyScoreFoldThreshold) * _calib.bullyScoreFoldSlope))
     : 0;
   // v46: flat +1 fold cost (escalation removed). Empirical telemetry showed
   // the v43 escalation rarely fired (91% of folds at +1) so the formula was
@@ -4672,7 +4863,10 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   // calibration #2 — cap 0.75 → 2.0, slope 1.5 → 2.5. Folding under severe
   // bullying now costs up to 3× the base bogey in EV terms, forcing the
   // calc to pick "call and see a showdown" over "give up another stroke."
-  const foldStrokeCost = 1 + (strokeAware ? Math.min(2.0, matchScale * heroFoldRate * 2.5 + bullyScore * 1.0) : 0);
+  // v69.134 — values now read from _calib (production = unchanged).
+  const foldStrokeCost = _calib.foldCostBase + (strokeAware
+    ? Math.min(_calib.foldCostMatchScaleCap, matchScale * heroFoldRate * _calib.foldCostMatchScaleSlope + bullyScore * _calib.foldCostBullyBoost)
+    : 0);
   const evFoldAbs = -foldStrokeCost * divisor - agreedTotal;
 
   // Build candidate set with adjTrue (oracle) for the metric.
@@ -4818,7 +5012,8 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   // the pre-130 legacy-elite tier can be selected for A/B comparison.
   if (strokeAware && bullyScore > 0) {
     // calibration #2 — cap raised 0.70 → 0.80, slope 0.25 → 0.45.
-    bluffPrior = Math.max(0, Math.min(0.80, bluffPrior + bullyScore * 0.45));
+    // v69.134 — values now read from _calib (production = unchanged).
+    bluffPrior = Math.max(0, Math.min(_calib.bluffPriorBullyCap, bluffPrior + bullyScore * _calib.bluffPriorBullyBoost));
   }
 
   // BLEND: high readingDepth nullifies the naive discount when bluff prior is
@@ -4876,7 +5071,8 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
     // the profile's natural bluffFreq so a tight-passive profile still
     // doesn't go spew-mode — it just stops being a pure pressure-target.
     // calibration #2 — counter-bluff boost 0.12 → 0.25.
-    const effectiveBluffFreq = profile.bluffFreq + (strokeAware ? bullyScore * 0.25 : 0);
+    // v69.134 — value now read from _calib (production = unchanged).
+    const effectiveBluffFreq = profile.bluffFreq + (strokeAware ? bullyScore * _calib.counterBluffBullyBoost : 0);
     if (effectiveBluffFreq > 0 && adj < 0.40 && remaining > 0
         && Math.random() < effectiveBluffFreq) {
       const room = Math.max(0, streetCap - agreedTotal);
@@ -4945,8 +5141,11 @@ function decideFor(cards, community, currentProposal, agreedTotal, isPending, pr
   // calling station; it only loosens enough to defend the bullying gap.
   // calibration #2 — slack boost 0.10 → 0.22 under bullying; HARD_FOLD_FLOOR
   // floor 0.02 → 0.01 (effectively never auto-fold while bullied).
-  const slack = (slackBase - 0.025 * tableScale) + (strokeAware ? bullyScore * 0.22 : 0);
-  const HARD_FOLD_FLOOR = Math.max(0.01, 0.05 + 0.025 * tableScale - (strokeAware ? bullyScore * 0.045 : 0));
+  // v69.134 — values now read from _calib (production = unchanged).
+  const slack = (slackBase - _calib.slackTableScale * tableScale) + (strokeAware ? bullyScore * _calib.slackBullyBoost : 0);
+  const HARD_FOLD_FLOOR = Math.max(_calib.hardFoldFloorMin,
+    _calib.hardFoldFloorBase + _calib.hardFoldFloorTableScale * tableScale
+    - (strokeAware ? bullyScore * _calib.hardFoldFloorBullyReduction : 0));
   if (callAmount > 0 && adjRead < HARD_FOLD_FLOOR) {
     return wrap({ action: 'fold' });
   }
@@ -5442,6 +5641,11 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     const streetIdx = (community.length < 3) ? 0 : (community.length === 3) ? 1 : (community.length === 4) ? 2 : 3;
     const folderScore = 1;
     const bettorScore = 0;
+    // v69.133 — honeyConservation flag. one-way (default): bettor gains full
+    // pot, folder gains 0. tug-of-war: bettor gains pot/2 net, folder loses
+    // pot/2 net. See setHoneyConservation() for design rationale.
+    const _consModeF = (gameContext && gameContext.honeyConservation === 'tug-of-war') ||
+                       CurrentHoneyConservation === 'tug-of-war';
     // v54 TRUE FOLD COST instrumentation. The fold-cost histogram now tracks
     // the actual stroke-equivalent total cost paid by the folder:
     //   trueFoldCost = folderScore + agreedTotal / round-end-divisor
@@ -5464,8 +5668,15 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
     const bettorScoreTable = [0, 0, 0, 0];
     const aScore = folded === 'a' ? folderScore : bettorScore;
     const bScore = folded === 'b' ? folderScore : bettorScore;
-    const aHoneyCredit = folded === 'a' ? 0 : strokes;
-    const bHoneyCredit = folded === 'b' ? 0 : strokes;
+    let aHoneyCredit, bHoneyCredit;
+    if (_consModeF) {
+      const halfF = strokes / 2;
+      aHoneyCredit = folded === 'a' ? -halfF : halfF;
+      bHoneyCredit = folded === 'b' ? -halfF : halfF;
+    } else {
+      aHoneyCredit = folded === 'a' ? 0 : strokes;
+      bHoneyCredit = folded === 'b' ? 0 : strokes;
+    }
     SimPerf.add('dealHole', t0);
     return { folded, strokes, aScore, bScore, aHoneyCredit, bHoneyCredit, carryPot: 0 };
   }
@@ -5530,8 +5741,18 @@ function playHole(pA, pB, startDealer, carryPot = 0, gameContext = {}) {
       bScore = golfScoreFromHandValue(bH);
     }
   }
-  const aHoneyCredit = cmp > 0 ? strokes : 0;
-  const bHoneyCredit = cmp > 0 ? 0 : strokes;
+  // v69.133 — honeyConservation flag. See fold-path block above.
+  const _consModeSD = (gameContext && gameContext.honeyConservation === 'tug-of-war') ||
+                      CurrentHoneyConservation === 'tug-of-war';
+  let aHoneyCredit, bHoneyCredit;
+  if (_consModeSD) {
+    const halfSD = strokes / 2;
+    aHoneyCredit = cmp > 0 ?  halfSD : -halfSD;
+    bHoneyCredit = cmp > 0 ? -halfSD :  halfSD;
+  } else {
+    aHoneyCredit = cmp > 0 ? strokes : 0;
+    bHoneyCredit = cmp > 0 ? 0 : strokes;
+  }
   // v44 instrumentation: record decisive showdown + pot at showdown
   if (typeof LabState !== 'undefined' && LabState.instrumentation && LabState.instrumentation.potBucketCollector) {
     LabState.instrumentation.potBucketCollector('showdown', strokes);
@@ -6506,11 +6727,15 @@ const Season = {
     const _bm = (typeof CurrentBrickPenaltyMode === 'string') ? CurrentBrickPenaltyMode : 'flat';
     const _bc = (typeof CurrentBrickLossCap === 'number') ? CurrentBrickLossCap : 4;
     const _bl = (typeof CurrentHighCardShowdownLoss === 'number') ? CurrentHighCardShowdownLoss : 1;
+    // v69.134 — also save/restore honeyConservation so Season runs honor
+    // cfg.honeyConservation without leaking state to subsequent runs.
+    const _hc = (typeof CurrentHoneyConservation === 'string') ? CurrentHoneyConservation : 'one-way';
     if (typeof setHoneyCapMode === 'function') setHoneyCapMode(cfg.honeyCapMode === 'spec' ? 'spec' : 'calibrated');
     if (typeof setLoserBogey === 'function') setLoserBogey(true);
     if (typeof setBrickPenaltyMode === 'function') setBrickPenaltyMode('pot-gated');
     if (typeof setBrickLossCap === 'function') setBrickLossCap(2);
     if (typeof setHighCardShowdownLoss === 'function') setHighCardShowdownLoss(1);   // flat fallback used only when pot-gated formula's pot info is missing
+    if (typeof setHoneyConservation === 'function') setHoneyConservation(cfg.honeyConservation === 'tug-of-war' ? 'tug-of-war' : 'one-way');
     try { return fn(); }
     finally {
       if (typeof setHoneyCapMode === 'function') setHoneyCapMode(_cap);
@@ -6518,6 +6743,7 @@ const Season = {
       if (typeof setBrickPenaltyMode === 'function') setBrickPenaltyMode(_bm);
       if (typeof setBrickLossCap === 'function') setBrickLossCap(_bc);
       if (typeof setHighCardShowdownLoss === 'function') setHighCardShowdownLoss(_bl);
+      if (typeof setHoneyConservation === 'function') setHoneyConservation(_hc);
     }
   },
   // Between seasons of a career: extra process noise (last year's form goes stale, OWGR-style) + volatility relaxes toward typical.
@@ -10728,6 +10954,46 @@ function _scriptedBullyDecide(g) {
   return { action: 'call' };
 }
 
+// v69.132 — additional scripted oracles for the honey-flow experiment.
+//
+// `max-bettor`: Always escalates to the streetCap. Calls every pending raise.
+// Never folds. Never checks (always bets max when given the option). This is
+// the literal "max-bet to showdown, live with variance" hypothesis the design
+// question asks about — does the current honey rule reward this strategy?
+function _maxBettorDecide(g) {
+  const c = g.current;
+  const isPending = c.currentProposal != null;
+  const cap = mpStreetCap(g, c.street);
+  const floor = isPending ? c.currentProposal : c.agreedTotal;
+  if (cap > floor) {
+    return { action: isPending ? 'raise' : 'bet', amount: cap };
+  }
+  // Cap already saturated → no escalation room. Call/check.
+  return { action: isPending ? 'call' : 'check' };
+}
+//
+// `tight-passive`: Min-bets when first to act. Folds to any raise. Calls only
+// when the call amount is trivially small relative to pot. The conservative
+// baseline — represents the "fold marginal hands, only play premiums" archetype.
+// Note: doesn't peek at hole cards (this is purely a betting-pattern oracle,
+// not an equity-aware one). The hole-strength filtering is implicit in the
+// fold-to-aggression behavior.
+function _tightPassiveDecide(g) {
+  const c = g.current;
+  const isPending = c.currentProposal != null;
+  if (isPending) {
+    const callAmount = Math.max(0, c.currentProposal - c.agreedTotal);
+    // Call only if the call is ≤ opener-sized (small bet). Otherwise fold.
+    if (callAmount <= 4) return { action: 'call' };
+    return { action: 'fold' };
+  }
+  // First to act: min-bet (open just above agreedTotal). Caps at agreedTotal+2.
+  const cap = mpStreetCap(g, c.street);
+  const minBet = Math.min(cap, c.agreedTotal + 2);
+  if (minBet > c.agreedTotal) return { action: 'bet', amount: minBet };
+  return { action: 'check' };
+}
+
 function scheduleAITurnIfNeeded(g) {
   if (!g || g.mode !== 'solo' || g.ended) return;
   const c = g.current;
@@ -10992,40 +11258,71 @@ function renderMatchScorecard(g) {
   const variantLabel = (g.loserBogey === false) ? 'Bumblebee · Honored Loss' : 'Yellow Jacket · Bogey Loss';
   card.appendChild(el('div', { class: 'yj-scorecard-sub', text: variantLabel + '  ·  honey ÷' + div + ' at round-end' }));
 
-  // v69.112-b — SINGLE CONTIGUOUS STRIP. One grid, one name column per player,
-  // OUT / IN / TOT subtotal columns INLINE (right after hole 9, after the last
-  // hole, and at the very end) — the way a real golf scorecard reads. The grid
-  // template-columns string is built per match so 9-hole / 18-hole / sudden-
-  // death (>18) all render correctly without splitting the player name across
-  // two halves. At narrow widths the parent wrapper allows horizontal scroll;
-  // cells shrink to a minimum of 22px before scroll engages.
-  const split = total > 9;   // does this match need OUT/IN columns?
+  // v69.112-b → v69.131. Subtotal column layout adapts to match length:
+  //   ≤ 9 holes:  no subtotals, just TOT at the end.
+  //   10–18:      OUT after hole 9, IN after the last hole, TOT.
+  //   > 18:       round subtotals (R1, R2, R3, …) after each completed 18-hole
+  //               round (holes 18, 36, 54, …) plus TOT at the very end.
+  // This matches real-world golf-major scorecards (the Masters, the Open, etc.)
+  // and replaces the pre-131 "single OUT after hole 9 for any match length"
+  // rendering which was incoherent at 72-hole formats.
+  let subtotalLayout;
+  if (total <= 9) {
+    subtotalLayout = { positions: [], labels: [] };
+  } else if (total <= 18) {
+    // OUT after 9 + IN at end (the existing 18-hole behavior).
+    const labels = ['OUT'];
+    const positions = [9];
+    if (total >= 18) { labels.push('IN'); positions.push(total); }
+    else             { labels.push('IN'); positions.push(total); }   // partial back-9
+    subtotalLayout = { positions, labels };
+  } else {
+    // Round subtotals every 18 holes. For a 72-hole match, this is R1/R2/R3/R4.
+    const labels = [];
+    const positions = [];
+    let r = 1;
+    for (let h = 18; h <= total; h += 18) {
+      labels.push('R' + r);
+      positions.push(h);
+      r++;
+    }
+    // Catch any remaining partial round at the end (e.g. sudden-death extension).
+    if (positions.length === 0 || positions[positions.length - 1] !== total) {
+      labels.push('R' + r);
+      positions.push(total);
+    }
+    subtotalLayout = { positions, labels };
+  }
+  const subtotalAfter = new Set(subtotalLayout.positions);
+  const subtotalIdxAt = new Map(subtotalLayout.positions.map((p, i) => [p, i]));
+
   // Build the grid-template-columns string.
-  let gridCols = 'minmax(72px, 110px)';   // name column (sticky-ish; serif name fits ~14ch)
+  let gridCols = 'minmax(72px, 110px)';   // name column
   for (let h = 1; h <= total; h++) {
     gridCols += ' minmax(22px, 1fr)';
-    if (split && h === 9) gridCols += ' minmax(36px, 46px)';   // OUT
+    if (subtotalAfter.has(h)) gridCols += ' minmax(36px, 46px)';
   }
-  if (split) gridCols += ' minmax(36px, 46px)';                // IN
-  gridCols += ' minmax(42px, 52px)';                           // TOT
+  gridCols += ' minmax(42px, 52px)';   // TOT
 
   const gridWrap = el('div', { class: 'yj-card-gridwrap' });
   const grid = el('div', { class: 'yj-card-grid yj-card-wide', style: 'grid-template-columns: ' + gridCols + ';' });
 
-  // --- header row: HOLE | 1 .. 9 | OUT | 10 .. 18 | IN | TOT ---
+  // --- header row ---
   grid.appendChild(el('div', { class: 'yj-cell is-rowhead is-header', text: 'Hole' }));
   for (let h = 1; h <= total; h++) {
     grid.appendChild(el('div', { class: 'yj-cell is-header', text: String(h) }));
-    if (split && h === 9) grid.appendChild(el('div', { class: 'yj-cell is-header is-subtotal', text: 'OUT' }));
+    if (subtotalAfter.has(h)) {
+      const label = subtotalLayout.labels[subtotalIdxAt.get(h)];
+      grid.appendChild(el('div', { class: 'yj-cell is-header is-subtotal', text: label }));
+    }
   }
-  if (split) grid.appendChild(el('div', { class: 'yj-cell is-header is-subtotal', text: 'IN' }));
   grid.appendChild(el('div', { class: 'yj-cell is-header is-grandtotal', text: 'TOT' }));
 
-  // --- per-player rows: name | cell × 18 with subtotals interleaved | TOT ---
+  // --- per-player rows ---
   const totals = { p1: { golf: 0, honey: 0 }, p2: { golf: 0, honey: 0 } };
   [{ side: 'p1', name: g.p1.name }, { side: 'p2', name: g.p2.name }].forEach((P) => {
     grid.appendChild(el('div', { class: 'yj-cell is-rowhead is-player', text: P.name }));
-    let outGolf = 0, outHoney = 0, inGolf = 0, inHoney = 0;
+    let segGolf = 0, segHoney = 0;   // running subtotal within the current segment
     for (let h = 1; h <= total; h++) {
       const sc = byHole[h - 1];
       const cell = el('div', { class: 'yj-cell' });
@@ -11033,8 +11330,8 @@ function renderMatchScorecard(g) {
         const golf  = +sc[P.side + 'Golf']  || 0;
         const honey = +sc[P.side + 'Honey'] || 0;
         cell.classList.add(strokeClass(golf));
-        if (h <= 9) { outGolf += golf; outHoney += honey; }
-        else        { inGolf  += golf; inHoney  += honey; }
+        segGolf  += golf;
+        segHoney += honey;
         totals[P.side].golf  += golf;
         totals[P.side].honey += honey;
         cell.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(golf) }));
@@ -11046,25 +11343,19 @@ function renderMatchScorecard(g) {
         cell.appendChild(el('span', { class: 'yj-stroke', text: '·' }));
       }
       grid.appendChild(cell);
-      // OUT subtotal after hole 9 (only if split)
-      if (split && h === 9) {
+      // Subtotal cell, if this hole index ends a segment.
+      if (subtotalAfter.has(h)) {
         const sub = el('div', { class: 'yj-cell is-subtotal' });
-        sub.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(outGolf) }));
-        if (outHoney) sub.appendChild(el('span', { class: 'yj-honey' + (outHoney < 0 ? ' neg' : ''), text: fmtHoney(outHoney) }));
+        sub.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(segGolf) }));
+        if (segHoney) sub.appendChild(el('span', { class: 'yj-honey' + (segHoney < 0 ? ' neg' : ''), text: fmtHoney(segHoney) }));
         grid.appendChild(sub);
+        segGolf = 0; segHoney = 0;
       }
     }
-    // IN subtotal (only if split)
-    if (split) {
-      const sub = el('div', { class: 'yj-cell is-subtotal' });
-      sub.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(inGolf) }));
-      if (inHoney) sub.appendChild(el('span', { class: 'yj-honey' + (inHoney < 0 ? ' neg' : ''), text: fmtHoney(inHoney) }));
-      grid.appendChild(sub);
-    }
-    // Grand-total cell
+    // Grand-total cell.
     const tot = el('div', { class: 'yj-cell is-grandtotal' });
-    tot.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(outGolf + inGolf) }));
-    const totHoney = outHoney + inHoney;
+    tot.appendChild(el('span', { class: 'yj-stroke', text: fmtStroke(totals[P.side].golf) }));
+    const totHoney = totals[P.side].honey;
     if (totHoney) tot.appendChild(el('span', { class: 'yj-honey' + (totHoney < 0 ? ' neg' : ''), text: fmtHoney(totHoney) }));
     grid.appendChild(tot);
   });
@@ -12659,11 +12950,21 @@ function resolveMPHole(g) {
     // v46 fold rule (matches simulator playHole): flat +1 base, no escalation.
     // The v43 escalation rarely fired empirically and added complexity
     // without behavioral change; reverting to a clean uniform rule.
+    // v69.133 — honeyConservation flag. one-way (default): bettor gains full
+    // pot, folder gains 0. tug-of-war: bettor gains pot/2 net, folder loses
+    // pot/2 net (matches classical poker chip flow).
     const folderSide = c.folded;
     const bettorSide = folderSide === 'p1' ? 'p2' : 'p1';
     const previouslyAgreed = c.agreedTotal;
-    if (folderSide === 'p1') { p1Golf = 1; p2Golf = 0; p2Honey = previouslyAgreed; }
-    else                     { p2Golf = 1; p1Golf = 0; p1Honey = previouslyAgreed; }
+    const consMode = (g.honeyConservation === 'tug-of-war' || CurrentHoneyConservation === 'tug-of-war') ? 'tug-of-war' : 'one-way';
+    if (consMode === 'tug-of-war') {
+      const half = previouslyAgreed / 2;
+      if (folderSide === 'p1') { p1Golf = 1; p2Golf = 0; p2Honey = half;  p1Honey = -half; }
+      else                     { p2Golf = 1; p1Golf = 0; p1Honey = half;  p2Honey = -half; }
+    } else {
+      if (folderSide === 'p1') { p1Golf = 1; p2Golf = 0; p2Honey = previouslyAgreed; }
+      else                     { p2Golf = 1; p1Golf = 0; p1Honey = previouslyAgreed; }
+    }
     const folderName = folderSide === 'p1' ? g.p1.name : g.p2.name;
     const bettorName = bettorSide === 'p1' ? g.p1.name : g.p2.name;
     desc = folderName + ' folded. ' + bettorName + ' takes the ' + previouslyAgreed + '-honey pot (the previously agreed total). ' + folderName + ' +1 bogey, ' + bettorName + ' 0 par.';
@@ -12716,8 +13017,16 @@ function resolveMPHole(g) {
       const winName  = p1Wins ? g.p1.name : g.p2.name;
       const loseName = p1Wins ? g.p2.name : g.p1.name;
       const pot = c.agreedTotal;
-      if (p1Wins) { p1Golf = winnerGolf; p1Honey = pot; p2Golf = loserGolf; }
-      else        { p2Golf = winnerGolf; p2Honey = pot; p1Golf = loserGolf; }
+      // v69.133 — honeyConservation flag (see fold path above for full doc).
+      const consModeSD = (g.honeyConservation === 'tug-of-war' || CurrentHoneyConservation === 'tug-of-war') ? 'tug-of-war' : 'one-way';
+      if (consModeSD === 'tug-of-war') {
+        const half = pot / 2;
+        if (p1Wins) { p1Golf = winnerGolf; p1Honey =  half; p2Golf = loserGolf; p2Honey = -half; }
+        else        { p2Golf = winnerGolf; p2Honey =  half; p1Golf = loserGolf; p1Honey = -half; }
+      } else {
+        if (p1Wins) { p1Golf = winnerGolf; p1Honey = pot; p2Golf = loserGolf; }
+        else        { p2Golf = winnerGolf; p2Honey = pot; p1Golf = loserGolf; }
+      }
       // v69.62/v69.73: under loserBogey, print which rung of the loser ladder
       // actually got scored — Next Best (straight+, keeps own −5…−1), Take a
       // Stroke (pair/2P/trips → +1), Lay a Brick (high card, checked through →
@@ -26048,6 +26357,22 @@ const DEFAULT_SIM_CONFIG = {
   // players still score 0 par on a tie, folder still posts +1 bogey.
   gameVariant: 'yellowjacket',
   loserBogey: true,
+  // v69.134 — HONEY CONSERVATION MODE.
+  //   'one-way'    (default): original YJ rule. The winner gains the full
+  //                pot in honey; the loser keeps their prior honey (only
+  //                pays the golf-side stroke penalty). The table provisions
+  //                the opener honey; the winner-only ratchet preserves the
+  //                "buy-in tablets → sweetened pot → winner pulls" lore.
+  //   'tug-of-war' (experimental): zero-sum honey transfer. Winner gains
+  //                pot/2 net; loser loses pot/2 net. Eliminates the
+  //                positive-sum max-bet attractor at the cost of changing
+  //                the YJ economic identity. Validated v69.134 with a
+  //                matched AI calibration (sentinel-tow-tuned-v1) showing
+  //                +3.19 stroke single-event improvement vs production
+  //                under max-bettor attack and Δρ_active +0.014 over a
+  //                career. See _yj134_matrix.json + _yj134_winner.json
+  //                for the experimental harness data.
+  honeyConservation: 'one-way',
   // v69.58 — MAIN-FINALS SCORING OVERRIDE. The Main Event's 72-hole final round
   // can use a different decisive-showdown-loser rule than the rest of the Tour:
   //   null  — inherit (the 72-hole final uses the same rule as everything else,
@@ -27339,6 +27664,12 @@ async function runLabSession(cfg, onProgress) {
   setHighCardShowdownLoss((cfg.scoring && cfg.scoring.highCardShowdownLoss) || 1);
   setBrickPenaltyMode((cfg.scoring && cfg.scoring.brickPenaltyMode) || 'flat');
   setBrickLossCap((cfg.scoring && cfg.scoring.brickLossCap) || 4);
+  // v69.134 — sync the honey-conservation rule from cfg. one-way (default)
+  // = original YJ rule (winner takes pot, loser pays only golf stroke).
+  // tug-of-war = loser also pays half-pot from honey (zero-sum honey flow,
+  // classical-poker analog). resolveMPHole and playHole both read
+  // CurrentHoneyConservation. Snapshotted into snap.config below.
+  setHoneyConservation(cfg.honeyConservation === 'tug-of-war' ? 'tug-of-war' : 'one-way');
   // v69.49 — lock the Honey divisor mode for this run. honeyDivisorFor() reads
   // CurrentHoneyCapMode; setting it here so every gameContext built
   // downstream uses the active calibration consistently. Snapshotted into the
@@ -28687,6 +29018,13 @@ function _exportRunToCSVImpl(snap) {
   // (cap = round/event hole count, ÷N). 'calibrated' = stepped table
   // (÷9/÷4/÷36). Locked at run start; recorded here so any CSV is unambiguous.
   cfgRow('scoring.honeyCapMode', snapCfg.honeyCapMode === 'calibrated' ? 'calibrated' : 'spec');
+  // v69.134 — Honey CONSERVATION rule used for this run. 'one-way' (production
+  // default): winner takes pot, loser only pays golf stroke. 'tug-of-war'
+  // (experimental): zero-sum honey flow, winner +pot/2, loser −pot/2. Affects
+  // every per-hole resolution downstream; recorded so cross-run comparisons
+  // and CSVs are unambiguous about which rule produced the metrics.
+  cfgRow('scoring.honeyConservation',
+    snapCfg.honeyConservation === 'tug-of-war' ? 'tug-of-war (winner +pot/2, loser −pot/2)' : 'one-way (winner takes pot, loser keeps prior honey)');
   cfgRow('scoring.divisorTable',
     snapCfg.honeyCapMode === 'calibrated' ? 'calibrated: 1=1, 9=4, 18=9, 72=36' : 'spec: divisor = hole count (N)');
   // v69.51 — HOLE ENVELOPE (E). When > 0, each per-tier strokeCap is overridden
@@ -29773,6 +30111,33 @@ function renderConfigPanel(panel, mode) {
     text: 'Sets the bottom two rungs of the Yellow Jacket loser ladder — LAY A BRICK (high card, checked through to the opener) and STACK BRICKS (high card bet into a pot ≥ 2× the opener — "the blow-up"). The top two rungs (Next Best for a straight+, Take a Stroke for a pair/2P/trips) and the fold ("put me down for 1": always +1) are fixed. Only applies under the Yellow Jacket variant (under Bumblebee a high-card loser already posts their own +2). Classic flat +1: Lay a Brick = Stack Bricks = +1, so folding a brick costs the same as showing it down — pre-flop folding and bluffing barely matter. Pot-gated cap +2 (ship default, validated at pool=1000 / 100 seasons): Lay a Brick stays +1, Stack Bricks is +2 (the blow-up) — folding a brick to a bet is then strictly cheaper than showing it down (less on the card AND less honey), and bluffs threaten the +2; the AI\'s showdown-EV math is fully aware of this. Cap +4 escalates Stack Bricks further (+3 / +4 at big pots — bigger fold gain but the high-variance big-pot bricks degrade the career-skill metrics); flat +2 is a milder middle.'
   }));
 
+  // --- v69.134 — Honey Conservation rule ---
+  const hcvRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 110px 1fr; margin-bottom: 6px; align-items: center;' });
+  hcvRow.appendChild(el('label', { text: 'Honey flow', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
+  const hcvSel = el('select', { style: 'width: 100%;' });
+  [
+    { v: 'one-way',    label: '🍯 One-way (ship default) — winner takes the pot, loser keeps prior honey (table-provisioned tablets)' },
+    { v: 'tug-of-war', label: '⚖ Tug-of-war (experimental) — zero-sum honey: winner +pot/2, loser −pot/2 (classical-poker analog)' },
+  ].forEach(o => {
+    const opt = el('option', { value: o.v, text: o.label });
+    if ((LabState.config.honeyConservation || 'one-way') === o.v) opt.selected = true;
+    hcvSel.appendChild(opt);
+  });
+  hcvSel.onchange = () => {
+    const m = hcvSel.value === 'tug-of-war' ? 'tug-of-war' : 'one-way';
+    LabState.config.honeyConservation = m;
+    setHoneyConservation(m);
+    saveLabState();
+    toast('Honey conservation: ' + (m === 'tug-of-war' ? 'tug-of-war (zero-sum honey)' : 'one-way (winner takes pot)'));
+  };
+  hcvRow.appendChild(hcvSel);
+  scoreSec.appendChild(hcvRow);
+  scoreSec.appendChild(el('div', {
+    class: 'ui-sans',
+    style: 'font-size: 10px; color: var(--text-secondary); margin-bottom: 12px; font-style: italic; line-height: 1.5;',
+    text: 'Governs the HONEY-FLOW dynamic at hole resolution — the load-bearing economic property of the game. Under ONE-WAY (the production rule, all v126→v133 work validated against this): the table provisions the opener, both players sweeten the pot, and the winner pulls the entire pot to their side; the loser keeps prior accumulated honey (only the golf-side stroke penalty applies). This is the YJ economic signature — positive-sum from the players\' perspective at large pots, because the table\'s opener honey transfers to whoever wins. Under TUG-OF-WAR (experimental, validated v69.134): the pot is treated as if both players contributed half from a notional stockpile; winner gains pot/2 net honey, loser loses pot/2 net (honey can go negative). Eliminates the positive-sum max-bet attractor at single events (v69.134 cross-matrix: max-bettor neutralized vs +3.19 strokes wins under one-way) at the cost of changing the YJ economic identity to a classical-poker-style zero-sum chip flow. Career skill correlation slightly improves (Δρ_active +0.014, Δtop-5-skill +0.068) but requires a matched AI calibration (sentinel-tow-tuned-v1 if you switch). DO NOT ship as default without explicit decision — production AI tuning is calibrated for one-way and the integrity/monetization framework references one-way as the YJ signature.'
+  }));
+
   // --- Main final (override · the 72-hole Main final only) ---
   const mfRow = el('div', { class: 'slider-row', style: 'grid-template-columns: 90px 1fr; margin-bottom: 6px; align-items: center;' });
   mfRow.appendChild(el('label', { text: 'Main final', style: 'font-size: 11px; font-weight: 600; color: var(--gold);' }));
@@ -30081,6 +30446,12 @@ async function runSimulator(cfg, onProgress) {
   setHighCardShowdownLoss((cfg.scoring && cfg.scoring.highCardShowdownLoss) || 1);
   setBrickPenaltyMode((cfg.scoring && cfg.scoring.brickPenaltyMode) || 'flat');
   setBrickLossCap((cfg.scoring && cfg.scoring.brickLossCap) || 4);
+  // v69.134 — sync the honey-conservation rule from cfg. one-way (default)
+  // = original YJ rule (winner takes pot, loser pays only golf stroke).
+  // tug-of-war = loser also pays half-pot from honey (zero-sum honey flow,
+  // classical-poker analog). resolveMPHole and playHole both read
+  // CurrentHoneyConservation. Snapshotted into snap.config below.
+  setHoneyConservation(cfg.honeyConservation === 'tug-of-war' ? 'tug-of-war' : 'one-way');
   // v69.49 — lock the Honey divisor mode for this run. honeyDivisorFor() reads
   // CurrentHoneyCapMode; setting it here so every gameContext built
   // downstream uses the active calibration consistently. Snapshotted into the
@@ -32228,8 +32599,15 @@ const YJ_AI_SMOKE = (() => {
     const profile = side === 'p1' ? (g._p1Profile || g.aiProfile) : (g.aiProfile || g._p1Profile);
     const cards  = side === 'p1' ? c.p1Cards : c.p2Cards;
     const isP    = c.currentProposal != null;
-    if (tier === 'scripted-bully') {
-      const dec = _scriptedBullyDecide(g);
+    // v69.132 — three scripted tiers route through their respective oracles
+    // instead of decideFor. Used by Phase 1 of the honey-flow experiment.
+    const scriptedTiers = {
+      'scripted-bully': _scriptedBullyDecide,
+      'max-bettor':     _maxBettorDecide,
+      'tight-passive':  _tightPassiveDecide,
+    };
+    if (scriptedTiers[tier]) {
+      const dec = scriptedTiers[tier](g);
       switch (dec.action) {
         case 'fold':  mpAct(g, 'fold');  return;
         case 'check': mpAct(g, 'check'); return;
@@ -32246,9 +32624,17 @@ const YJ_AI_SMOKE = (() => {
       }
       return;
     }
+    // v69.134 — forward the side-specific AI calibration. Harness arms
+    // can set g._p1AICalibration / g.aiCalibration to drive each side's
+    // decideFor with a named profile; absent → safe fallback to sentinel-v130
+    // inside decideFor (production-identical behavior).
+    const aiCalibration = side === 'p1' ? g._p1AICalibration : g.aiCalibration;
     const ctx = Object.assign(
       _yjMatchContext(g, side),
-      { strokeAware: tier !== 'legacy-elite' }
+      {
+        strokeAware: tier !== 'legacy-elite',
+        aiCalibration: aiCalibration || undefined,
+      }
     );
     const dec = decideFor(
       cards, c.community,
@@ -32291,11 +32677,20 @@ const YJ_AI_SMOKE = (() => {
         aiTier: opts.p2Tier || 'sentinel-v130',
         aiSkill: typeof opts.p2Skill === 'number' ? opts.p2Skill : 0.85,
         aiProfile: profileForTier(opts.p2Tier || 'sentinel-v130', opts.p2Skill),
+        // v69.134 — optional per-side AI calibration. opts.p2AICalibration /
+        // opts.p1AICalibration override the default 'sentinel-v130' lookup.
+        aiCalibration: opts.p2AICalibration || undefined,
         _aiNoDelay: true,
         _p1Tier: opts.p1Tier || 'scripted-bully',
         _p1Skill: typeof opts.p1Skill === 'number' ? opts.p1Skill : 0.85,
         _p1Profile: profileForTier(opts.p1Tier || 'scripted-bully', opts.p1Skill),
+        _p1AICalibration: opts.p1AICalibration || undefined,
+        // v69.134 — optional rule set. opts.ruleSet ∈ {'prod-v133', 'lab-tow-v0', ...}
+        // When set, applyRuleSet stamps the game's engine fields. Production
+        // paths leave this undefined; engine continues to use globals.
+        ruleSetName: opts.ruleSet || undefined,
       };
+      if (opts.ruleSet && typeof applyRuleSet === 'function') applyRuleSet(g, opts.ruleSet);
       // Pump the engine: at each c.toAct switch, dispatch a decision via
       // _takeTurn (two-sided, side-aware). The engine settles each hole via
       // resolveMPHole → mpNextHole when ready.
