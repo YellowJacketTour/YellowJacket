@@ -18,6 +18,8 @@ Yellow Jacket Tour is a hybrid of heads-up Texas Hold'em and tournament golf, sc
 
 The product runs in three modes inside that one Tour ecosystem: **tour events** (the WSOP/PGA-style championship circuit, the headline product, the home of Honey-Stroke), and two **cash-table** modes (Pure NLHE for poker purists who want the standard online poker experience inside the Tour, and YJ/Bumblebee Stroke for cash players who want a parallel stroke ledger that ties cash play to the same Tour-scoring framework).
 
+**Golf scoring is universal.** Every hand of poker, in *every* mode, has a golf value — the scorecard is the foundational mechanic, not a tour-event add-on. Tour events roll that value into a fixed round; cash tables keep it on **the Endless Card** (§4.5), a never-ending, self-normalizing record built for sessions that run for hours. There is no mode where your skill goes unrecorded.
+
 This document is the canonical, plain-language manual. Every primary brand term, every rule, every worked example you need to play and to understand the system. ASCII diagrams included. Read top-to-bottom for the full picture, or jump to the mode you care about.
 
 > All eight beats of a Yellow Jacket hand — **Tea Box, The Fairway, The Lay-Up, The Hazard, The Approach, The Green, The Putt, The Cup** — are proprietary brand terms of Blank Canvas, Inc. Casual variants (the Drive, the Iron, the Pin, the Drop, etc.) are documented in `IP/LEXICON.md` and accrue separate common-law rights through use. See `LICENSE.md` for full IP terms.
@@ -434,8 +436,11 @@ Standard online poker. Drop in, drop out, no rounds, no events.
    │  Cash out anytime. Stack converts back to   │
    │  Nectar 1:1 minus rake taken per pot.        │
    │                                              │
-   │  No scorecard. No honey. No strokes.         │
-   │  Pure poker P/L in Nectar.                   │
+   │  No honey, no strokes-as-penalty — but        │
+   │  your golf skill IS tracked on the           │
+   │  Endless Card (§4.5). Money result is        │
+   │  pure poker P/L in Nectar; the card is        │
+   │  a parallel skill record, never money.       │
    │                                              │
    └──────────────────────────────────────────────┘
 ```
@@ -464,9 +469,21 @@ Standard online poker. Drop in, drop out, no rounds, no events.
 
 You can bet any amount from min-raise up to your full stack on any street. There's no stroke cap, no progressive street unlock, no agreed-total mechanism. It's NLHE with no asterisks.
 
-### 4.5 No strokes, no honey
+### 4.5 The Endless Card — golf scoring for the long session
 
-Pure NLHE has no parallel ledger, no scorecard, no stroke score. Your only result is chip P/L. Stack out > stack in = profit. That's it.
+Pure NLHE has **no honey** and **no penalty ledger** — your money result is pure chip P/L (stack out > stack in = profit). But your *golf skill* is always tracked, on **the Endless Card**: a continuous, self-normalizing scorecard built for cash sessions that never reach a "round end."
+
+**How it scores.** Identical hand-class scoring to everything else (§7), recorded at every **showdown**:
+- **You win the pot** → the card takes your own hand-class score (Royal/SF −5 … Two Pair 0 … High Card +2).
+- **You lose a showdown** → by default Pure NLHE uses the **Honored (Bumblebee) convention**: you simply post your own hand's score — no penalty, no brick ladder. *(Pure poker stays pure; the card just records what you showed.)* A table option can switch the card to the **YJ-Stroke** loser ladder (§3.9) for players who want the sharper game.
+- **Folds and tied pots do NOT touch the card.** Only contested showdowns score — so a session of nothing but folds simply scores zero holes, and a nit can't farm a low card by never playing.
+
+**Why "endless."** A cash session has no fixed 9/18/72-hole boundary, so the card never forces a "final score." Instead it maps your play onto golf's natural unit — the 18-hole round — without ever making you stop:
+- **Live headline = scoring average to par, per 18:** `pace = (cumulative strokes ÷ holes scored) × 18`. Par is 0. A player averaging −0.4/hole reads **"−7.2 per 18"** — instantly legible, and just as meaningful after 12 holes as after 1,200. This is the elegant, length-independent number the seat shows.
+- **Auto-logged rounds:** every **18 scored holes** closes one round (its under/over-par total is stamped to your history) and a fresh round opens seamlessly. Hours of play become a clean series of 18-hole rounds plus a live partial — and a **best-round** to chase.
+- **Raw counters** (cumulative strokes, holes scored) are always available underneath for the grinder who wants the absolute number.
+
+**No Nectar settlement.** Like the YJ/BB Stroke cash card (§5.4), the Endless Card never adds to or subtracts from your cashout — it is recorded to your Tour profile / leaderboards as a skill measure only. The ⛳ pill on your seat shows your live "per 18" pace: green under par, red over.
 
 ---
 
@@ -571,11 +588,11 @@ Despite the brand name "Stroke," these cash variants borrow only the **scorecard
                   │  E×honeyCap  │          │              │
    Street cap     │ K×agreed,    │ None     │ None         │
                   │  ≤3×envel.   │          │              │
-   Scorecard      │ Yes          │ No       │ Yes (cash)   │
+   Scorecard      │ Yes          │ Yes      │ Yes (cash)   │
    Honey ledger   │ Yes          │ No       │ No           │
-   Golf scorecard │ Per-hand,    │ No       │ Yes (cumul.  │
-                  │  rolled into │          │  session;    │
-                  │  round score │          │  skill only) │
+   Golf scorecard │ Per-hand,    │ Endless  │ Yes (cumul.  │
+                  │  rolled into │  Card    │  session;    │
+                  │  round score │  (§4.5)  │  skill only) │
    Tied pots      │ Roll forward │ Split    │ Split        │
    Length         │ Event/round  │ Continu. │ Continuous   │
    Payout         │ Finish-pos   │ Per-hand │ Per-hand     │

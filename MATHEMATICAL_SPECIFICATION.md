@@ -57,26 +57,27 @@ A *seven-card showdown set* for a player `p` is `S_p = H_p ∪ B`, with `|S_p| =
 
 ### 1.3. The hand class
 
-There are sixteen hand classes used by the build's scorecard mapping (Schema 0):
+There are sixteen hand classes used by the build's scorecard mapping (Schema 0).
+Premium-bucket thresholds below mirror `golfScoreFromHandValue()` in the build exactly:
 
 ```
 HandClass = {
   RoyalFlush,
   StraightFlush,
   FourOfAKind,
-  FullHouse_Premium,                  -- top pair-of-the-board boat
+  FullHouse_Premium,                  -- J+ trips (primary kicker ≥ J)
   FullHouse_Other,
-  Flush_Premium,                      -- A-high or K-high
+  Flush_Premium,                      -- T-high or higher
   Flush_Other,
-  Straight_Premium,                   -- T-high or higher
+  Straight_Premium,                   -- 9-high or higher
   Straight_Other,
-  ThreeOfAKind_Premium,               -- premium kicker (J+)
-  ThreeOfAKind_Other,
-  TwoPair_Premium,                    -- top pair J+, premium kicker (T+)
+  ThreeOfAKind,                       -- single class, no premium split
+  TwoPair_Premium,                    -- J+ top pair
   TwoPair_Other,
-  OnePair_Premium,                    -- pair J+ AND premium kicker (9+)
+  OnePair_Premium,                    -- pair TT or better
   OnePair_Other,
-  HighCard
+  HighCard_Premium,                   -- J-high or better
+  HighCard_Other
 }
 ```
 
@@ -108,18 +109,20 @@ score₀(FullHouse_Premium)      = -3
 score₀(FullHouse_Other)        = -2
 score₀(Flush_Premium)          = -2
 score₀(Flush_Other)            = -1
-score₀(Straight_Premium)       = -1
-score₀(Straight_Other)         =  0
-score₀(ThreeOfAKind_Premium)   =  0
-score₀(ThreeOfAKind_Other)     = +1
-score₀(TwoPair_Premium)        =  0
-score₀(TwoPair_Other)          = +1
-score₀(OnePair_Premium)        = +1
-score₀(OnePair_Other)          = +2
-score₀(HighCard)               = +2
+score₀(Straight_Premium)       = -2
+score₀(Straight_Other)         = -1
+score₀(ThreeOfAKind)           = -1
+score₀(TwoPair_Premium)        = -1
+score₀(TwoPair_Other)          =  0
+score₀(OnePair_Premium)        =  0
+score₀(OnePair_Other)          = +1
+score₀(HighCard_Premium)       = +1
+score₀(HighCard_Other)         = +2
 ```
 
 Range: `image(score₀) ⊂ [-5, +2] ⊂ ℤ`. The map is bounded, integer-valued, and monotone-non-decreasing in hand weakness within each family.
+
+> **Authority note.** This table is reconciled to **RULES.md §7** (the player-facing single source of truth) and to `golfScoreFromHandValue()` in the build. An earlier draft of Schema 0 carried the Straight-and-below tiers shifted up by +1 (Straight 0/−1, Trips +1/0, Two Pair +1/0, Pair +2/+1); those values were stale and have been corrected here. Premium thresholds: Full House J+ trips, Flush T-high+, Straight 9-high+, Two Pair J+ top pair, Pair TT+, High Card J-high+.
 
 ---
 
@@ -315,7 +318,33 @@ Var[ ⌊ H_total(R) / honeyCap(N) ⌋ ] ≈ Var[ Σ holeScore(p, h) ]
 
 where the equivalence is empirical (validated by Monte Carlo audit) rather than algebraic. The choice `honeyCap(72) = 36` (calibrated mode) is anchored to the legacy-cap-stroke-equivalence point: at the legacy Major cap 9, a max-pot hole transferred `⌊9/9⌋ = 1` stroke per max-pot win in 18-hole format; at the legacy Main Finals cap 18, a max-pot hole transferred `⌊18/36⌋ = 0` strokes per single max-pot win in 72-hole format (apex-drama design choice — only sustained pot dominance moves the score in a long format). Under the live default (hole envelope `E = 3`) the per-hole cap is wider — 27 honey on an 18-hole round, `⌊27/9⌋ = 3` strokes per max-pot win — which is the change that drove the betting distribution away from "check-through-to-showdown" toward a real fold/call decision tree.
 
----
+### 5.4. The Endless Card (continuous / cash normalization)
+
+Tour events have a fixed round length `N ∈ {9, 18, 72}`; cash play does not. The §5.2 aggregation assumes a terminating round, so continuous play uses a **rolling** normalization instead — golf scoring is universal across all modes (RULES.md §4.5), and cash tables carry it on the *Endless Card*.
+
+Let `H ⊆ ℕ` be the (unbounded, growing) index set of **scored holes** for player `p` — i.e. holes that reached a contested showdown involving `p`. Folds and tied pots contribute no element to `H` (they neither score nor count toward the denominator). Let `s_p(h) = holeScore(p, h)` per §2 + §6, under the convention the cash table is set to:
+
+```
+holdScore convention (cash):
+  win    → score₀(winner_p)                       -- own hand class, always
+  loss   → score₀(loser_p)                         -- HONORED (Bumblebee) default for Pure NLHE
+         | brickLoss / ladder per §6.1             -- if the table opts into YJ-Stroke
+```
+
+The Endless Card exposes three quantities, all defined incrementally so they are O(1) per hole and never require a session boundary:
+
+```
+cumulative(p)  = Σ_{h ∈ H} s_p(h)                       -- raw strokes to/from par (par = 0)
+holesScored(p) = |H|
+pace₁₈(p)      = ( cumulative(p) / holesScored(p) ) · 18   -- the headline: scoring average per 18-hole round
+                 (defined for holesScored(p) ≥ 1; displayed rounded to 0.1)
+```
+
+`pace₁₈` is the canonical length-independent statistic — a golf scoring average projected onto a standard round, identical in meaning at `|H| = 12` and `|H| = 12 000`. There is **no honey term**: cash wagering is matched-contribution chips (RULES.md §4.3, §5.5), so `honeyNet ≡ 0` on the card and no divisor applies.
+
+**Round bucketing.** Every `18` scored holes auto-closes one logged round `Rₖ = { holes ⌊18(k−1)⌋+1 … 18k }` with stamped total `Σ_{h ∈ Rₖ} s_p(h)`; a fresh round opens with no interruption to play. The live partial round is `R_current` with `holesScored(p) mod 18` holes. This yields, for an arbitrarily long session, a sequence `⟨R₁, R₂, …⟩` of completed 18-hole rounds plus one partial — preserving golf's natural unit (and a well-defined *best round* `min_k Σ_{h ∈ Rₖ} s_p(h)`) without ever forcing the session to end.
+
+**Settlement.** The Endless Card never moves Nectar (RULES.md §5.4): cashout is the chip stack alone. The card is a skill record fed to the Tour profile / Hive-rating pipeline.
 
 ## 6. Per-Hand Resolution and the Dual-Variant Loss-Rule Selector
 
@@ -338,7 +367,7 @@ The loser term selects across the **loser ladder** — four named rungs (the las
 brickLoss(loser_p, T, opener) =                       -- the Yellow Jacket loser ladder
     score₀(loser_p)                                  if loser_p ∈ { Straight_*, … RoyalFlush }   -- NEXT BEST  (own −5…−1; "coolered")
     1                                                if loser_p ∈ { Pair_*, TwoPair_*, ThreeOfAKind }  -- TAKE A STROKE  (+1 bogey)
-    min(C, 1 + max(0, ⌊(T − opener) / opener⌋))       if loser_p = HighCard                        -- LAY A BRICK (+1, T < 2·opener) → STACK BRICKS (+2 once T ≥ 2·opener; "the blow-up")
+    min(C, 1 + max(0, ⌊(T − opener) / opener⌋))       if loser_p ∈ { HighCard_* }                  -- LAY A BRICK (+1, T < 2·opener) → STACK BRICKS (+2 once T ≥ 2·opener; "the blow-up")
 ```
 
 where `T` is the agreed total at showdown, `opener` is the hole's mandatory pot (2 on front-9 holes, `2·m` on back-9 with back-9 multiplier `m`, default `2·2 = 4`), and `C` is the brick cap (default `C = 2` — so the `HighCard` branch is `1` until `T` doubles the opener, then `2`; under `C = 4` it keeps stepping to `3` at `T ≥ 3·opener` and `4` at `T ≥ 4·opener`).
@@ -346,7 +375,7 @@ where `T` is the agreed total at showdown, `opener` is the hole's mandatory pot 
 **Monotone-ladder property.** The rungs form a single non-decreasing ladder in (hand weakness, commitment): for any fixed `(T, opener)` with `T ≥ opener`,
 
 ```
-score₀(loser_p)  ≤  1  ≤  brickLoss(HighCard, T, opener) ≤ C
+score₀(loser_p)  ≤  1  ≤  brickLoss(HighCard_*, T, opener) ≤ C
    (NEXT BEST:             (TAKE A STROKE,         (LAY A BRICK = +1 at T < 2·opener;
     Straight…RoyalFlush,    Pair/TwoPair/Trips:     STACK BRICKS = +2…+C once T ≥ 2·opener
     own −5…−1)              +1 — same +1 as         — "the blow-up", and the loser also
