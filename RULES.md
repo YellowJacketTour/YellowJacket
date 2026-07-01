@@ -8,6 +8,12 @@
   "the Top Pot", "the Hive Rating") are trademarks of Blank Canvas, Inc.
   The scoring law and rule set described herein are proprietary.
   Unauthorized reproduction prohibited.
+
+  LEGAL DISCLAIMER: The sweepstakes / real-money (Pollen) model and the
+  bot-disclosure rules described in this manual are under active 2025-26
+  regulatory scrutiny. Nothing in this document is legal advice, and no
+  claim of blanket legality is made or implied. A per-state gaming-law
+  opinion is required before any real-money operation.
 -->
 
 # Yellow Jacket Tour — Complete Rules Manual
@@ -29,7 +35,7 @@ This document is the canonical, plain-language manual. Every primary brand term,
 ## Table of Contents
 
 1. [The Core Engine (Used by Everything)](#1-the-core-engine-used-by-everything)
-2. [The Two Currencies](#2-the-two-currencies)
+2. [The Currencies](#2-the-currencies)
 3. [Mode A — Tour Events (Honey-Stroke)](#3-mode-a--tour-events-honey-stroke)
 4. [Mode B — Cash Tables, Pure NLHE](#4-mode-b--cash-tables-pure-nlhe)
 5. [Mode C — Cash Tables, YJ Stroke / Bumblebee Stroke](#5-mode-c--cash-tables-yj-stroke--bumblebee-stroke)
@@ -93,38 +99,44 @@ The eight **beats** of a Yellow Jacket hand. Each is a proprietary, branded even
 
 ---
 
-## 2. The Two Currencies
+## 2. The Currencies
 
-The build has **two distinct denominations** that must not be confused:
+The build has **three distinct denominations** that must not be confused. (Currency canon: Nectar is non-redeemable fantasy chips; Pollen is the only real-money path; Honey is in-match symbolic.)
 
 ```
-   ┌──────────────────────────┬──────────────────────────┐
-   │         NECTAR (◈)        │          HONEY            │
-   ├──────────────────────────┼──────────────────────────┤
-   │ Bankroll currency.        │ In-event wager unit.      │
-   │ USD-equivalent.           │                           │
-   │                           │                           │
-   │ Used to:                  │ Used to:                  │
-   │   • Pay tour buy-ins      │   • Wager during a hole   │
-   │   • Sit at cash tables    │     in tour events ONLY   │
-   │   • Receive prize payouts │                           │
-   │   • Transfer P2P          │ Lives only inside a       │
-   │                           │ single tour event.        │
-   │ Persists across events    │ Disappears at event end.  │
-   │ and sessions.             │                           │
-   │                           │                           │
-   │ Cash chips ARE Nectar     │ Cash tables DO NOT        │
-   │ 1:1.                      │ use honey at all.         │
-   └──────────────────────────┴──────────────────────────┘
+   ┌────────────────────┬────────────────────┬────────────────────┐
+   │      NECTAR (◈)     │      POLLEN        │       HONEY        │
+   ├────────────────────┼────────────────────┼────────────────────┤
+   │ Non-redeemable     │ Redeemable         │ In-match symbolic  │
+   │ fantasy chips.     │ voucher — the      │ wager unit.        │
+   │ Status / cash-game │ ONLY real-money     │                    │
+   │ bankroll. NOT      │ path.              │ Used to:           │
+   │ USD-equivalent,    │                    │   • Wager during a │
+   │ NOT redeemable.    │ Used to:           │     hole in tour   │
+   │                    │   • Enter prize /  │     events ONLY    │
+   │ Used to:           │     sweepstakes    │                    │
+   │   • Pay cash-game  │     events         │ Lives only inside  │
+   │     / fantasy buy- │   • Receive real-  │ a single tour      │
+   │     ins            │     money prize    │ event; disappears  │
+   │   • Sit at cash    │     redemptions    │ at event end.      │
+   │     tables         │                    │                    │
+   │   • Transfer P2P   │ Real money flows   │ Cash tables DO NOT │
+   │     (fantasy)      │ ONLY through       │ use honey at all.  │
+   │ Bots OK.           │ Pollen.            │                    │
+   │ Cash chips ARE     │                    │                    │
+   │ Nectar 1:1.        │                    │                    │
+   └────────────────────┴────────────────────┴────────────────────┘
 ```
 
-**Key invariant:** Nectar and Honey **never directly convert**. The bridge between them is your **finish position** in a tour event. Nectar in (buy-in) → play with Honey → finish position determined by stroke score → Nectar out (prize). At cash tables, only Nectar moves.
+**Key invariant:** Nectar and Honey **never directly convert**. The bridge between them is your **finish position** in a tour event. Nectar in (buy-in) → play with Honey → finish position determined by stroke score → Nectar out (fantasy standings). At cash tables, only Nectar moves. **Real-money prize redemption is Pollen-only** — Nectar is non-redeemable fantasy currency and never pays out as cash; only Pollen sweepstakes/prize events touch real money.
 
 ---
 
 ## 3. Mode A — Tour Events (Honey-Stroke)
 
 Tour events are the WSOP/PGA-style format: pay a buy-in, play a fixed-length tournament, finish in a position, get paid.
+
+> **Single-event skill caveat (measured ground truth).** A single tour event's *outcome* is close to a coin flip, not a skill verdict. A single 72-hand (4×18) heads-up event has an outcome skill Spearman ρ ≈ 0.05; even the maximum skill gap (0.30 vs 0.90) wins over 72 holes only ~56% of the time, and finishing in the money is roughly a coin flip. **Skill resolution does not come from any single event's finish** — it comes from season-volume *decision grading* behind the volume gate (§9). Treat a single event as entertainment plus one noisy sample, not "the home of the skill law."
 
 ### 3.1 Where to play
 
@@ -194,7 +206,7 @@ Every hole produces TWO outputs simultaneously:
    └────────────────────────────────────────────────────┘
 ```
 
-At the end of **each round** (per-round reconciliation, not once at event end), that round's net honey is divided by the **honey cap** and subtracted from the round's scorecard:
+The **honey cap** is just the number you divide your honey winnings by before they touch your golf score — a shrink-ray that keeps a big honey swing from swamping the golf. (Since lower wins, winning honey *pulls your score down* a little.) At the end of **each round** (per-round reconciliation, not once at event end), that round's net honey is divided by the honey cap and subtracted from the round's scorecard:
 
 ```
    FINAL ROUND SCORE = round scorecard − (round net honey ÷ honey cap)
@@ -221,6 +233,8 @@ The honey cap has **two selectable modes** (chosen in the Simulator and recorded
 So under the default (calibrated), an 18-hole round divides that round's net honey by **9**. Under spec it divides by 18. **Lower wins.**
 
 ### 3.5 Wagering: agreed-total semantics
+
+**Plain version:** the pot isn't a growing pile of chips — it's a *price you and your opponent agree to play the hole for.* Each bet proposes a new price; a call locks it in. The latest agreed number **is** the pot; everything before it disappears. (Think of haggling: only the price you finally shake on matters, not every number shouted along the way.)
 
 Tour wagering is **NOT** like standard poker. Read carefully:
 
@@ -325,7 +339,7 @@ When a hand goes to showdown and is **not** a tie, the **winner** posts their ow
 | **Lay a Brick** *(a.k.a. "checked it down with air" / "a brick in your pocket")* | only a **high card** — a "brick", nothing made (category 0) — and the pot **never reached double the opener** (you checked it through) | **+1 bogey** | you showed down air, but the cheap way — you didn't commit to it. |
 | **Stack Bricks** *(a.k.a. "the 3-putt" / "spewed into it" / "barreled with air")* | only a **high card** — a "brick" — and you committed honey until the **agreed total reached at least double the opener** | **+2 — the blow-up** *(climbs to +3 / +4 in big pots under the cap-+4 setting)* | the card-wrecker. You bet your nothing into a grown pot — and you lose the larger honey too, so committed air gets hit on both axes. |
 
-The brick (Lay a Brick / Stack Bricks) score is `1 + ⌊(T − opener) ⁄ opener⌋`, clamped to `[1, cap]`, where **T** = the agreed total at showdown, **opener** = the hole's mandatory pot (2 honey front-9, 4 honey back-9), and **cap** = 2 by default. So T = opener → +1; T ≥ 2·opener → +2; under cap +4, T ≥ 3·opener → +3 and T ≥ 4·opener → +4. (A tiny min-raise that doesn't *double* the opener stays at +1.)
+**In plain terms: the bigger the pot you fired your nothing into, the worse the brick.** Equal to the opening pot → +1; double it → +2; triple → +3; quadruple → +4. Formally, the brick (Lay a Brick / Stack Bricks) score is `1 + ⌊(T − opener) ⁄ opener⌋`, clamped to `[1, cap]`, where **T** = the agreed total at showdown, **opener** = the hole's mandatory pot (2 honey front-9, 4 honey back-9), and **cap** = 2 by default. So T = opener → +1; T ≥ 2·opener → +2; under cap +4, T ≥ 3·opener → +3 and T ≥ 4·opener → +4. (A tiny min-raise that doesn't *double* the opener stays at +1.)
 
 Read top to bottom the rungs are non-decreasing in cost — **Next Best (−5…−1)  <  {Take a Stroke, Lay a Brick} (+1)  <  Stack Bricks (+2)** — and they're strictly increasing in *blame*: you ran into a hand (no blame, still a birdie) → took a stroke (no blame, a bogey) → laid a brick (mild — air, but cheap) → stacked bricks (real — air you committed to, the blow-up). On the card, Take a Stroke and Lay a Brick are the same +1; the difference is the honey and the story.
 
@@ -403,7 +417,17 @@ Top ~15% of finish positions cash. The payout curve decays geometrically (defaul
    Players outside the cash line: lose buy-in.
 ```
 
-The prize pool is split this way. There is **no rake** on tour events — the full entry-fee (buy-in) pool goes entirely to the prize pool, and any configured sponsor purse is added on top. The Tour takes no house cut at any tier (Regular, Major, or Main).
+The prize pool is split this way. **The Tour takes a house cut** — this is not a no-rake, "player-friendly" product, and it should not be described as one without that caveat. (Economy canon: a 58/32/10 daily split is a ~42% take; the recreational player subsidizes the pool and the Gold/Nectar margin is the real engine.) The actual economic take must be disclosed at each tier rather than asserting zero house cut; any configured sponsor/overlay purse is added on top of the player-funded remainder.
+
+The **payout curve** is not a single geometric decay. It is a flat-top **Crown band** over the very top (top-1% finishes are a near-coin-flip, so ties there are paid evenly rather than steeply differentiated) feeding into a **power-law middle**, with each position **RD-confidence weighted** and the whole curve sitting **behind the ≥40-graded-event volume gate** (§9.3). Pay nothing — crown or cash on a rating — without that volume gate.
+
+### 3.12 Bots policy (prize funding and real-money events)
+
+AI/bot opponents (Single Player vs AI, population AI in the Simulator) are provided **for liquidity and feel only**. The following guardrails are mandatory:
+
+- **Bots cannot fund prizes.** Buy-ins alone do not fund real-money prize pools — **overlay / guarantees** fund prizes. (Bootstrap overlay scales roughly ~$355k / ~$2.84M / ~$28.4M at 50k / 200k / 1M daily players.)
+- **In real-money (Pollen) events, bots are a shill/fraud risk.** They are only permissible if **disclosed**, **prize-ineligible**, and **money standings are computed human-only**. House bots silently competing for real-money standings are not allowed.
+- **The rating is bot-robust.** Decision-grading (§9.2) is opponent-agnostic, so bot fill does not corrupt the skill rating — human-ranking ρ stays ≈ 0.84 even under 50% bot fill. Bots affect liquidity and table feel, not the integrity of the human skill ranking.
 
 ---
 
@@ -479,7 +503,7 @@ Pure NLHE has **no honey** and **no penalty ledger** — your money result is pu
 - **Folds and tied pots do NOT touch the card.** Only contested showdowns score — so a session of nothing but folds simply scores zero holes, and a nit can't farm a low card by never playing.
 
 **Why "endless."** A cash session has no fixed 9/18/72-hole boundary, so the card never forces a "final score." Instead it maps your play onto golf's natural unit — the 18-hole round — without ever making you stop:
-- **Live headline = scoring average to par, per 18:** `pace = (cumulative strokes ÷ holes scored) × 18`. Par is 0. A player averaging −0.4/hole reads **"−7.2 per 18"** — instantly legible, and just as meaningful after 12 holes as after 1,200. This is the elegant, length-independent number the seat shows.
+- **Live headline = scoring average to par, per 18:** `pace = (cumulative strokes ÷ holes scored) × 18`. In plain terms it answers *"if I kept playing this well for a full 18-hole round, what would I shoot?"* — so a player 12 holes in compares directly to one 1,200 holes in. Par is 0. A player averaging −0.4/hole reads **"−7.2 per 18"**. This is the elegant, length-independent number the seat shows.
 - **Auto-logged rounds:** every **18 scored holes** closes one round (its under/over-par total is stamped to your history) and a fresh round opens seamlessly. Hours of play become a clean series of 18-hole rounds plus a live partial — and a **best-round** to chase.
 - **Raw counters** (cumulative strokes, holes scored) are always available underneath for the grinder who wants the absolute number.
 
@@ -779,18 +803,24 @@ A production season is a fixed slate of **65 events** in a 1024-player universe:
 | **Majors — "the stages"** | 12 | 320 | ~15% (mostly exempt elite) | 4 staged **72-hole** "mountain stages" with cuts (288-hole championship); no heads-up final | 1.35 |
 | **The Main Event → the Top Pot** | 1 | 384 | ~25% (longest qualifier chain) | 4 staged 72-hole legs to crown a standing; then the top 2 advance to **the Top Pot — a 72-hole heads-up final** | 1.6 |
 
-The **Tour-de-France framing** is deliberate: Regulars are the weekly stages; Majors are the mountain stages where the field separates; the Main is the climactic time-trial-into-finale; the Top Pot is the closing sprint. The Majors *are* called "the stages" inside the engine and in the broadcast.
+The **Tour-de-France framing** is deliberate: Regulars are the weekly stages; Majors are the mountain stages where the *prestige* concentrates; the Main is the climactic time-trial-into-finale; the Top Pot is the closing sprint. The Majors *are* called "the stages" inside the engine and in the broadcast.
+
+> **Field-quality caveat (measured).** Do not read the elite-concentrated Majors as "where skill separates" — the measured behavior is the inverse. **Concentrating elites compresses outcomes toward a coin flip** (e.g. 0.80 vs 0.95 skill ⇒ ~0.50 win rate). A skilled player's edge and ROI are realized in the **open field against weaker players** (~0.63), not in restricted elite tiers. The Majors are prestige/credential tiers; they are *not* where outcome-skill separates. Skill separation lives in season-volume decision grading (§9.2), not in stacking the strongest players against each other.
 
 ### 9.2 The Hive Rating — the season's skill rating
 
 Every rated event feeds the **Hive Rating** — a Kalman / Glicko-2-flavored filter on each player's latent skill. The published rating is an Elo-style integer: `clamp(800, 3200, round(2000 + 400·μ))`, with a ± confidence band (RD) and a Glicko-2-flavored volatility term (streaky players keep a wider band, anti-bank).
 
-Per event, two signals feed the rating, blended at **α = 0.6**:
+Per event, two signals feed the rating, blended at **α ≈ 0.8** (decision-quality dominant; ~20% outcome regularizer). The blend canon: **α ≈ 0.8 is optimal** — *pure* decision (α = 1.0) is actually worse, and the ~20% outcome term regularizes the rating and **minimizes collusion leverage**. (Lower α over-weights outcome, which is a near-coin-flip signal at casual volume.)
 
-1. **OUTCOME signal** — a field-relative performance z: `(1 − marginWeight)·z_rank + marginWeight·z_margin + fieldStrengthLambda·μ̄_field`, where `z_rank` is the rankit (probit) transform of a **cut-blind smooth per-round-average order** (so a strong player who got cut on a near-coin-flip cut still measures well), `z_margin` is the winsorized stroke margin, and the final term is the OWGR-style strength-of-field bump.
-2. **DECISION-QUALITY signal (Phase C, v69.103+)** — an observed-action / **EV-loss skill credit**: per hand, the engine computes the EV-gap between the action a player took and the action a game-theoretic-optimal solver would have taken at that decision node. The gap (in bb/100) is z-normalized across the event's field and fed into the rating. For AI play, the formula is analytical (`true_EVloss = K·(1−skill)^p`, with measurement noise scaled by √(18/holes) so longer events measure with proportionally lower noise). For a real-player tour, a per-hand solver pass against the player's strategy posterior fills the same slot (the same metric every modern poker training tool — PioSolver, GTOWizard, MonkerSolver — uses for poker skill measurement; chess engine analysis and golf's strokes-gained metric do the equivalent in their sports).
+1. **OUTCOME signal** (~20% weight) — a field-relative performance z: `(1 − marginWeight)·z_rank + marginWeight·z_margin + fieldStrengthLambda·μ̄_field`, where `z_rank` is the rankit (probit) transform of a **cut-blind smooth per-round-average order** (so a strong player who got cut on a near-coin-flip cut still measures well), `z_margin` is the winsorized stroke margin, and the final term is the OWGR-style strength-of-field bump. Kept small precisely because single-event outcome is near a coin flip.
+2. **DECISION-QUALITY signal (Phase C, v69.103+)** (~80% weight) — the dominant skill credit. Decision quality is **GTOq + ExploitCapture + a GTO-mimicry penalty**, *not* a bare EV-loss-vs-solver number:
+   - **GTOq** — per hand, the EV-gap between the action a player took and the game-theoretic-optimal action at that decision node (in bb/100), z-normalized across the event's field. For AI play the formula is analytical (`true_EVloss = K·(1−skill)^p`).
+   - **ExploitCapture** (modeled exploit weight **wX ≈ 0.45**) — credit for *deviating profitably* to exploit weaker opponents, not just matching GTO. Adding this term lifts top-decile precision from ~0.50 to ~0.63. A **pure GTO bot scores 0 exploit** under this term.
+   - **GTO-mimicry penalty** — a player/bot that merely mimics solver output (no exploitation) is flagged and penalized, so a pure GTO bot does **not** score full marks. (The ExploitCapture grader is built and node-tested with a real `runCFRPlus` wired and the `evByAction` extension done in the fork.)
+   For a real-player tour, a per-hand solver pass against the player's strategy posterior fills the GTOq slot (the same metric every modern poker training tool — PioSolver, GTOWizard, MonkerSolver — uses; chess engine analysis and golf's strokes-gained do the equivalent in their sports).
 
-The per-event update precision is `τ_event = τ₀ · prestige(tier) · √(holes/72) · √(min(N,400)/64) · (rounds_played / R) · sofMul`, where `sofMul = 0.6` if the field is weak (the strength-of-field floor — anti-farming guard). Between events the rating drifts (1/P += ω·f, where f is volatility-scaled); between seasons the off-season drift widens the band further (form fades, OWGR-style).
+The per-event update precision is `τ_event = τ₀ · prestige(tier) · √(holes/72) · √(min(N,400)/64) · (rounds_played / R) · sofMul`, where `sofMul = 0.6` if the field is weak (the strength-of-field floor — anti-farming guard). **Note the primary precision lever is graded event *volume* (count of graded events), not per-event length or tenure:** the rating saturates within ~1 season, so the `√(holes/72)` term is a *secondary* per-event scaling, while cross-event graded volume (gated at ≥40 graded events, §9.3) is what actually moves precision. Between events the rating drifts (1/P += ω·f, where f is volatility-scaled); between seasons the off-season drift widens the band further (form fades, OWGR-style).
 
 ### 9.3 The three honors
 
@@ -809,7 +839,7 @@ Three Top-Pot finale modes (`finaleMode`):
 
 Won by **the player atop the Hive Rating** at season's end who meets all three eligibility criteria:
 
-1. **Events:** played ≥ `minEventsForCrown` of the season's events (production: ~45% of the calendar, ≥3).
+1. **Events (the volume gate):** played ≥ **40 graded events** (`minGradedEventsForCrown = 40`). This is a hard volume gate, not a participation token. **Below ~40 graded events the rating cannot resolve elites at all** — at casual volume (~2.4 events/player) top-1% precision collapses toward **0.00** and the true best player can rank near the bottom; only at ≥40 graded events does top-decile precision reach ~0.5. The crown — and any payout (§3.11) — is tied to this ≥40-graded-event gate. (The earlier "~45% of the calendar, ≥3 events" threshold is nowhere near enough volume to crown on and must not be used.)
 2. **Majors:** played ≥ **rating-tier-scaled** fraction of Majors:
    - Top-1%-by-rating need **≥ 90%** of Majors (≥11 of 12)
    - Top-10%-by-rating need **≥ 70%** of Majors (≥9 of 12)
@@ -819,7 +849,7 @@ Won by **the player atop the Hive Rating** at season's end who meets all three e
 
 **LCB fallback:** if NO player clears all three criteria in a given season, the title falls to the player with the highest **lower-confidence-bound rating** `μ − 1.5·RD` among those who played enough events. This is "good AND trusted" — never a fluky-few-events spike.
 
-The Royal Suitor is the maillot jaune of the bumblebee — the season's skill verdict, analogous to golf's OWGR year-end #1 / cycling's GC winner / tennis's year-end ATP #1. Measured production behavior (in-app, real engine, locked production config, Phase C @ α=0.6): **the Royal Suitor lands on a top-decile-skill player consistently** (crownSkillPct ≈ 0.90), and the **true #1 skill player lands in the top 8–9% of the season rating** (bestPlayerRatingPct ≈ 0.91) — the rating reliably *finds* the elites, even though it doesn't always crown the literal-rank-1 player specifically (at a 1024-player universe with the wide skill spread, many near-elite players are tightly bunched at skill ≥ 0.93 and the rating's specific rank-1 floats within that cluster). The right way to read the system is "the Suitor is reliably a near-elite player," not "the literal #1 always wins" — that latter framing isn't even what real-world year-end rankings deliver.
+The Royal Suitor is the maillot jaune of the bumblebee — the season's skill verdict, analogous to golf's OWGR year-end #1 / cycling's GC winner / tennis's year-end ATP #1. **These precision figures hold only behind the ≥40-graded-event volume gate** (above): conditioned on that gate, the Royal Suitor lands on a top-decile-skill player with roughly ~0.5 top-decile precision. **At casual volume (no/weak gate) these figures do not hold — top-1% precision collapses toward 0.00 and the true best player can rank near the bottom.** Any clean crownSkillPct ≈ 0.90 / bestPlayerRatingPct ≈ 0.91 reading is a clean-AI ceiling at high graded volume, not casual-volume production. The right way to read the system is "behind the volume gate, the Suitor is reliably a near-elite player; without the gate, the rating cannot find the elites at all" — and even gated, "the literal #1 always wins" is not what real-world year-end rankings deliver.
 
 #### 🌼 The Pollen Trail — the form champion
 
@@ -866,12 +896,12 @@ A 6-season `runCareer` is the production default — long enough to see legacies
 - Outputs a full metric table: ρ_active / ρ_season / ρ_eligible / ρ_main / crownSkillPct / trueNo1IsCrown / top5SkillIsCrown / jacketSkillPct / jacketSeasonPct / topPotFavoriteWon / topPotNo1InFinal / rhoByYear.
 - CSV export with full config snapshot. Deterministic per seed.
 
-Confirmed measured behavior (v69.103+ real-engine in-app validation sweeps at the locked production config, Phase C @ α=0.6, Phase 1 noise, event-length-scaled):
-- **ρ_active ≈ 0.90** (Spearman rating-vs-true-skill, over the regulars) — far above the early stub-based prediction of 0.49; the analytical EV-loss term carries much more signal in the real engine than the stub-extrapolation suggested
-- **Royal Suitor skill ≈ top decile** (crownSkillPct ≈ 0.90 — consistently a near-elite player)
-- **bestPlayerRatingPct ≈ 0.91** — the literal #1-skill player lands in the top 8–9% of the season rating reliably; the rating *finds* the elites
-- **rhoByYear curve flat across a 30-year career arc** (~0.89–0.91 from Y1 onward, no drift, no decay) — multi-decade career stability is measured
-- **trueNo1IsCrown / top5SkillIsCrown are structurally low for this config** — NOT because the rating fails, but because at a 1024-player universe with the wide skill spread (0.20–0.95) many near-elite players are tightly bunched at skill ≥ 0.93 and the rating's specific rank-1 floats within that cluster. The Crown is reliably *near*-elite but not specifically *the literal #1* often — and this is the correct, defensible read of how a real world ranking actually works
+Confirmed measured behavior (v69.103+ real-engine in-app validation sweeps at the locked production config, Phase C @ α≈0.8, Phase 1 noise):
+- **ρ_active ≈ 0.69 (clean-AI ceiling); ≈ 0.47–0.62 at realistic human solver-noise** (Spearman rating-vs-true-skill, over the regulars). The Phase C decision-quality credit lifts season ρ_active from ~0.15 (outcome-only) to ~0.69 under *clean AI* play, and to ~0.47–0.62 once realistic human solver-noise is modeled. **ρ ≈ 0.90 is reachable only under clean-AI play; it is NOT the production figure for real humans** — do not present 0.90 as "the measured rating" or claim the real engine "carries much more signal than predicted." The rating saturates within ~1 season, and graded *volume* (not tenure or per-event length) is the lever that gets you there.
+- **Royal Suitor skill ≈ top decile — only behind the ≥40-graded-event gate** (gated top-decile precision ~0.5; any crownSkillPct ≈ 0.90 is a clean-AI ceiling at high graded volume). At casual volume the Suitor cannot be relied on to be near-elite at all.
+- **bestPlayerRatingPct — gate-dependent.** Conditioned on the ≥40-graded-event gate the true best player lands high in the rating; **at casual volume the true best player can rank near the bottom** (top-1% precision ≈ 0.00). The "rating *finds* the elites" claim holds only behind the volume gate.
+- **rhoByYear curve flat across the career arc** (no drift, no decay year-over-year at the ceiling) — multi-year career stability is measured; the absolute level tracks ρ_active above (≈0.47–0.69 depending on human-noise, not ~0.90).
+- **trueNo1IsCrown / top5SkillIsCrown are structurally low for this config** — at a 1024-player universe with the wide skill spread (0.20–0.95) many near-elite players are tightly bunched at skill ≥ 0.93 and the rating's specific rank-1 floats within that cluster, so even gated the Crown is reliably *near*-elite rather than the literal #1 — which is also how real-world year-end rankings behave.
 - **Top Pot stays near coin-flip** (the Yellow Jacket is fed by the Main's standings, but the heads-up single match preserves single-week chaos by design)
 
 ### 9.8 The Season Center (broadcast UI)
@@ -983,6 +1013,6 @@ Not auto-started on page load (browser autoplay policy requires a user gesture);
 - **Tour Honey-Stroke** (also marketed as **Sweet Stroke**): 8-beat Hold'em hole (Tea Box → The Fairway → The Lay-Up → The Hazard → The Approach → The Green → The Putt → The Cup) + bounded golf score per hole + honey pot that converts to strokes via the honey cap at each round end. Two variants (Yellow Jacket / Bumblebee) differ only on decisive-showdown loser score.
 - **Pure NLHE Cash**: Standard online poker, no strokes, no honey, just chip P/L.
 - **YJ Stroke / Bumblebee Stroke Cash**: Pure NLHE wagering + a *separate* golf scorecard scored per showdown from hand class (true golf convention, lower = better; YJ loser posts +1 bogey, Bumblebee loser posts own hand). The scorecard is a pure skill record — it does not convert to Nectar; cashout pays your chip stack only.
-- **Tour de Bourdon** ("the Nectour"): the canonical SEASON layer — a fixed calendar of 52 Regulars + 12 Majors + the Main Event, with a single rolling Hive Rating (Kalman/Glicko on latent skill, blending outcome + decision-quality EV-loss credit at α=0.6) and three year-end honors — 🧥 the Yellow Jacket (chaotic week, the Top Pot heads-up champion) + 👑 the Royal Suitor (class confirmed, the season-rating crown, multi-criteria eligibility) + 🌼 the Pollen Trail (form champion, the decaying-points race). Measured: ρ ≈ 0.90 over the regulars, Suitor consistently top-decile-skill (crownSkillPct ≈ 0.90), 30-year career rating-stability flat (no drift), Top Pot near coin-flip.
+- **Tour de Bourdon** ("the Nectour"): the canonical SEASON layer — a fixed calendar of 52 Regulars + 12 Majors + the Main Event, with a single rolling Hive Rating (Kalman/Glicko on latent skill, blending ~80% decision-quality credit + ~20% outcome regularizer at α≈0.8 — the outcome term minimizes collusion leverage; pure decision at α=1.0 is worse) and three year-end honors — 🧥 the Yellow Jacket (chaotic week, the Top Pot heads-up champion) + 👑 the Royal Suitor (class confirmed, the season-rating crown, multi-criteria eligibility **behind a ≥40-graded-event volume gate**) + 🌼 the Pollen Trail (form champion, the decaying-points race). Measured: a single event's outcome is near a coin flip (outcome ρ ≈ 0.05); season ρ_active ≈ 0.69 clean-AI / ≈ 0.47–0.62 at realistic human solver-noise (ρ ≈ 0.90 is the clean-AI ceiling, not production); behind the ≥40-graded-event gate the Suitor is reliably near-elite (at casual volume the true best can rank near the bottom); career rating-stability flat; Top Pot near coin-flip.
 
 That's the entire game in four sentences.

@@ -15,6 +15,8 @@
 **Date:** 2026-05-02 (re-verified 2026-05-17 against the v69.124 build)
 **Build status:** anchored to the canonical production release as of the document date. Re-verification note (2026-05-17): the formal specification below has been audited against the v69.124 single-file build (`index.html` @ 2026-05-17, the v69.124-spring-cleaning ship). **No mathematical objects in this document have changed** — the Honey-Stroke scoring law, the agreed-total wagering primitive, the round-divisor normalization, the dual-variant loss rule, the pot-gated brick sub-rule, the Tour de Bourdon Kalman/Glicko-2 rating filter, the Phase C observed-action / EV-loss skill-credit term, and the field-selection / off-season / honor-eligibility transitions are all in their last-canonical form (per the v69.103 audit committed in `research/AUDIT-AND-STUDY-v69.103.md`). The work shipped during v69.107–124 is UI/UX surface (The Card, The Session Card, Hero Strip, Golden Fairway music, dead-code/CSS prune) and does not modify any object formalized here.
 
+**Rating-signal note (decision-quality canon).** The Phase C term referenced above is the live lever for the season rating, and its measured behavior should be read as follows. A *single* 72-hand (4×18) heads-up event carries almost no skill signal — outcome-only Spearman rho ≈ 0.05, and even the max skill-gap (0.30 vs 0.90) wins only ~0.56 of the time over 72 holes (ITM ≈ a coin flip); any claim that a single event has rho ≈ 0.4 or "beats WSOP single event" is incorrect. Skill resolves at the *season* level: the Phase C decision-quality credit (EV-loss vs GTO) lifts season rho_active from ~0.15 (outcome-only) to ~0.69 clean / ~0.47–0.62 at realistic human-grade solver noise (rho ≈ 0.90 is the clean-AI ceiling, not production). The decision term is best formalized as `decision = GTOq + ExploitCapture + GTO-mimicry-penalty` (the ExploitCapture extension, modeled weight `wX ≈ 0.45`, lifts top-decile precision ~0.50→0.63; a pure-GTO bot scores 0 exploit and is mimicry-flagged), blended with outcome at `decision/outcome weight α ≈ 0.8` (pure decision at α = 1.0 is worse; the 20% outcome term regularizes and minimizes collusion leverage). The rating saturates within ~1 season, and graded *volume* (not tenure) is the lever; leaderboard precision and any payout require an eligibility gate (≥40 graded events) — at casual volume (~2.4 events/player) top-1% precision ≈ 0.00. These figures are the session-measured canon; the formal section text below is unchanged.
+
 This document is the formal mathematical specification of the Yellow Jacket Tour rule system. Every rule, every parameter, every transformation in the playable build is restated here as a precise mathematical object: a set, a function, a state-machine transition, or a numerical map.
 
 This formalization serves four purposes:
@@ -57,7 +59,7 @@ A *seven-card showdown set* for a player `p` is `S_p = H_p ∪ B`, with `|S_p| =
 
 ### 1.3. The hand class
 
-There are sixteen hand classes used by the build's scorecard mapping (Schema 0).
+There are sixteen hand classes used by the build's scorecard mapping (per RULES.md §7 / `golfScoreFromHandValue()`; the earlier "Schema 0" name is the superseded historical label).
 Premium-bucket thresholds below mirror `golfScoreFromHandValue()` in the build exactly:
 
 ```
@@ -91,7 +93,7 @@ returns the best 5-card hand class achievable from the 7-card set `S_p`. The imp
 
 ---
 
-## 2. Bounded Per-Hand Score (Schema 0)
+## 2. Bounded Per-Hand Score (per RULES.md §7)
 
 The bounded golf-score map for Hold'em hand classes is:
 
@@ -441,7 +443,7 @@ where:
 - `cushion(h-1) = max_survivor(h-1) − leader(h-1) ∈ ℝ⁺` is the gap between the leader and the highest-scoring still-eligible survivor
 - `multiplier ∈ ℝ⁺` is a calibration constant; current build value: `multiplier = 1.5`
 
-Empirical anchoring: at `multiplier = 0.6` (an earlier calibration band), late-entrant winning rate measured at approximately 44% of tournaments. At `multiplier = 1.5` (the current calibration band), late-entrant winning rate measured at approximately 2.75%. The calibration target is non-zero but materially lower expected ROI for late entrants.
+Calibration anchoring: at `multiplier = 0.6` (an earlier calibration band) the late-entrant winning rate was materially higher (a near-parity ROI), and at `multiplier = 1.5` (the current calibration band) it falls to a near-floor rate. The specific figures (~44% and ~2.75%) are pending re-validation against telemetry — they carry no recorded sample size, pool size, seed count, or confidence interval, unlike the §14 calibration protocol (20 seeded seasons + bootstrap 95% CIs) — and should not be cited as measured until re-run under that protocol. The calibration target is non-zero but materially lower expected ROI for late entrants.
 
 ---
 
@@ -548,7 +550,7 @@ The percentile cutoff is invariant to bucket-boundary refinement of `score_C` (b
 For the Big O variant (5-card Omaha Hi-Lo, 2-of-5 + 3-of-5 use rule), define:
 
 ```
-score_hi : Hand → ℤ          -- Schema 0 applied to high hand
+score_hi : Hand → ℤ          -- per-hand score (RULES.md §7) applied to high hand
 score_lo : Hand → ℤ          -- Schema C (Razz mapping) applied to qualifying low
 
 qualLo(B, H_5) = (∃ subset of 2 from H_5, 3 from B, forming 8-or-better low)
@@ -736,7 +738,7 @@ A new player enters after hole 12 of an 18-hole event:
 
 Late entrant's starting score: `-8 + 14 × 1.5 = -8 + 21 = +13`.
 
-The late entrant begins hole 13 at +13, playing only the 6 remaining holes of their abbreviated round. Their probability of winning the event is non-zero but materially below the survivors' (per §7's measured ~2.75% rate).
+The late entrant begins hole 13 at +13, playing only the 6 remaining holes of their abbreviated round. Their probability of winning the event is non-zero but materially below the survivors' (a near-floor rate per §7; the specific ~2.75% figure is pending telemetry re-validation).
 
 ### 16.3. A tied carry-forward
 
@@ -754,7 +756,7 @@ The mathematical structures defined in this specification are implemented in `in
 |---------|----------------|
 | §1.1 deck | `makeDeck()` and `shuffleDeck()` |
 | §1.3 hand class | `evaluate7()` (packed-int category in bits 24+); `handCategoryName()` |
-| §2 Schema 0 score | `golfScoreFromHandValue()` |
+| §2 per-hand score (RULES.md §7) | `golfScoreFromHandValue()` |
 | §3 beat sequence | `streetLabel()`, `streetDealLabel()` |
 | §4 wagering primitive | `playBettingRound()` (heads-up), `mpAct()` (multiplayer) |
 | §4.4 per-hole / per-beat cap | `resolveEventStrokeCaps()` (hole envelope → per-hole cap), `streetCapFor()` (per-beat elastic cap) |

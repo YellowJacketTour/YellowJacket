@@ -32,14 +32,17 @@ The canonical structure of a Yellow Jacket Tour hand. Real-golf semantic order: 
 
 ---
 
-## 2. The Two Currencies
+## 2. The Three Currencies
 
 | Type | Primary mark | Casual variants |
 |------|--------------|------------------|
-| Bankroll currency | **Nectar (◈)** | "the bank," "stash," "stack" (cash context only) |
-| In-event wager unit | **Honey** | "the pot," "the comb" (when describing accumulated honey) |
+| Bankroll currency (non-redeemable fantasy/status chips — bots OK) | **Nectar (◈)** | "the bank," "stash," "stack" (cash context only) |
+| Redeemable prize/sweepstakes voucher (the ONLY real-money path) | **Pollen** | "the voucher," "the ticket" |
+| In-event wager unit (in-match symbolic) | **Honey** | "the pot," "the comb" (when describing accumulated honey) |
 
-**Trademark posture:** Nectar and Honey are too descriptive on their own to register strongly in Class 28 (games). They're protected by common-law use and by the Yellow Jacket Tour family-of-marks argument. Don't file them solo.
+The redeemable-vs-non-redeemable boundary is legally load-bearing: Nectar is non-redeemable (cash-game/status), Pollen is the redeemable voucher for prize/sweepstakes events, and Honey is in-match symbolic. Real money flows ONLY via Pollen sweepstakes events.
+
+**Trademark posture:** Nectar, Pollen, and Honey are too descriptive on their own to register strongly in Class 28 (games). They're protected by common-law use and by the Yellow Jacket Tour family-of-marks argument. Don't file them solo.
 
 ---
 
@@ -74,7 +77,7 @@ Both names refer to the same scoring system. The two marks let the brand have ra
 
 | Term | Use it for | Notes |
 |------|------------|-------|
-| **honey cap** | The round-end Honey→stroke divisor, applied once at each round end. | Two modes: `calibrated` (stepped table — round length 1→cap 1, 9→4, 18→9, 72→36) and `spec` (cap = the round's hole count N). Supersedes the older term **"round divisor"** (acceptable as a synonym, but "honey cap" is preferred in new copy). |
+| **honey cap** | The round-end Honey→stroke divisor, applied once at each round end. | Source of truth is **RULES.md §7 + `golfScoreFromHandValue`** (do not restate an independent table that can drift). Two modes: `calibrated` (canonical divisor 36/9/4/1 for 72/18/9/<9-hole rounds) and `spec` (cap = the round's hole count N). Supersedes the older term **"round divisor"** (acceptable as a synonym, but "honey cap" is preferred in new copy). |
 | **hole envelope (E)** | The per-hole, per-player Honey ceiling in stroke-equivalents. | Default E = 3. Per-hole cap = `round(E × honeyCap)`. When E > 0 it replaces the legacy per-tier stroke caps. |
 | **pot-elastic K** | The per-beat cap multiplier. | Default K = 5. Each betting beat's cap is `min(3 × hole-envelope cap, ⌈K × agreed total⌉)`. |
 

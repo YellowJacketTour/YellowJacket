@@ -101,7 +101,7 @@ The following YJ engine components are **invariants** that the mixed-games exten
 
 2. **Honey wagering primitive** in tournament events: agreed-total scalar proposals bounded per hole by the hole envelope E (default 3 — each player may wager up to E strokes' worth of Honey per hole, `effectiveCap = round(E × honeyCap)`) and per betting beat by pot-elastic K (default 5 — each beat's cap is K times the Honey already agreed into the pot, hard-ceilinged at 3× the hole envelope). The legacy per-tier stroke caps (Regular 6 / Major 9 / Main-early 8 / Main-finals 18) survive only as the E = 0 fallback. Cash tables use matched-contribution wagering.
 
-3. **Round-end honey-cap reconciliation.** At each round end, that round's net honey is divided by the **honey cap** and subtracted from the round's scorecard. The honey cap has two selectable modes: `calibrated` (the ship default — stepped table {1, 4, 9, 36} for round lengths {1, 9, 18, 72} holes) and `spec` (the v23 design-intent mode — the divisor is the round's hole count N).
+3. **Round-end honey-cap reconciliation.** At each round end, that round's net honey is divided by the **honey cap** and subtracted from the round's scorecard. The honey cap has two selectable modes: `calibrated` (the ship default — stepped table {1, 4, 9, 36} for round lengths {<9, 9, 18, 72} holes; i.e. 72→36, 18→9, 9→4, and any round shorter than 9 holes →1) and `spec` (the v23 design-intent mode — the divisor is the round's hole count N).
 
 4. **Carry-forward on tied showdowns** at the per-hand level. The full honey pot rolls to the next hole's mandatory opener.
 
@@ -109,7 +109,7 @@ The following YJ engine components are **invariants** that the mixed-games exten
 
 6. **Tournament structure**: aggregate stroke play (default) or bracket knockout (alternative), with cushion + cut elimination, satellite ladder, exemption windows. Multi-way table support (4 / 6 / 9 players in rounds R1–R3, collapsing to a heads-up final at R4) is **live in the aggregate-stroke-play format** — selecting a table size above HU routes events through the multi-way matched-contribution runner (matched-contribution wagering, per-table-size cap scaling, fold-discipline-slack tightening, opener doubling at N > 6, default loser rule = Bumblebee via `multiwayVariant`). The bracket-knockout format remains heads-up. This mixed-games extension can build on the multi-way runner as a live capability.
 
-7. **Audit suite**: a fixed battery of metrics — skillSpearman, skillEVSpearman_nonMain, authoredVsMeasuredSkill, tier ROI separation (all-events and ex-Main), finalsSkillEdge per event type, champion-score percentile distribution, equity-bucket fold-rate distribution, true fold cost histogram, bluff-read suppression by readingDepth — measured against a 1,000-player pool over 100 simulated seasons.
+7. **Audit suite**: a fixed battery of metrics — skillSpearman, skillEVSpearman_nonMain, authoredVsMeasuredSkill, tier ROI separation (all-events and ex-Main), finalsSkillEdge per event type, champion-score percentile distribution, equity-bucket fold-rate distribution, true fold cost histogram, bluff-read suppression by readingDepth — measured against a 1,000-player pool over 100 simulated seasons. **Important:** the outcome-only metrics here (skillSpearman, skillEVSpearman_nonMain) are near-noise at single-event/casual volume (single-event rho ~0.05, season outcome-only rho ~0.15); the primary skill metric is the decision-quality-credited rho_active (per-decision EV-loss-vs-GTO grading, blended with outcome at α ≈ 0.8, behind a ≥40-graded-event volume gate). See §17–18.
 
 ## 2. Distinction Between Engine Reuse and Calibration Transfer
 
@@ -233,13 +233,16 @@ The audit suite must be re-run on PLO. The following are **falsifiable predictio
 
 | Metric | Hold'em baseline (1k pool, 100 seasons) | PLO hypothesis | Concern if violated |
 |--------|------------------------------------------------|----------------|---------------------|
-| skillSpearman | 0.4872 | 0.42 – 0.52 | Below 0.42 → skill compression; below 0.35 → reject PLO calibration |
-| skillEVSpearman_nonMain | 0.0356 | 0.03 – 0.08 | Negative or near-zero → AI optima don't transfer |
+| skillSpearman (outcome-only, *see note*) | ~0.15 (season outcome-only rho; single-event ~0.05) | comparable, ~0.10 – 0.20 | A near-zero outcome-only rho is *expected*, not a failure — it confirms ungraded wins are near-noise at these volumes. Skill signal comes from the decision-quality layer below, not this row. |
+| rho_active (decision-quality-credited, behind volume gate) | ~0.47 – 0.62 (realistic human solver-noise; ~0.69 clean-AI ceiling) | comparable band | Below ~0.40 with the grading layer and ≥40-graded-event gate in place → skill compression; investigate. |
+| skillEVSpearman_nonMain | 0.0356 | 0.03 – 0.08 | A near-zero value here is *confirmation* that the outcome-only signal is near-noise at these volumes (single-event rho ~0.05), not a pass band for skill expression — it is the motivation for the decision-quality grader, not a target. A *negative* value would flag AI-optima transfer failure. |
 | authoredVsMeasuredSkill | +0.0443 | +0.02 – +0.10 | Negative or > +0.15 → calibration inversion or over-correction |
 | Elite ROI vs Bottom ROI separation (all-events) | 12.5pp | 8pp – 18pp | <8pp → ROI signal weak; >18pp → tier overfit |
 | Champion score (Major) | mean +5.76 | mean −8 to −13 | Outside band → equity hypothesis violated; investigate evaluator |
 | belowParRate (Major) | 24.1% | 65% – 85% | <60% → champions not capitalising on equity edge |
-| ITM rate | 13.6% | 13% – 16% | Should be invariant under payout structure unchanged |
+| ITM rate | 13.6% | 13% – 16% | Should be invariant under payout structure unchanged. Note: at single-event / casual volume ITM is roughly a coin flip and carries no skill signal — it is a structural payout-coverage check, not a skill measure. |
+
+**Note on the skill metric (corrected against engine-measured canon).** The legacy `skillSpearman` row measures rank correlation between *authored skill and total event wins* — i.e. a pure **outcome** signal. The engine measures that outcome-only correlation at ~0.15 over a season and ~0.05 over a single 72-hand (4×18) heads-up event; a single-event ITM is roughly a coin flip. Any figure near 0.4–0.5 from outcome (wins) alone is **not** reachable and was a fabricated baseline in earlier drafts. Real skill signal (rho_active ~0.47–0.62 at realistic human solver-noise, up to ~0.69 clean-AI) is produced only by the **Phase C decision-quality layer** (EV-loss vs GTO grading), blended with outcome at α ≈ 0.8 and computed **behind a volume eligibility gate** (≥40 graded events; see §17–18). All skill-acceptance metrics in this spec should be read as the decision-quality-credited rating, not raw outcome wins.
 
 The bands above are tighter than earlier exploratory bounds. They reflect the smaller measurement uncertainty achievable with 100-season runs (1k pool) and bootstrap 95% confidence intervals on the audit metrics; rejection thresholds are set at roughly 2σ deviations from the band centres rather than at qualitative cliffs.
 
@@ -467,14 +470,18 @@ Each new variant must run the existing canonical-build audit suite plus variant-
 1. Hand-class frequency table at random showdown (Monte Carlo, 1M hands).
 2. Equity distribution at decision points (2 hole cards / 4 hole cards / 5 hole cards on 0/3/4/5-card boards as applicable).
 3. Modal showdown hand class.
-4. Mean and variance of per-hole golf score under Schema 0 (Hold'em) or Schema C (lowball).
+4. Mean and variance of per-hole golf score under RULES.md §7 / golfScoreFromHandValue (the 16-row mapping; for Hold'em/PLO/high-only) or Schema C (lowball).
+
+**Decision-quality grading layer (required — this is the actual skill-signal lever).** Outcome-only metrics (wins, ITM, tier ROI) measure near-zero skill at single-event and casual volumes (single-event rho ~0.05, season outcome-only rho ~0.15). Real skill signal comes from **Phase C decision-quality grading**: per-variant EV-loss-vs-GTO grading of each decision, blended with the outcome term at **α ≈ 0.8** (pure decision, α = 1.0, is worse; the 20% outcome term regularizes and minimizes collusion leverage). The grader is **GTOq + ExploitCapture + a GTO-mimicry penalty** (a pure GTO bot scores 0 exploit and is mimicry-flagged); modeled exploit-capture weight wX ≈ 0.45 lifts top-decile precision from ~0.50 to ~0.63. Every variant's reported skill metric is this **graded rating (rho_active)**, not outcome wins.
+
+**Volume eligibility gate (precondition for all leaderboard-derived metrics).** At casual volume (~2.4 events/player) top-1% precision is ~0.00 and the true best player can rank near the bottom. Tier ROI, champion percentile, and finalsSkillEdge must be computed **only over players with ≥40 graded events** — the gate needed to reach even ~0.5 top-decile precision. Without the gate, leaderboard standings are not a skill signal.
 
 **Post-implementation calibration runs (4–8 hours wall-clock per run, 1k pool / 100 seasons):**
 
-5. skillSpearman, skillEVSpearman, skillEVSpearman_nonMain.
+5. skillEVSpearman, skillEVSpearman_nonMain (outcome-only diagnostics) **and rho_active** (the decision-quality-credited rating from the grading layer above — the primary skill metric).
 6. authoredVsMeasuredSkill (sign and magnitude).
-7. Tier ROI: Elite / Upper / Mid / Bottom, all-events and ex-Main.
-8. finalsSkillEdge per event type (major / regular / main).
+7. Tier ROI: Elite / Upper / Mid / Bottom, all-events and ex-Main (computed only over players past the ≥40-graded-event volume gate).
+8. finalsSkillEdge per event type (major / regular / main) (volume-gated, as above).
 9. Champion score distribution: mean, median, p10, p25, p75, p90, min, max.
 10. belowParRate (overall and per event type).
 11. Action rates by street (fold / check / call / bet / raise).
@@ -495,7 +502,8 @@ A variant is **ship-viable** if and only if all of the following hold:
 
 | Criterion | Threshold | Failure mode if violated |
 |-----------|-----------|--------------------------|
-| skillSpearman | ≥ 0.42, bootstrap 95% CI lower bound ≥ 0.35 | Skill expression collapsed; reject or redesign |
+| rho_active (decision-quality-credited rating, computed **only** over players past the ≥40-graded-event volume gate; *not* raw outcome wins) | ≥ 0.45, bootstrap 95% CI lower bound ≥ 0.40 | Skill expression collapsed; reject or redesign |
+| skillSpearman (outcome-only, informational) | ≥ 0.10 | Below ~0.10 is *expected at low volume* and is **not** a reject signal on its own — the correctly-functioning Hold'em baseline sits at ~0.15 outcome-only. Do not gate ship on this raw-outcome row; gate on rho_active above. |
 | authoredVsMeasured | within [+0.02, +0.12], bootstrap CI excludes zero | Calibration inverted or over-corrected; do not ship |
 | Elite ROI − Bottom ROI (all-events) | ≥ 8pp, ≤ 20pp | Tier separation too weak (<8pp) or overfit (>20pp) |
 | Champion score (Major) median | within [−18, +8] | Out-of-band; investigate evaluator and scoring map |
@@ -507,7 +515,7 @@ All thresholds are evaluated against bootstrap 95% confidence intervals computed
 
 A variant is **calibration-viable** (ships pending more audit cycles) if all qualitative signs are correct (positive Spearman, positive authoredVsMeasured, monotone tier ROI) but quantitative levels fall outside the bands above. In this case the variant is added to the build with a "Beta" badge in the lobby and a continued audit cycle.
 
-A variant is **rejected** if any qualitative sign is inverted: authoredVsMeasured negative, Bottom ROI > Elite ROI by ≥ 2pp, or skillSpearman < 0.20.
+A variant is **rejected** if any qualitative sign is inverted: authoredVsMeasured negative, Bottom ROI > Elite ROI by ≥ 2pp, or the decision-quality-credited rho_active (behind the ≥40-graded-event volume gate) falls below ~0.40. (Do **not** reject on raw outcome-only skillSpearman < 0.20 — the correctly-functioning baseline sits at ~0.15 outcome-only and would be wrongly rejected by that rule.)
 
 ## 19. Pre-Calibration Analytical Work
 
@@ -592,7 +600,7 @@ The cash YJ Stroke / Bumblebee Stroke variants keep a separate golf scorecard (t
 2-7 Triple Draw and Badugi need a draw-selection UI (which cards to discard) between betting rounds. This is straightforward but is incremental UI work not present in any existing YJ mode.
 
 **R9 (Severity: low). Per-variant "premium kicker" buckets.**
-The existing Hold'em scorecard has J+, T+, 9+ premium-kicker buckets in some categories. PLO inherits these. Lowball Schema C uses 8 percentile buckets (not 16). For Big O hi-lo split, the Lo half uses Schema C (8 buckets) while the Hi half uses Schema 0 (16 buckets with premium kickers). This asymmetry is acceptable but should be documented in the Rules tab.
+The existing Hold'em scorecard has J+, T+, 9+ premium-kicker buckets in some categories. PLO inherits these. Lowball Schema C uses 8 percentile buckets (not 16). For Big O hi-lo split, the Lo half uses Schema C (8 buckets) while the Hi half uses RULES.md §7 / golfScoreFromHandValue (the 16-row mapping with premium kickers). This asymmetry is acceptable but should be documented in the Rules tab.
 
 **R10 (Severity: low). Audit suite runtime grows linearly with variant count.**
 Each new variant's audit run is a 4–8 hour 100-season simulation. Adding 5 variants to the standard regression suite adds 20–40 hours of compute time per release cycle. This is manageable but not trivial; consider a subsetting strategy (full audit on PLO + Hold'em as canonical pair; reduced audit on others).
@@ -613,7 +621,7 @@ Each new variant's audit run is a 4–8 hour 100-season simulation. Adding 5 var
 
 **Deliverable:** PLO works end-to-end (cash and tour), audit confirms ship-viability per Acceptance Criteria (§18).
 
-**Decision gate:** If audit shows PLO is ship-viable with reasonable calibration drift, proceed to Phase 2. If audit shows fundamental incompatibility (skillSpearman < 0.30, authoredVsMeasured negative, etc.), STOP and re-evaluate the mixed-games strategy.
+**Decision gate:** If audit shows PLO is ship-viable with reasonable calibration drift, proceed to Phase 2. If audit shows fundamental incompatibility (decision-quality-credited rho_active < ~0.40 with the grading layer and ≥40-graded-event volume gate in place, authoredVsMeasured negative, etc.), STOP and re-evaluate the mixed-games strategy. (Gate on the graded rho_active, not raw outcome-only skillSpearman, which is ~0.15 even for a healthy baseline.)
 
 ## Phase 2 — Big O (3–4 weeks after Phase 1)
 
@@ -825,7 +833,7 @@ The "Verification status" column flips from "unverified" to a date and seed once
 
 **Honey-Stroke law** — YJ's per-hole scoring system: bounded golf score (−5..+2) plus honey pot, with net honey divided by round divisor at round end.
 
-**Honey cap** (formerly "round divisor") — the divisor that converts a round's net honey to strokes, applied once at each round end. Two selectable modes: `calibrated` (the ship default — stepped table {1, 4, 9, 36} for {1, 9, 18, 72} hole rounds) and `spec` (the v23 design-intent mode — divisor = the round's hole count N). The mode is recorded in run exports as `honey_cap_mode`.
+**Honey cap** (formerly "round divisor") — the divisor that converts a round's net honey to strokes, applied once at each round end. Two selectable modes: `calibrated` (the ship default — stepped table {1, 4, 9, 36} for {<9, 9, 18, 72} hole rounds; i.e. 72→36, 18→9, 9→4, <9→1) and `spec` (the v23 design-intent mode — divisor = the round's hole count N). The mode is recorded in run exports as `honey_cap_mode`.
 
 **Hole envelope (E)** — the per-hole, per-player Honey ceiling in stroke-equivalents (default 3). The per-hole pot cap is `effectiveCap = round(E × honeyCap)`. When E > 0 it replaces the legacy per-tier stroke caps; E = 0 falls back to them.
 
@@ -833,7 +841,9 @@ The "Verification status" column flips from "unverified" to a date and seed once
 
 **Schema C** — the lowball-to-scorecard mapping adopted in §10. Combines empirical CDF percentile bucketing (variance compression) with conventional hand-class labels at bucket boundaries (recognisable language for variant players). Supersedes earlier Schema A (categorical only) and Schema B (percentile only) drafts.
 
-**Spearman rank correlation (skillSpearman)** — non-parametric rank correlation between authored skill and total event wins. Primary skill-expression metric in the YJ audit suite.
+**Spearman rank correlation (skillSpearman)** — non-parametric rank correlation between authored skill and total event wins. This is a pure **outcome** metric and is near-noise at single-event / casual volume (engine-measured single-event rho ~0.05; season outcome-only rho ~0.15); it is **not** the primary skill metric and a figure near 0.4–0.5 from outcome alone is not achievable. The primary skill-expression metric is **rho_active** (below).
+
+**rho_active (decision-quality-credited rating)** — the actual skill metric in the YJ audit suite. Built from per-decision EV-loss-vs-GTO grading (GTOq + ExploitCapture + GTO-mimicry penalty), blended with the outcome term at α ≈ 0.8, and computed only over players past the ≥40-graded-event volume eligibility gate. Reaches ~0.47–0.62 at realistic human solver-noise (~0.69 clean-AI ceiling). Where this spec sets skill-acceptance thresholds, they are on rho_active, not raw outcome wins.
 
 **Stroke cap (legacy per-tier)** — the older fixed per-event ceiling on the honey pot per hole (Regular 6 / Major 9 / Main-early 8 / Main-finals 18). Used only when the hole envelope E is disabled (E = 0); under default settings (E = 3) the live per-hole cap is `round(E × honeyCap)` instead, and per-beat growth is governed by pot-elastic K.
 

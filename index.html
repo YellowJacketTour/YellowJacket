@@ -3523,7 +3523,8 @@ function setBackNineMultiplier(n) {
 //   'one-way'    (default): winner gains the full pot in honey; loser gains 0.
 //                Loser pays only the golf-side stroke penalty. This is the
 //                original YJ rule — positive-sum on honey, "table prints"
-//                interpretation. Career ρ_active stays high (≈ 0.94, per
+//                interpretation. Career ρ_active stays high (≈ 0.94 is the
+//                clean-AI ceiling; ~0.47–0.62 realistic-human, per
 //                Phase 2). Slight max-bet attractor at single events.
 //   'tug-of-war': winner gains pot/2 net; loser loses pot/2 net. Matches
 //                classical poker chip-flow (both players contributed half
@@ -6194,7 +6195,7 @@ const Season = {
     majorHoles: 72,             // MAJORS: holes per STAGE — 4 staged "mountain stages" with cuts (Tour-de-France style: the stages that separate the men from the boys; 72 ⇒ each stage is a full tournament's worth of golf, a 288-hole championship). 0/unset ⇒ same as holesPerRound (= the pure-18h tour). The HYBRID (18h Regular rounds + 72h Major/Main stages) is the default.
     mainHoles: 72,              // THE MAIN EVENT (the grandest Major): same idea. 0/unset ⇒ same as holesPerRound.
     nRounds: 4,                 // R1 free → ~50% cut after R2 & R3 → R4 (no cut); lowest aggregate wins
-    universeSize: 1024,         // the player population (tour pros + amateurs) — the production default; measured in-app ρ_active ≈ 0.90 at this scale with Phase C @ α=0.6 (the EV-loss skill credit added in v69.103, event-length-noise-calibrated in v69.104). 30-year career rhoByYear curve flat (no drift). crownSkillPct ≈ 0.90 (top-decile-skill Suitor consistently); the literal #1 lands in top-8–9% of the rating reliably.
+    universeSize: 1024,         // the player population (tour pros + amateurs) — the production default. NOTE ON ρ: in-app ρ_active ≈ 0.90 / crownSkillPct ≈ 0.90 at this scale are the CLEAN-AI / analytic-grading CEILING (deterministic-bot play, low solver-noise), NOT the production-realistic figure. Under realistic human solver-noise the season rating resolves to ρ_active ≈ 0.47–0.62 (clean ≈ 0.69), saturating within ~1 season behind a ≥40-graded-event eligibility gate. (Phase C EV-loss credit added v69.103; the measured-optimal decision weight is α≈0.8 — note the default below is still 0.6, a known doc/engine gap.) 30-year rhoByYear curve flat at the ceiling.
     nRegulars: 52, nMajors: 12, // calendar: Regulars + Majors interleaved, then the Main (a real-world season's worth — one Regular ≈ weekly, one Major ≈ monthly, the Main once a year)
     regularField: 256, majorField: 320, mainField: 384,                          // production fields; the very-real shape is even larger (~7000 at the Main) — scale up via the UI for a fuller tour
     qualifierSlotsRegular: 8, qualifierSlotsMajor: 12, qualifierSlotsMain: 28,    // outsider spots per field (overridden in _norm: ~50% of a Regular, ~15% of a Major, ~25% of the Main)
@@ -6243,7 +6244,7 @@ const Season = {
     pointsTableMain:    [100, 80, 64, 52, 44, 40, 35, 30, 26, 22, 18, 14, 10, 6, 4, 2],
     // --- v69.102 Phase C: observed-action GTO-EV-loss skill-credit term in the rating-z ---
     useEVLossCredit: true,      // v69.103: PUSHED ON as production default. The EV-loss-blended rating delivered the predicted ~+0.24 ρ_active lift in the v69.102 validation sweep. Set to false to A/B against the legacy pure-outcome rating.
-    evLossAlpha: 0.6,           // blend weight: z* = α·z_action + (1−α)·z_outcome ; 0=pure outcome (current), 1=pure decision-quality
+    evLossAlpha: 0.8,           // blend weight: z* = α·z_action + (1−α)·z_outcome ; 0=pure outcome, 1=pure decision-quality. 0.8 is the MEASURED optimum (peaks top-decile precision ~0.57; pure-decision α=1.0 is worse; the 0.2 outcome term regularizes the rating and minimizes collusion leverage). Was 0.6 pre-audit.
     evLossSignal: 2.0,          // K in the analytical model true_EVloss = K·(1−skill)^p (bb/100 units; calibrated so the elite-vs-rec gap is ~1.4 bb/100, matching the HU-NLHE literature)
     evLossExponent: 1.5,        // p in the analytical model — curvature of the skill→EV-loss map
     evLossNoise: 0.6,           // per-event measurement σ (bb/100): Phase 1 ≈ 0.4–0.6 (clean AI grading); Phase 2 ≈ 1.0–1.5 (solver-fit residual for real players). Tunable per study arm.
@@ -7503,11 +7504,11 @@ function renderSeasonRunCard(out) {
         const isCrown = p.id === rs.id, isJk = p.id === yj.id;
         const tr = el('tr', { style: isJk ? 'background:rgba(212,160,23,0.10);' : isCrown ? 'background:rgba(120,180,255,0.07);' : (i % 2 ? 'background:rgba(255,255,255,0.02);' : '') });
         const wins = ((p.jacketWins || 0) ? ('🧥' + (p.jacketWins > 1 ? '×' + p.jacketWins : '') + ' ') : '') + ((p.majorWins || 0) ? ('🏆' + (p.majorWins > 1 ? '×' + p.majorWins : '') + ' ') : '') + ((p.regularWins || 0) ? ('•×' + p.regularWins) : '');
-        [String(p.rank || (i + 1)), (isJk ? '🧥 ' : isCrown ? '👑 ' : '') + p.name, f2(p.careerEarnings != null ? p.careerEarnings : p.earnings), String(p.hiveRating || '?'), (p.skillPct != null ? pc(p.skillPct) + 'ile' : '—') + (p.skillRank ? ' (#' + p.skillRank + ')' : ''), wins || '—', String(p.bestFinish === Infinity || p.bestFinish == null ? '—' : p.bestFinish)].forEach((v, ci) => tr.appendChild(el('td', { style: 'padding:3px 5px; border-bottom:1px solid rgba(255,255,255,0.04);' + (ci === 0 ? 'opacity:0.45;' : '') + (ci === 2 ? 'font-weight:700; color:' + GOLD + ';' : '') + (ci === 4 ? 'opacity:0.8;' : ''), text: v })));
+        [String(p.rank || (i + 1)), (isJk ? '🧥 ' : isCrown ? '👑 ' : '') + p.name + (p.eligible ? '' : ' ⚠'), f2(p.careerEarnings != null ? p.careerEarnings : p.earnings), String(p.hiveRating || '?'), (p.skillPct != null ? pc(p.skillPct) + 'ile' : '—') + (p.skillRank ? ' (#' + p.skillRank + ')' : ''), wins || '—', String(p.bestFinish === Infinity || p.bestFinish == null ? '—' : p.bestFinish)].forEach((v, ci) => tr.appendChild(el('td', { style: 'padding:3px 5px; border-bottom:1px solid rgba(255,255,255,0.04);' + (ci === 0 ? 'opacity:0.45;' : '') + (ci === 2 ? 'font-weight:700; color:' + GOLD + ';' : '') + (ci === 4 ? 'opacity:0.8;' : ''), text: v })));
         mtbl.appendChild(tr);
       });
       d.appendChild(mtbl);
-      d.appendChild(note('Prize money awarded by finish position — top-60% of the field paid by a quadratic curve (winner gets the biggest share). Money correlates with skill at the SEASON level (good players cash often) but a single Main win or a single hot Major lights up the leaderboard quickly. Top-of-money is often top-of-rating but not always — a high-volume part-timer with one big result can place high here without contending for the Royal Suitor.'));
+      d.appendChild(note('Prize money awarded by finish position — top-60% of the field paid by a quadratic curve (winner gets the biggest share). Money correlates with skill at the SEASON level (good players cash often) but a single Main win or a single hot Major lights up the leaderboard quickly — a high-volume part-timer with one big result can place high here without contending for the Royal Suitor. ⚠ = has NOT cleared the eligibility/volume gate (≥ minEventsForCrown events + RD/Majors). REAL-MONEY (Pollen) RULE: this simulation is AI-only and pays simulated Nectar, so the gate here is display-only. In production, prize standings and any cash payout MUST be computed on prize-eligible HUMANS only — bots/house accounts are disclosed, prize-ineligible, and excluded from money standings (decision-grading stays opponent-agnostic, so bot matches still feed the rating) — behind the ≥40-graded-event gate with RD-confidence weighting. That enforcement lives in the partner server contract (YJSACRED_WIRE_FORMAT.md §Money-Standings), not this client.'));
       return d;
     }
 
@@ -7534,7 +7535,7 @@ function renderSeasonRunCard(out) {
       tbl.appendChild(tr);
     });
     d.appendChild(tbl);
-    d.appendChild(note('Hive Rating = a Kalman/Glicko filter on latent skill, blending OUTCOME (event finishes) and DECISION-QUALITY (Phase C: EV-loss skill credit) at α=0.6. 2000 ≈ tour-average, +400 per z-unit of skill. ±RD is the confidence band — it tightens with every event, re-widens between seasons (form fades) and for streaky players. Suitor column: ✓ met all three Royal-Suitor criteria · – not enough events yet · · played enough but rating not yet confident / Majors short.'));
+    d.appendChild(note('Hive Rating = a Kalman/Glicko filter on latent skill, blending OUTCOME (event finishes) and DECISION-QUALITY (Phase C: EV-loss skill credit) at α=0.8 (the measured-optimum decision weight). 2000 ≈ tour-average, +400 per z-unit of skill. ±RD is the confidence band — it tightens with every event, re-widens between seasons (form fades) and for streaky players. Suitor column: ✓ met all three Royal-Suitor criteria · – not enough events yet · · played enough but rating not yet confident / Majors short.'));
     if (multi && out.careerLog) {
       d.appendChild(ruleLine());
       d.appendChild(secHdr('career arc — winners by year'));
@@ -7608,7 +7609,7 @@ function renderSeasonRunCard(out) {
     g.appendChild(stat('True #1 = Suitor?', s.trueNo1IsCrown ? 'yes' : 'no', (s.top5SkillIsCrown ? 'a top-5-skill player IS' : 'no top-5-skill player IS') + ' the Suitor'));
     d.appendChild(g);
     d.appendChild(el('div', { style: 'font-size:10px; line-height:1.65; opacity:0.7; padding:9px 12px; border-radius:6px; background:rgba(255,255,255,0.03);', text:
-      'The Hive Rating blends OUTCOME signal (event finishes — bounded at ρ_single ≈ 0.05 at 18h, ≈ 0.19 at 72h by Honey-Stroke\'s ~1-stroke/round separation) with DECISION-QUALITY signal (Phase C: observed-action EV-loss credit, the same metric PioSolver/GTOWizard use) at α=0.6. Pooled over ' + cal.totalEvents + ' events this season the regulars\' ρ landed at ' + f2(s.rhoActive) + ' (production typical ≈ 0.90). The Royal Suitor here was a ' + pc(s.crownSkillPct) + 'ile player (production typical: top-decile-skill consistently); the Yellow Jacket a ' + pc(s.jacketSkillPct) + 'ile one (the heads-up Top Pot stays single-match-chaotic by design — class confirmed via the Suitor, the Jacket can be stolen on the day). At a 1024-player universe with the wide skill spread, many near-elite players are tightly bunched at skill ≥ 0.93 — the rating reliably sorts the broad field but the specific literal-rank-1 floats within the top-cluster, so the system delivers "consistently a near-elite Suitor," not "the literal #1 always wins" (a frame that doesn\'t describe real world rankings either).' }));
+      'The Hive Rating blends OUTCOME signal (event finishes — bounded at ρ_single ≈ 0.05 at 18h, ≈ 0.19 at 72h by Honey-Stroke\'s ~1-stroke/round separation) with DECISION-QUALITY signal (Phase C: observed-action EV-loss credit, the same metric PioSolver/GTOWizard use) at α=0.6. Pooled over ' + cal.totalEvents + ' events this season the regulars\' ρ landed at ' + f2(s.rhoActive) + ' (clean-AI ceiling ≈ 0.90; realistic-human ≈ 0.47–0.62). The Royal Suitor here was a ' + pc(s.crownSkillPct) + 'ile player (production typical: top-decile-skill consistently); the Yellow Jacket a ' + pc(s.jacketSkillPct) + 'ile one (the heads-up Top Pot stays single-match-chaotic by design — class confirmed via the Suitor, the Jacket can be stolen on the day). At a 1024-player universe with the wide skill spread, many near-elite players are tightly bunched at skill ≥ 0.93 — the rating reliably sorts the broad field but the specific literal-rank-1 floats within the top-cluster, so the system delivers "consistently a near-elite Suitor," not "the literal #1 always wins" (a frame that doesn\'t describe real world rankings either).' }));
     if (multi && out.careerLog) {
       d.appendChild(ruleLine());
       d.appendChild(secHdr('career arc — winners by year'));
@@ -15475,7 +15476,7 @@ function computeYJHandEV(heroHand, board, range, pot, callAmount, heroStack, div
   // Estimate showdown stroke score for hero if they reach showdown and lose.
   // Use the bounded scorecard map for hero's current 7-card best hand.
   const heroEval = evalSevenCard(heroHand.concat(board.length >= 5 ? board : board.concat([{rank:'2',suit:'♣'},{rank:'3',suit:'♦'},{rank:'4',suit:'♥'}].slice(0, 5 - board.length))));
-  const heroStrokeIfWin = (typeof yjScoreFromClassName === 'function') ? yjScoreFromClassName(heroEval.className) : 0;
+  const heroStrokeIfWin = heroEval.golf;  // P1: premium-aware golf (was className-only yjScoreFromClassName, no premium kickers)
   // True fold cost: +1 bogey + agreedTotal/divisor
   const trueFoldCost = 1 + (pot / divisor);
   // Call EV (in stroke units; lower = better)
@@ -15544,7 +15545,11 @@ function cfrTerminalPayoff(node, heroHand, villainHand, board, divisor) {
   if (node.type === 'showdown') {
     // Evaluate both hands. Need a complete board.
     const fullBoard = board.slice();
-    while (fullBoard.length < 5) fullBoard.push({ rank: '2', suit: '♣' });  // shouldn't happen for postflop
+    if (fullBoard.length < 5) {                                              // fallback (shouldn't trigger postflop): deal DISTINCT non-colliding cards, not duplicate 2♣ (the old code pushed identical 2♣ → duplicate cards + hole-card collisions, corrupting the showdown eval)
+      const used = new Set(heroHand.concat(villainHand).concat(board).map(c => c.rank + c.suit));
+      const rnk = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'], sut = ['♣','♦','♥','♠'];
+      while (fullBoard.length < 5) { const r = rnk[(Math.random() * 13) | 0], s = sut[(Math.random() * 4) | 0], k = r + s; if (used.has(k)) continue; used.add(k); fullBoard.push({ rank: r, suit: s }); }
+    }
     let heroV, villV;
     try {
       heroV = evalSevenCard(heroHand.concat(fullBoard));
@@ -15552,8 +15557,7 @@ function cfrTerminalPayoff(node, heroHand, villainHand, board, divisor) {
     } catch (e) { return 0; }
     if (heroV.value > villV.value) {
       // Hero wins: get own bounded score + honey
-      const heroScore = (typeof yjScoreFromClassName === 'function')
-        ? yjScoreFromClassName(heroV.className) : 0;
+      const heroScore = heroV.golf;  // P1: premium-aware golf score (canon-aligned, includes premium kickers)
       return heroScore - (node.contributedVillain / divisor);
     } else if (villV.value > heroV.value) {
       // Villain wins: hero takes +1 bogey + loses contributed honey
@@ -15970,8 +15974,7 @@ function cfrPlusTerminalPayoff(node, heroHand, villainHand, fullBoard, divisor) 
       villV = evalSevenCard(villainHand.concat(fullBoard));
     } catch (e) { return 0; }
     if (heroV.value > villV.value) {
-      const heroScore = (typeof yjScoreFromClassName === 'function')
-        ? yjScoreFromClassName(heroV.className) : 0;
+      const heroScore = heroV.golf;  // P1: premium-aware golf score (canon-aligned, includes premium kickers)
       return heroScore - (node.contributedVillain / divisor);
     } else if (villV.value > heroV.value) {
       return 1 + (node.contributedHero / divisor);
@@ -16138,7 +16141,7 @@ function cfrPlusRecurse(node, heroHand, villainHand, board, divisor,
   } else {
     handKey = handForKey.map(c => c.rank + c.suit).join('');
   }
-  const nodeKey = currentActor + '|' + node.street + '|' + node.facingBet + '|' + node.lastActor + '|' + handKey;
+  const nodeKey = currentActor + '|' + node.street + '|' + node.facingBet + '|' + node.lastActor + '|' + handKey + '|' + legalActs.join(',');  // legal-action signature: prevents infoset-key collisions between nodes with the SAME (actor,street,facingBet,lastActor,hand) but DIFFERENT action sets (e.g. 4-action pre-raise-cap vs 2-action fold/call at the cap), which previously shared a mismatched-length regret array → undefined strategy entries → NaN → uniform-strategy collapse.
   if (!regrets[nodeKey]) regrets[nodeKey] = legalActs.map(() => 0);
   if (!strategySum[nodeKey]) strategySum[nodeKey] = legalActs.map(() => 0);
   // Strategy via regret matching (CFR+: positive regrets only)
@@ -16179,6 +16182,41 @@ function cfrPlusRecurse(node, heroHand, villainHand, board, divisor,
     regrets[nodeKey][i] = Math.max(0, regrets[nodeKey][i] + oppReach * regret);  // CFR+ clamp
   }
   return currentActor === 'villain' ? -nodeUtility : nodeUtility;
+}
+
+// Grader support: hero-perspective EV of a node when BOTH players follow the
+// converged average strategy (strategySum). Iterative; samples actions + chance
+// cards (consistent with the MC villain-hand outer loop). Used by runCFRPlus to
+// return per-root-action EV (evByAction) for the decision-quality grader (GTOq).
+function cfrPlusRolloutValue(node, heroHand, villainHand, board, divisor, strategySum, abstractMode) {
+  let depth = 0;
+  while (true) {
+    if (++depth > 80) return 0;
+    if (node.type === 'fold') return cfrPlusTerminalPayoff(node, heroHand, villainHand, board, divisor);
+    if (node.type === 'street_end') {
+      const streetIdx = STREET_NAMES.indexOf(node.street);
+      if (streetIdx >= 3) { const sd = cfrPlusCloneNode(node); sd.type = 'showdown'; return cfrPlusTerminalPayoff(sd, heroHand, villainHand, board, divisor); }
+      const used = new Set(heroHand.concat(villainHand).concat(board).map(c => c.rank + c.suit));
+      const ranks = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'], suits = ['♣','♦','♥','♠'];
+      const add = streetIdx === 0 ? 3 : 1; const nc = [];
+      while (nc.length < add) { const r = ranks[(Math.random() * 13) | 0], s = suits[(Math.random() * 4) | 0], k = r + s; if (used.has(k)) continue; used.add(k); nc.push({ rank: r, suit: s }); }
+      board = board.concat(nc);
+      node = { type: 'decision', street: STREET_NAMES[streetIdx + 1], pot: node.pot, facingBet: 0, lastActor: null, toAct: 'hero', contributedHero: node.contributedHero, contributedVillain: node.contributedVillain, canBet: true, canRaise: true, canAllin: node.canAllin, raisesThisStreet: 0 };
+      continue;
+    }
+    const actor = node.toAct;
+    const legal = cfrPlusLegalActions(node);
+    if (!legal.length) return 0;
+    const handForKey = actor === 'hero' ? heroHand : villainHand;
+    const handKey = abstractMode ? ('B' + abstractHandBucket(handForKey, board)) : handForKey.map(c => c.rank + c.suit).join('');
+    const key = actor + '|' + node.street + '|' + node.facingBet + '|' + node.lastActor + '|' + handKey + '|' + legal.join(',');
+    const sums = strategySum[key];
+    let probs;
+    if (sums && sums.length === legal.length) { const t = sums.reduce((a, b) => a + b, 0); probs = t > 0 ? sums.map(x => x / t) : legal.map(() => 1 / legal.length); }
+    else probs = legal.map(() => 1 / legal.length);
+    let rnd = Math.random(), idx = 0; for (; idx < probs.length - 1; idx++) { if (rnd < probs[idx]) break; rnd -= probs[idx]; }
+    node = cfrPlusApplyAction(node, actor, legal[idx]);
+  }
 }
 
 // Drives multi-street CFR+ from current spot. v69.40 — async + chunked +
@@ -16243,18 +16281,35 @@ async function runCFRPlus(heroHand, board, range, pot, divisor, iterations, abst
   } else {
     rootHandKey = heroHand.map(c => c.rank + c.suit).join('');
   }
-  const rootKey = 'hero|' + startStreet + '|0|null|' + rootHandKey;
+  const legalActs = cfrPlusLegalActions(rootTemplate);
+  const rootKey = 'hero|' + startStreet + '|0|null|' + rootHandKey + '|' + legalActs.join(',');  // must mirror the in-recurse nodeKey (incl. legal-action signature)
   const sums = strategySum[rootKey] || [];
   const total = sums.reduce((a, b) => a + b, 0);
-  const legalActs = cfrPlusLegalActions(rootTemplate);
   const avgStrategy = {};
   if (total > 0) {
     legalActs.forEach((act, i) => { avgStrategy[act] = (sums[i] || 0) / total; });
   } else {
     legalActs.forEach(act => { avgStrategy[act] = 1 / legalActs.length; });
   }
+  // Grader support: per-root-action hero EV (Honey-Stroke units) via MC rollout
+  // under the converged average strategy. Feeds the decision-quality grader's GTOq
+  // term (EV-loss vs the best action). Bounded extra cost (M rollouts × |actions|).
+  const evByAction = {};
+  {
+    const M = 600;
+    for (const act of legalActs) {
+      let ev = 0;
+      for (let i = 0; i < M; i++) {
+        const vh = sampleableRange[(Math.random() * sampleableRange.length) | 0].cards;
+        const forced = cfrPlusApplyAction(rootTemplate, 'hero', act);
+        ev += cfrPlusRolloutValue(forced, heroHand, vh, board, divisor, strategySum, abstractMode);
+      }
+      evByAction[act] = ev / M;
+    }
+  }
   return {
     strategy: avgStrategy,
+    evByAction: evByAction,        // per-root-action hero EV for the grader (GTOq)
     iterations: completed,
     infoSets: Object.keys(regrets).length,
     elapsedMs: elapsedMs,
@@ -18887,7 +18942,20 @@ function evalSevenCard(cards) {
   else { value = ranks[0]; className = 'High Card'; }
   // Tiebreak kicker injection.
   value = value * 100 + (ranks[0] || 0);
-  return { value, className };
+  // Premium-aware golf score (mirrors golfScoreFromHandValue canon exactly, using the
+  // rank data already in scope). Additive field — existing .value/.className callers
+  // are unaffected. Solver/eval sites route here for full premium-kicker fidelity.
+  let golf;
+  if (straightFlushHigh) golf = -5;
+  else if (quads.length) golf = -4;
+  else if (trips.length && (pairs.length || trips.length >= 2)) golf = (trips[0] >= 11 ? -3 : -2); // Full House: J+ trips premium
+  else if (flushCards) golf = (flushCards[0] >= 10 ? -2 : -1);                                     // Flush: T-high+ premium
+  else if (straightHigh) golf = (straightHigh >= 9 ? -2 : -1);                                     // Straight: 9-high+ premium
+  else if (trips.length) golf = -1;                                                                 // Three of a Kind
+  else if (pairs.length >= 2) golf = (pairs[0] >= 11 ? -1 : 0);                                     // Two Pair: J+ top pair premium
+  else if (pairs.length === 1) golf = (pairs[0] >= 10 ? 0 : 1);                                     // Pair: TT+ premium
+  else golf = ((ranks[0] || 0) >= 11 ? 1 : 2);                                                      // High Card: J-high+ premium
+  return { value, className, golf };
 }
 
 // Lightweight cash decision policy. Reuses tour decideFor for hand-strength
@@ -22365,7 +22433,7 @@ function yjScoreFromClassName(cn) {
   if (cn.indexOf('full') !== -1) return -2;
   if (cn.indexOf('flush') !== -1) return -1;
   if (cn.indexOf('straight') !== -1) return -1;
-  if (cn.indexOf('three') !== -1 || cn.indexOf('trips') !== -1) return 0;
+  if (cn.indexOf('three') !== -1 || cn.indexOf('trips') !== -1) return -1;  // canon fix: Three of a Kind = -1 per golfScoreFromHandValue (line ~4311); was a stale Schema-0 0. (Premium-kicker upgrades still unmodeled here — route callers to golfScoreFromHandValue for full fidelity: P1.)
   if (cn.indexOf('two pair') !== -1) return 0;
   if (cn.indexOf('pair') !== -1) return 1;
   return 2; // high card
@@ -34174,6 +34242,119 @@ try {
   console.error('Yellow Jacket boot failed:', e);
   showFatalError('Yellow Jacket failed to boot. If you opened this via file://, your browser may be blocking storage or startup APIs.', e && (e.stack || e.message) ? (e.stack || e.message) : String(e));
 }
+</script>
+<script>
+/* ============================================================================
+   YJEconomy — in-app wiring of the node-tested standalone economy/grader modules
+   (treasury-curve.js · overlay-ramp.js · exploit-capture.js). These are pure
+   function libraries — inert until called — exposed as window.YJEconomy so the
+   rating/payout/overlay logic is reachable in-app (e.g. an Economy/Money admin
+   surface, or the Hive grader). KEEP IN SYNC with the standalone .js files,
+   which remain the node-testable source of truth (exploit-capture.test.js).
+   ============================================================================ */
+window.YJEconomy = (function () {
+  'use strict';
+  var clamp = function (x, lo, hi) { return x < lo ? lo : x > hi ? hi : x; };
+  var dot = function (freqs, fn) { var s = 0; for (var a in freqs) s += freqs[a] * fn(a); return s; };
+  var klDiv = function (p, q, eps) { eps = eps || 1e-6; var s = 0; for (var a in p) { var pa = p[a]; if (pa <= 0) continue; s += pa * Math.log(pa / ((q[a] || 0) + eps)); } return s; };
+
+  // ---- treasury-curve ----
+  function confAdjustedScore(mu, rd, kappa) { kappa = (kappa == null ? 1.5 : kappa); return mu - kappa * rd; }
+  function eligible(players, opts) { opts = opts || {}; var minEvents = opts.minEvents == null ? 40 : opts.minEvents, maxRD = opts.maxRD == null ? Infinity : opts.maxRD; return players.filter(function (p) { return (p.events | 0) >= minEvents && (p.rd == null ? 0 : p.rd) <= maxRD; }); }
+  function buildCurve(o) {
+    var pool = o.pool, paid = o.paid, flatTop = o.flatTop || 0, exponent = o.exponent == null ? 0.9 : o.exponent, floor = o.floor || 0;
+    if (!(pool > 0) || !(paid > 0)) throw new Error('pool and paid must be > 0');
+    flatTop = Math.min(flatTop, paid);
+    var raw = new Array(paid), k;
+    for (k = 1; k <= paid; k++) raw[k - 1] = Math.pow(k, -exponent);
+    if (flatTop > 0) { var s = 0; for (k = 0; k < flatTop; k++) s += raw[k]; var f = s / flatTop; for (k = 0; k < flatTop; k++) raw[k] = f; }
+    var sum = 0; for (k = 0; k < paid; k++) sum += raw[k];
+    var payout = raw.map(function (w) { return (pool * w) / sum; });
+    if (floor > 0) {
+      for (var it = 0; it < 64; it++) {
+        var belowCost = 0, aboveSum = 0;
+        for (k = 0; k < paid; k++) { if (payout[k] <= floor) belowCost += floor; else aboveSum += payout[k]; }
+        var remaining = pool - belowCost;
+        if (remaining <= 0) { payout = payout.map(function () { return pool / paid; }); break; }
+        var changed = false, scale = aboveSum > 0 ? remaining / aboveSum : 0;
+        for (k = 0; k < paid; k++) { if (payout[k] <= floor) { if (payout[k] !== floor) { payout[k] = floor; changed = true; } } else { var nv = payout[k] * scale; if (Math.abs(nv - payout[k]) > 1e-9) changed = true; payout[k] = nv; } }
+        if (!changed) break;
+      }
+    }
+    var perRank = payout.map(function (v, i) { return { rank: i + 1, payout: v }; });
+    var total = payout.reduce(function (a, b) { return a + b; }, 0);
+    return { perRank: perRank, total: total, check: Math.round(total) };
+  }
+  function cadence(annual, split) { split = split || { monthly: 0.45, quarterly: 0.25, annual: 0.30 }; return { perMonth: (annual * split.monthly) / 12, perQuarter: (annual * split.quarterly) / 4, annualCrown: annual * split.annual }; }
+  function annualTreasury(o) { var avgEntry = o.avgEntry == null ? 1 : o.avgEntry, pct = o.treasuryPct == null ? 0.32 : o.treasuryPct, days = o.days == null ? 365 : o.days; return o.avgDailyField * avgEntry * pct * days; }
+
+  // ---- overlay-ramp ----
+  function adoption(day, rampDays, seedFrac, steepness) {
+    steepness = steepness || 8;
+    var x = (day / rampDays - 0.5) * steepness, logistic = 1 / (1 + Math.exp(-x));
+    var lo = 1 / (1 + Math.exp(steepness * 0.5)), hi = 1 / (1 + Math.exp(-steepness * 0.5));
+    var norm = (logistic - lo) / (hi - lo); return seedFrac + (1 - seedFrac) * norm;
+  }
+  function rampOverlay(o) {
+    var matureSpend = o.matureSpend, prizeReturnPct = o.prizeReturnPct, guarantee = o.guarantee, rampDays = o.rampDays, seedFrac = o.seedFrac;
+    var totalOverlay = 0, crossover = null, samples = [];
+    for (var day = 1; day <= rampDays; day++) {
+      var organicSpend = matureSpend * adoption(day, rampDays, seedFrac), organicPrize = organicSpend * prizeReturnPct;
+      var overlay = Math.max(0, guarantee - organicPrize), paidPool = Math.max(guarantee, organicPrize);
+      totalOverlay += overlay; if (crossover === null && organicPrize >= guarantee) crossover = day;
+      if (day === 1 || day % Math.ceil(rampDays / 6) === 0 || day === rampDays) samples.push({ day: day, organicSpend: organicSpend, organicPrize: organicPrize, overlay: overlay, paidPool: paidPool, returnRatio: organicSpend > 0 ? paidPool / organicSpend : Infinity });
+    }
+    return { totalOverlay: totalOverlay, crossover: crossover, samples: samples };
+  }
+  function guaranteeForCrossover(matureSpend, prizeReturnPct, coverAt) { coverAt = coverAt == null ? 1.0 : coverAt; return matureSpend * coverAt * prizeReturnPct; }
+
+  // ---- exploit-capture (grader) ----
+  function potOddsBucket(spot) { var pot = +spot.pot || 0, toCall = +spot.toCall || 0; if (toCall <= 0) return 'check'; var r = toCall / (pot + toCall); return r < 0.2 ? 'po_lo' : r < 0.4 ? 'po_mid' : 'po_hi'; }
+  function textureClass(spot) { if (spot._texture) return spot._texture; var n = (spot.board && spot.board.length) || 0; return n === 0 ? 'pre' : n === 3 ? 'flop' : n === 4 ? 'turn' : 'river'; }
+  function bucketOf(spot) { return (spot.street || textureClass(spot)) + '|' + potOddsBucket(spot) + '|' + textureClass(spot); }
+  function onehot(a) { var o = {}; o[a] = 1; return o; }
+  function estimateOppModel(observed, gtoFreqsByBucket, opts) {
+    opts = opts || {}; var k = opts.shrinkK == null ? 12 : opts.shrinkK, counts = {}, n = {}, b, a;
+    for (var i = 0; i < observed.length; i++) { var ob = observed[i]; if (!counts[ob.bucket]) { counts[ob.bucket] = {}; n[ob.bucket] = 0; } counts[ob.bucket][ob.action] = (counts[ob.bucket][ob.action] || 0) + 1; n[ob.bucket]++; }
+    var freqsByBucket = {}, biasByBucket = {};
+    for (b in counts) { var gto = gtoFreqsByBucket[b] || {}, cnt = counts[b], tot = n[b], w = tot / (tot + k), acts = {}, f = {}, bias = {}; for (a in cnt) acts[a] = 1; for (a in gto) acts[a] = 1; for (a in acts) { var obsF = (cnt[a] || 0) / tot, g = gto[a] || 0; f[a] = w * obsF + (1 - w) * g; bias[a] = f[a] - g; } freqsByBucket[b] = f; biasByBucket[b] = bias; }
+    return { freqsByBucket: freqsByBucket, biasByBucket: biasByBucket, n: n };
+  }
+  function gtoqOfDecision(o, evLossScale) {
+    var evByAction = o.evByAction, strategy = o.strategy, chosenAction = o.chosenAction;
+    if (evByAction) { var vals = Object.keys(evByAction).map(function (a) { return evByAction[a]; }); var best = Math.max.apply(null, vals); var chosen = evByAction[chosenAction]; var evLoss = Math.max(0, best - (chosen == null ? best : chosen)); return 1 - clamp(evLoss / evLossScale, 0, 1); }
+    return 1 - clamp(klDiv(onehot(chosenAction), strategy) / 3.0, 0, 1);
+  }
+  function exploitCaptureOfDecision(o) { var playerEV = dot(o.playerFreqs, function (a) { return o.rolloutEV(o.spot, a, o.oppModel); }); var gtoEV = dot(o.strategy, function (a) { return o.rolloutEV(o.spot, a, o.oppModel); }); return clamp(playerEV - gtoEV, 0, o.capX) / o.capX; }
+  function mimicryFlag(o, t) { t = t || {}; var epsKL = t.epsKL == null ? 0.05 : t.epsKL, epsX = t.epsX == null ? 0.05 : t.epsX; return (klDiv(o.playerFreqs, o.gtoFreqs) < epsKL && o.rollingExploit < epsX) ? 1 : 0; }
+  var EC_DEFAULTS = { wG: 0.45, wX: 0.45, wM: 0.10, evLossScale: 3.0, capX: 2.0, shrinkK: 12, epsKL: 0.05, epsX: 0.05, outcomeWeight: 0.20 };
+  function gradePlayer(decisions, ctxObj) {
+    var ctx = ctxObj.ctx, oppModel = ctxObj.oppModel, playerFreqsByBucket = ctxObj.playerFreqsByBucket || null, cfg = ctxObj.cfg || {};
+    var C = {}; for (var kk in EC_DEFAULTS) C[kk] = EC_DEFAULTS[kk]; for (kk in cfg) C[kk] = cfg[kk];
+    if (!playerFreqsByBucket) { var cnt = {}; decisions.forEach(function (d) { var b = bucketOf(d.spot); (cnt[b] || (cnt[b] = {}))[d.chosenAction] = ((cnt[b] || {})[d.chosenAction] || 0) + 1; }); playerFreqsByBucket = {}; for (var b in cnt) { var tot = Object.keys(cnt[b]).reduce(function (s, a) { return s + cnt[b][a]; }, 0), f = {}; for (var a in cnt[b]) f[a] = cnt[b][a] / tot; playerFreqsByBucket[b] = f; } }
+    var sgtoq = 0, sexp = 0, mimHits = 0, ds = 0, n = 0, rollingExploit = 0;
+    decisions.forEach(function (d) {
+      var g = ctx.solveGTO(d.spot); if (!g || !g.strategy) return;
+      var bucket = bucketOf(d.spot), pFreqs = playerFreqsByBucket[bucket] || onehot(d.chosenAction);
+      var gtoq = gtoqOfDecision({ evByAction: g.evByAction, strategy: g.strategy, chosenAction: d.chosenAction }, C.evLossScale);
+      var exploit = exploitCaptureOfDecision({ rolloutEV: ctx.rolloutEV, spot: d.spot, strategy: g.strategy, playerFreqs: pFreqs, oppModel: oppModel, capX: C.capX });
+      rollingExploit = 0.8 * rollingExploit + 0.2 * exploit;
+      var mim = mimicryFlag({ playerFreqs: pFreqs, gtoFreqs: g.strategy, rollingExploit: rollingExploit }, { epsKL: C.epsKL, epsX: C.epsX });
+      var wsum = (C.wG + C.wX) || 1;
+      ds += (C.wG * gtoq + C.wX * exploit) / wsum - C.wM * mim; sgtoq += gtoq; sexp += exploit; mimHits += mim; n++;
+    });
+    if (!n) return { n: 0, gtoq: 0, exploit: 0, mimicryRate: 0, decisionScore: 0 };
+    return { n: n, gtoq: +(sgtoq / n).toFixed(4), exploit: +(sexp / n).toFixed(4), mimicryRate: +(mimHits / n).toFixed(4), decisionScore: +(ds / n).toFixed(4) };
+  }
+  function makeRolloutEV(payoff) { return function (spot, heroAction, oppModel) { var bucket = bucketOf(spot); var vf = (oppModel && oppModel.freqsByBucket && oppModel.freqsByBucket[bucket]) || spot._villainFreqs || { call: 1 }; return dot(vf, function (va) { return payoff(spot, heroAction, va); }); }; }
+
+  return {
+    version: 'YJEconomy/1.0 (mirrors treasury-curve.js · overlay-ramp.js · exploit-capture.js)',
+    treasury: { confAdjustedScore: confAdjustedScore, eligible: eligible, buildCurve: buildCurve, cadence: cadence, annualTreasury: annualTreasury },
+    overlay: { adoption: adoption, rampOverlay: rampOverlay, guaranteeForCrossover: guaranteeForCrossover },
+    exploitCapture: { klDiv: klDiv, dot: dot, bucketOf: bucketOf, estimateOppModel: estimateOppModel, gtoqOfDecision: gtoqOfDecision, exploitCaptureOfDecision: exploitCaptureOfDecision, mimicryFlag: mimicryFlag, gradePlayer: gradePlayer, makeRolloutEV: makeRolloutEV, DEFAULTS: EC_DEFAULTS },
+  };
+})();
 </script>
 </body>
 </html>

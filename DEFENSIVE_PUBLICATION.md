@@ -63,17 +63,17 @@ The following 16-row mapping is one specific calibration of §3.1 for Texas Hold
 | Four of a Kind | — | −4 |
 | Full House | premium (top boat) | −3 |
 | Full House | other | −2 |
-| Flush | premium (A/K-high) | −2 |
+| Flush | premium (T-high or better) | −2 |
 | Flush | other | −1 |
-| Straight | premium (T-high or better) | −1 |
-| Straight | other | 0 |
-| Three of a Kind | premium kicker (J+) | 0 |
-| Three of a Kind | other | +1 |
-| Two Pair | top pair, premium kicker (T+) | 0 |
-| Two Pair | other | +1 |
-| One Pair | premium pair (J+) and premium kicker (9+) | +1 |
-| One Pair | other | +2 |
-| High Card | — | +2 |
+| Straight | premium (9-high or better) | −2 |
+| Straight | other | −1 |
+| Three of a Kind | — (no premium split) | −1 |
+| Two Pair | top pair premium (J+) | −1 |
+| Two Pair | other | 0 |
+| One Pair | premium pair (TT+) | 0 |
+| One Pair | other | +1 |
+| High Card | premium (J-high or better) | +1 |
+| High Card | other | +2 |
 
 The mapping is *one* calibrated instantiation; the mechanic claimed is the bounded-score-from-class principle in §3.1, not this specific table.
 
@@ -175,11 +175,11 @@ A working implementation of the system in §§3.1–3.12 exists in the form of a
 
 Audit data demonstrating the technical effects claimed in §§3.6, 3.8, and 3.9 above is available on file with the author. The audit data includes, for the canonical Hold'em-only Yellow Jacket variant calibrated as of build version v69.24:
 
-- Spearman rank correlation between authored-skill and empirical-performance across a 1,000-player pool over 100 simulated seasons: approximately 0.49 (versus near-zero in earlier uncalibrated builds).
+- Spearman rank correlation between authored-skill and empirical-performance across a 1,000-player pool over 100 simulated seasons: approximately 0.15 for the outcome-only mechanics disclosed in §§3.1–3.12 (versus near-zero in earlier uncalibrated builds). (The legacy v69.24 audit recorded ~0.49, but that figure was an outcome-only point estimate carried forward without context and does not reflect a re-measurement under current methodology; outcome-only season rho measures ~0.15. A higher season rho — measured ~0.47–0.62 at realistic human solver-noise, up to ~0.69 clean — is achievable ONLY by adding Phase C decision-quality grading (EV-loss vs GTO), which is NOT among the mechanics disclosed in this section; the high figure depends on graded decision quality, not on outcomes alone.)
 - Late-entrant winning rate at multiplier 1.5: approximately 2.75% (versus approximately 44% at multiplier 0.6).
-- Champion 72-hole stroke-play final score distribution: median approximately +5.76, with a defined par mapping.
+- 72-hole stroke-play final score distribution: median approximately +5.76, with a defined par mapping. (This is a property of the scoring scale — a score-distribution/par-calibration statistic only — and is NOT evidence that a single 72-hole event selects the most-skilled player. Single-event outcome skill is near a coin flip (single-event outcome skill rho ~0.05, ITM ~ a coin flip); skill signal accrues only across many graded events, not within one event.)
 
-The above are working empirical measurements supporting the technical-effect claims in this disclosure.
+The above are working empirical measurements supporting the technical-effect claims in this disclosure. Two further measured findings bound how these figures should be read, and the calibration evidence should NOT be taken as a claim of strong ranking power at casual volume: (1) the elevated season rho depends on Phase C decision-quality grading, not on the outcome-only mechanics alone (see the note on the rho figure above); and (2) leaderboard ranking precision is near zero at casual volume — at ~2.4 graded events per player, top-1%/top-decile precision measures ~0.00 and the true best player can rank near the bottom. Reliable ranking (top-decile precision ~0.5) is reached only behind an eligibility gate of >=40 graded events per player.
 
 ---
 
