@@ -60,6 +60,34 @@ the proof's PASS gates).
 
 ---
 
+## Adopt safely — a non-destructive integration path (read this before porting)
+
+**This is a spec + reference repo, delivered separately — NOT a pull request into your monorepo.** Nothing
+here overwrites your code, changes your build, or touches your history. Adopt it additively, at defined
+seams, at your own pace:
+
+1. **Add, don't replace.** Create *new* modules inside the mapped packages/services. Your apps, renderer,
+   audio, UI, Nakama runtime, Chia/VRF wiring, and deployment stay exactly as they are.
+2. **The grader swaps a *scoring basis*, not your engine.** It replaces the heuristic skill-profile number
+   with the EV-loss **grade**. Your `yellowjacket-core` game logic, dealing, and stroke-play scoring are
+   untouched — the grade is computed *from* the hands your engine already produces.
+3. **The proofs are read-only conformance tests.** Every `proofs/*.js` is plain, dependency-free Node.
+   They add no dependencies and never run in your pipeline. Port the logic into TypeScript, then keep the
+   proof as the acceptance test (your port should reproduce its PASS gates).
+4. **The seam is a pipeline, not a rewrite.** Wire the new pieces in this order, each a discrete stage:
+   `hands played (your engine) → GRADE (new module) → SEAL grade (new; Merkle root → your chia-anchor) →
+   RATE (new, in tournament-worker) → PAY two bases (new)`. Each stage is independently addable and
+   independently testable.
+5. **Branch → port one module → pass its proof → wire the seam → merge on your schedule.** Start with
+   `packages/yellowjacket-core` (the grader); everything else depends on a correct grade. You can stop at
+   any rung and still have a working build.
+6. **Pull-based, you're in control.** Nothing was pushed to your repo. You take what you want, when you
+   want; there is no forced dependency and no version lock.
+
+**What CANNOT break your build by adopting this:** your clients/apps, renderer, match runtime, dealing
+fairness, deploy, and existing tests — none of them are modified by anything in this repo. The worst case
+of a bad port is a failing *new* module with a failing *new* proof, isolated from everything shipping.
+
 ## What's canonical here vs. what the productized build owns
 
 - **This repo owns:** the *rules of record*, the *grading method*, the *integrity spec*, the *economy
