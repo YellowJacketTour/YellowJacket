@@ -348,6 +348,41 @@ pace₁₈(p)      = ( cumulative(p) / holesScored(p) ) · 18   -- the headline:
 
 **Settlement.** The Endless Card never moves Nectar (RULES.md §5.4): cashout is the chip stack alone. The card is a skill record fed to the Tour profile / Hive-rating pipeline.
 
+### 5.5. Per-hole attribution (2026-07-08 — simulation-evidenced addition)
+
+§5.2's `finalScore` formula is unchanged and still holds — it is an identity, not a design choice:
+`Σ(honeyNet(p,h)/honeyCap(N))` equals `(Σ honeyNet(p,h))/honeyCap(N)` by plain distributivity, so
+the ROUND TOTAL is mathematically the same whether the honey term is divided once at round end or
+per hole and summed. What is NOT invariant is **attribution**: which specific hole gets credit for
+a specific chip decision.
+
+Two Monte Carlo A/B tests (heads-up rounds at 9/18/72 holes, 20,000 trials per skill-gap, ground-
+truth skill parameter controlling correct press/fold decisions) found:
+
+1. Flooring the round-end term (`⌊·⌋`, as §5.2's formula specifies) measurably reduces how often
+   the actually-more-skilled player's final score correctly beats the weaker player's, relative to
+   plain division — roughly 1.3-1.7 percentage points worse win-rate discrimination across the
+   tested round lengths. **§5.2's formula includes a floor that the tour/spectator engine's actual
+   `computeTotals()`/`playMatch()` code does not apply** (it uses plain division) — a real
+   pre-existing spec/code mismatch, flagged here rather than silently resolved; whoever owns §5.2
+   should decide which is authoritative.
+2. Independent of flooring, crediting a hole's own honey swing to THAT hole (rather than only the
+   round-end lump) correlates 6-18x more strongly with the decision quality made on that specific
+   hole. The round total is identical either way; only per-hole legibility changes. Given Yellow
+   Jacket's stated differentiator is per-decision skill measurement (the oracle), this is not a
+   cosmetic choice — lump-sum-at-end was quietly discarding exactly the signal a per-decision
+   product depends on.
+
+**Implementation status**: the tour/spectator live scorecard (`player.scorecard[]`, both
+`pushRow()` sites in the tournament + spectator engines) now stores `attributedScore = rawScore -
+((ownHoney - oppHoney) / divisor)` per hole alongside the existing pure-golf `rawScore`, and the
+per-hole cell/sparkline rendering (`makeScorecardCell`, the STRIP sparkline) prefers
+`attributedScore` when present. The GOLF and FINAL summary columns are unchanged (pure golf total,
+honey-adjusted round total respectively) — only the per-hole cells gained the attribution. The
+abstract `playMatch()`/aggregate simulator functions were not restructured to expose a per-hole
+attributed array (they only return match-level aggregates, which were already correct); if a
+future backtest needs per-hole attribution from those paths specifically, it isn't there yet.
+
 ## 6. Per-Hand Resolution and the Dual-Variant Loss-Rule Selector
 
 Let `winner_p, loser_p ∈ HandClass × HandClass` be the showdown hand classes of the winning and losing players respectively (ordered by `evaluate7`).

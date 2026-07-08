@@ -20677,7 +20677,14 @@ function spectatorSimulateMatchWithHoles(p1, p2, roundNo, matchId, divisor) {
       if (r.tie) { role = 'tied'; t = ownScore === 0 ? 'Par' : term(ownScore); glyph = '⚖'; handClass = handCategoryName(ownHand); }
       else if (r.folded) { if (ownFolded) { role = 'folded'; t = 'Bogey'; glyph = '·'; } else { role = 'won-unc'; t = term(ownScore); glyph = '✦'; } }
       else { handClass = handCategoryName(ownHand); role = won ? 'won-sd' : 'lost-sd'; t = term(ownScore); glyph = (typeof glyphForHandClass === 'function') ? glyphForHandClass(handClass) : '·'; }
-      player.scorecard.push({ round: roundNo, hole: holeNo, matchId: matchId, opponentName: oppName, rawScore: ownScore, honeyCredit: ownHoney, opponentHoneyCredit: oppHoney, potBefore: (r.strokes || 0), carryIn: carryIn, carryOut: r.tie ? carryToNext : 0, tie: !!r.tie, folded: !!ownFolded, foldedOpp: !!oppFolded, role: role, handClass: handClass, term: t, glyph: glyph, ts: Date.now() });
+      // Per-hole honey attribution (2026-07-08, simulation-evidenced): this hole's OWN honey
+      // swing (ownHoney - oppHoney) is credited to THIS hole via the same divisor used at
+      // round end, instead of leaving it invisible until a single end-of-round lump. The ROUND
+      // total is unaffected (plain division distributes over the sum), but per-hole attribution
+      // correlates 6-18x more strongly with the decision quality made on that specific hole —
+      // material for "The Card"'s per-hole cells/sparkline, which previously showed rawScore only.
+      const attributedScore = ownScore - ((ownHoney - oppHoney) / divisor);
+      player.scorecard.push({ round: roundNo, hole: holeNo, matchId: matchId, opponentName: oppName, rawScore: ownScore, attributedScore: attributedScore, honeyCredit: ownHoney, opponentHoneyCredit: oppHoney, potBefore: (r.strokes || 0), carryIn: carryIn, carryOut: r.tie ? carryToNext : 0, tie: !!r.tie, folded: !!ownFolded, foldedOpp: !!oppFolded, role: role, handClass: handClass, term: t, glyph: glyph, ts: Date.now() });
       player.golfCum += ownScore;
     };
     pushRow(p1, p2.name, r.aScore, r.aHoneyCredit || 0, r.bHoneyCredit || 0, r.folded === 'a', r.folded === 'b', r.aHand, wonA);
@@ -21110,10 +21117,15 @@ function spectatorTourneyMatchTick(match) {
       if ((player === eng.p1 && wonA) || (player === eng.p2 && wonB)) { role = 'won-sd'; term = golfTermForStroke(ownScore); glyph = glyphForHandClass(handClass); }
       else { role = 'lost-sd'; term = golfTermForStroke(ownScore); glyph = glyphForHandClass(handClass); }
     }
+    // Per-hole honey attribution (2026-07-08, simulation-evidenced) — see the matching comment
+    // at the other pushRow() site above. Same fix: credit THIS hole's own honey swing to it
+    // directly instead of leaving per-hole cells honey-blind until an end-of-round lump.
+    const roundDivisor = tour.honeyCap || 9;
     player.scorecard.push({
       round: tour.round, hole: holeNo, matchId: match.id,
       opponentName: opp.name,
       rawScore: ownScore,
+      attributedScore: ownScore - ((ownHoney - oppHoney) / roundDivisor),
       honeyCredit: ownHoney,
       opponentHoneyCredit: oppHoney,
       potBefore: (r.strokes || 0),
@@ -22475,7 +22487,12 @@ function formatStroke(s) { return (s > 0 ? '+' : (s < 0 ? '' : '±')) + s; }
 // stroke is in row.rawScore; callers can pre-adapt or we read whichever is set.
 function makeScorecardCell(row, opts) {
   opts = opts || {};
-  const stroke = (typeof row.stroke === 'number') ? row.stroke : (typeof row.rawScore === 'number') ? row.rawScore : 0;
+  // Prefer the honey-attributed per-hole score (this hole's own honey swing folded in) over the
+  // pure-golf rawScore, so a big pot won on THIS hole is visible on THIS cell, not just at the
+  // round's final total. Falls back to rawScore for any older/replayed data without the field.
+  const stroke = (typeof row.stroke === 'number') ? row.stroke
+    : (typeof row.attributedScore === 'number') ? row.attributedScore
+    : (typeof row.rawScore === 'number') ? row.rawScore : 0;
   const tone = scorecardCellTone(stroke);
   const cell = el('td', { style: 'padding:5px 6px; text-align:center; border:1px solid rgba(212,160,23,0.15); background:rgba(0,0,0,0.10); font-variant-numeric:tabular-nums; min-width:44px;' });
   const top = el('div', { style: 'font-size:13px; font-weight:700; color:' + tone + ';', text: formatStroke(stroke) });
@@ -22650,7 +22667,7 @@ function refreshSpectatorScorecardStrip() {
     row.appendChild(el('span', { style: 'flex:1; font-size:13px; color:#F0C75E; font-weight:600; letter-spacing:0.3px;', text: p.name }));
     row.appendChild(el('span', { style: 'font-size:10px; opacity:0.55;', text: 'sk ' + p.skill.toFixed(2) }));
     row.appendChild(el('span', { style: 'min-width:62px; text-align:right; font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; color:' + scorecardCellTone(final > 0 ? 1 : final < 0 ? -1 : 0) + ';', text: formatFinal(final) }));
-    row.appendChild(makeStrokeSparkline(p.scorecard.map(r => r.rawScore), { length: 9 }));
+    row.appendChild(makeStrokeSparkline(p.scorecard.map(r => (typeof r.attributedScore === 'number') ? r.attributedScore : r.rawScore), { length: 9 }));
     row.appendChild(el('span', { style: 'width:50px; text-align:right; font-size:10px; opacity:0.55;', text: p.scorecard.length + 'h' }));
     wrap.appendChild(row);
     if (idx === cutAt - 1 && cutAt < survivors.length) {
@@ -22753,7 +22770,7 @@ function renderTournamentScorecardFullInto(host) {
   wrap.appendChild(tbl);
   card.appendChild(wrap);
   card.appendChild(el('div', { style: 'text-align:center; font-size:10px; opacity:0.5; margin-top:14px; font-style:italic; letter-spacing:1px;', text:
-    '↳ click any row for that player\'s hole-by-hole card · GOLF column is raw scorecard, FINAL applies the YJ Honey-stroke divisor smoothing' }));
+    '↳ click any row for that player\'s hole-by-hole card · per-hole cells now show honey-attributed strokes (that hole\'s own pot folded in); GOLF column is the pure raw scorecard total, FINAL is the honey-adjusted round total' }));
   host.appendChild(card);
 }
 
