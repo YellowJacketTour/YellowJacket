@@ -10251,7 +10251,7 @@ Views.codex = function() {
   // reader a complete mental model and the hand→score reference, then points
   // to the Rulebook for the rule cards themselves.
   const law = section('1 · The Honey-Stroke Scoring Law',
-    p('Every hole of the Yellow Jacket Tour is a single hand of heads-up Texas Hold\'em scored onto a golf scorecard. Two ledgers run in parallel all round: a SCORECARD (bounded integer −5..+2 from your hand class at showdown, or +1 bogey on a fold/loss, or 0 par on a tie) and a HONEY ledger (raw integer credits equal to the agreed pot won). At round end, total net honey is divided by the round-length divisor exactly once and subtracted from the total scorecard: finalRoundScore = totalGolfScorecard − (netHoney / divisor). Lower total wins.'),
+    p('Every hole of the Yellow Jacket Tour is a single hand of heads-up Texas Hold\'em scored onto a golf scorecard. Two ledgers run in parallel all round: a SCORECARD (bounded integer −5..+2 from your hand class at showdown, or +1 bogey on a fold/loss, or 0 par on a tie) and a HONEY ledger (raw integer credits equal to the agreed pot won). The OFFICIAL round total normalizes honey exactly once at round end: finalRoundScore = totalGolfScorecard − (netHoney / divisor). Lower total wins. Since v69.130, the live scorecard\'s per-hole cells additionally show a fractional, honey-attributed preview of each individual hole (that hole\'s own honey swing folded in) purely for legibility — this doesn\'t change the official round-end math above, it just makes a big pot won on a specific hole visible on that hole\'s cell instead of only in the round total.'),
     p('The Rulebook is the canonical source for every per-rule wording — mandatory opener, agreed-total wagering, fold mechanics, tied-hole carry, per-event stroke caps, variant law. This section provides the long-form mental model and the hand→score reference; visit the Rulebook for the precise rule cards.'),
 
     h3('Honey is the per-hole wager unit — closer to a skin than a chip'),
@@ -12003,12 +12003,13 @@ Views.rules = function() {
   core.appendChild(rule('Per-round score — two ledgers, one normalization at round end',
     'TWO LEDGERS, KEPT SEPARATE ALL ROUND. Every hole produces two outputs stored independently: ' +
     '(a) a SCORECARD entry — a bounded integer in the range −5..+2 from your hand class at showdown, or +1 bogey on a fold or YJ-variant decisive loss, or 0 par on a tie or as the non-folder; ' +
-    'and (b) a HONEY entry — an integer credit equal to the agreed pot won (or 0 if you lost or folded). Honey is NEVER converted to scorecard strokes mid-round. Both ledgers accumulate across every hole of the round in their own units. ' +
-    'ONE NORMALIZATION AT ROUND END. When the round closes, total net honey across all holes is divided by the round-length divisor exactly once and subtracted from the total scorecard: finalRoundScore = totalGolfScorecard − (netHoney / divisor). Lower total wins the round. ' +
+    'and (b) a HONEY entry — an integer credit equal to the agreed pot won (or 0 if you lost or folded). Both ledgers accumulate across every hole of the round in their own units for the OFFICIAL round total, which is still normalized exactly once at round end (below). ' +
+    'PER-HOLE ATTRIBUTION (display only, since v69.130). The scorecard cell/sparkline for each individual hole ALSO shows that hole\'s own honey swing folded in — attributedScore = holeScore − (thisHole\'s honeyNet / divisor) — so a big pot won on a specific hole is visible on that hole\'s cell, not just smeared into the round-end total. This is fractional (no floor) and display-only; it does not change the official round total, which is computed once below from the accumulated ledgers exactly as before. ' +
+    'ONE NORMALIZATION AT ROUND END (the OFFICIAL total). When the round closes, total net honey across all holes is divided by the round-length divisor exactly once and subtracted from the total scorecard: finalRoundScore = totalGolfScorecard − (netHoney / divisor). Lower total wins the round. ' +
     'V66 DIVISOR TABLE — FLAT INTEGERS, ANCHORED TO GOLF-NATIVE 9. The 18-hole HU divisor is 9 (one side of a round). Every other divisor is a clean integer: ' +
     '1-hole quick match → 1; 9-hole bracket → 4; 18-hole round → 9; 72-hole final → 36. ' +
     'There is no magnitude scalar; the divisor IS the conversion rate. A Major Putt cap of 9 honey aligns with the divisor exactly — a max-pot Major win contributes one stroke to the round score. Self-similar throughout. ' +
-    'WHY THIS DESIGN. Holding raw honey until round end keeps every per-hole scorecard entry an integer (no fractional strokes mid-round). The divisor 9 anchor matches golf\'s natural unit (holes-per-side); long rounds (72-hole at divisor 36) suppress per-honey impact, mirroring how PGA majors smooth single-hand variance across long format. Short rounds (1-hole at divisor 1) amplify drama for sudden-death playoffs.'
+    'WHY THIS DESIGN. The OFFICIAL round total normalizes honey exactly once, at round end — that math is unchanged. (Per-hole cells additionally show a fractional, honey-attributed preview for legibility — see above — but the round score itself is still the single end-of-round division.) The divisor 9 anchor matches golf\'s natural unit (holes-per-side); long rounds (72-hole at divisor 36) suppress per-honey impact, mirroring how PGA majors smooth single-hand variance across long format. Short rounds (1-hole at divisor 1) amplify drama for sudden-death playoffs.'
   ));
   core.appendChild(rule('Mandatory starting pot (no blinds, no antes; back-9 doubling)',
     'FRONT 9 (holes 1–9 of any 18-hole round): every hole opens with the agreed pot already set to 2 honey before any betting decision is made. Both players are equally committed to that 2 from the first action — there are no blinds, no antes, no positional cost. ' +
@@ -14503,6 +14504,41 @@ function scene3dBuildCardTextures() {
     { ch: '♦', red: true,  key: 'd' },
     { ch: '♣', red: false, key: 'c' },
   ];
+  // Canonical per-rank pip layout (2026-07-08, ported from the bullish0x/yellowjacket-tour fix):
+  // ranks 2-10 previously all rendered identically — one giant faded suit glyph dead-center,
+  // regardless of rank. Real decks use a rank-specific mirrored pip arrangement; this table gives
+  // each rank its own real layout instead. Positions are fractions of (W, H). Face cards (J/Q/K)
+  // and the Ace keep the single large center glyph — that's the correct convention for those,
+  // not a bug.
+  const PIP_LAYOUT = {
+    '2': [[0.5, 0.20], [0.5, 0.80]],
+    '3': [[0.5, 0.20], [0.5, 0.50], [0.5, 0.80]],
+    '4': [[0.28, 0.20], [0.72, 0.20], [0.28, 0.80], [0.72, 0.80]],
+    '5': [[0.28, 0.20], [0.72, 0.20], [0.5, 0.50], [0.28, 0.80], [0.72, 0.80]],
+    '6': [[0.28, 0.20], [0.72, 0.20], [0.28, 0.50], [0.72, 0.50], [0.28, 0.80], [0.72, 0.80]],
+    '7': [[0.28, 0.20], [0.72, 0.20], [0.5, 0.35], [0.28, 0.50], [0.72, 0.50], [0.28, 0.80], [0.72, 0.80]],
+    '8': [[0.28, 0.20], [0.72, 0.20], [0.5, 0.35], [0.28, 0.50], [0.72, 0.50], [0.5, 0.65], [0.28, 0.80], [0.72, 0.80]],
+    '9': [[0.28, 0.18], [0.72, 0.18], [0.28, 0.39], [0.72, 0.39], [0.5, 0.5], [0.28, 0.61], [0.72, 0.61], [0.28, 0.82], [0.72, 0.82]],
+    'T': [[0.28, 0.16], [0.72, 0.16], [0.28, 0.34], [0.72, 0.34], [0.28, 0.50], [0.72, 0.50], [0.28, 0.66], [0.72, 0.66], [0.28, 0.84], [0.72, 0.84]],
+  };
+  function drawPipField(ctx, rank, suit, W, H) {
+    const layout = PIP_LAYOUT[rank];
+    if (!layout) return false;
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.font = 'bold 46px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    layout.forEach(([fx, fy]) => {
+      const inBottomHalf = fy > 0.55;
+      ctx.save();
+      const x = fx * W, y = fy * H;
+      ctx.translate(x, y);
+      if (inBottomHalf) ctx.rotate(Math.PI); // mirrors the pip so it reads correctly either way up
+      ctx.fillText(suit.ch, 0, 0);
+      ctx.restore();
+    });
+    ctx.restore();
+    return true;
+  }
   function drawFace(rank, suit) {
     const W = 256, H = 360;
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
@@ -14528,12 +14564,16 @@ function scene3dBuildCardTextures() {
     ctx.font = 'bold 80px Times New Roman, serif'; ctx.fillText(rank, 0, 0);
     ctx.font = 'bold 64px sans-serif'; ctx.fillText(suit.ch, 2, 86);
     ctx.restore();
-    // Center suit glyph (large, faded)
-    ctx.save();
-    ctx.globalAlpha = 0.18;
-    ctx.font = 'bold 200px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(suit.ch, W / 2, H / 2);
-    ctx.restore();
+    // Pip field for 2-10 (rank-correct layout); face cards (J/Q/K) and the Ace keep the single
+    // large center glyph, which is the correct convention for those ranks, not a fallback.
+    const drewPips = drawPipField(ctx, rank, suit, W, H);
+    if (!drewPips) {
+      ctx.save();
+      ctx.globalAlpha = 0.18;
+      ctx.font = 'bold 200px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(suit.ch, W / 2, H / 2);
+      ctx.restore();
+    }
     return new T.CanvasTexture(cv);
   }
   function drawBack() {
