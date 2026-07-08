@@ -8394,8 +8394,18 @@ function playMultiwayMatch(players, numHoles, opts) {
   const N = players.length;
   const golfTotals = new Array(N).fill(0);
   const honeyTotals = new Array(N).fill(0);
+  // v54 parity fix (2026-07-08): the HU path (buildGameContext, see playMatch) unifies the AI's
+  // in-kernel decisionDivisor with the real round-end honeyDivisorFor(numHoles) so the AI never
+  // misprices honey relative to what it's actually scored on. That unification was never applied
+  // here — decisionDivisor silently fell through to the global CurrentDecisionDivisor default (9)
+  // in every multiway hand, while the real round-end divisor for a 9-hole bracket table is 4 and
+  // for a 72-hole final is 36. That's up to a 4x honey mispricing in the multiway AI's fold/press
+  // decisions relative to how the round actually scores. Fix: compute divisor BEFORE the hole
+  // loop (was previously computed only after, from totals that don't exist yet) and thread it
+  // into every hole's options as decisionDivisor, exactly like buildGameContext does for HU.
+  const divisor = honeyDivisorFor(numHoles);
   for (let h = 0; h < numHoles; h++) {
-    const holeOpts = Object.assign({}, opts, { holeNumber: h + 1, totalHoles: numHoles });
+    const holeOpts = Object.assign({}, opts, { holeNumber: h + 1, totalHoles: numHoles, decisionDivisor: divisor });
     const r = playMultiwayHole(players, holeOpts);
     if (!r) continue;
     for (let i = 0; i < N; i++) {
@@ -8403,8 +8413,7 @@ function playMultiwayMatch(players, numHoles, opts) {
       honeyTotals[i] += r.perPlayerHoneyDelta[i];
     }
   }
-  // Round-end: convert honey to strokes via divisor (same divisor logic as HU).
-  const divisor = honeyDivisorFor(numHoles);
+  // Round-end: convert honey to strokes via the SAME divisor the AI priced its decisions on above.
   const totals = golfTotals.map((g, i) => g - (honeyTotals[i] / divisor));
   return { golfTotals, honeyTotals, totals, divisor };
 }
